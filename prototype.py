@@ -8,7 +8,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import numpy as np
 
 
 parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
@@ -22,7 +22,8 @@ parser.add_argument('--device-label', type=int, default=0, help='device (default
 parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate (default: 0.001)')   
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
-parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1')
+parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1 (default: False)')
+parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
 args = parser.parse_args()  
 
 if args.seed:
@@ -93,14 +94,22 @@ def compute_dist_jacobians(net, x, y):
     jac_G = torch.transpose(jac_G, 1, 2) 
     #print(jac_F.size())
     #print(jac_G.size())
-    dist = ((jac_F - jac_G)**2).sum(2).sum(1).mean()
-    #print(dist)    
-    return dist
+    frob_dist = ((jac_F - jac_G)**2).sum(2).sum(1).mean()
+   
+    jac_F_flat = torch.reshape(jac_F, (jac_F.size(0), -1))
+    jac_G_flat = torch.reshape(jac_G, (jac_F.size(0), -1))
+    
+    cos_angle = ((jac_F_flat*jac_G_flat).sum(1))/torch.sqrt(((jac_F_flat**2).sum(1))*((jac_G_flat**2).sum(1))) 
+    
+    angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+    #print(angle)        
+    
+    return frob_dist, angle
 
 if __name__ == '__main__':    
 
     #Testing prototype
-    '''    
+        
     _, (x, _) = next(enumerate(train_loader))     
     x = x.to(device)
     net = prototype(args)
@@ -108,18 +117,23 @@ if __name__ == '__main__':
     y, r = net(x)
    
     #testing jacobian computation on a simple case 
-    compute_dist_jacobians(net, x, y)    
-
+    
+    #compute_dist_jacobians(net, x, y)
+    
+    '''
     jac = torch.autograd.functional.jacobian(net.ff, x) 
     jac = torch.transpose(torch.diagonal(jac, dim1 = 0, dim2 = 2), 0, 2)
-    print('Jacobian size: {}'.format(jac.size()))
-    #print(jac)
-    print(jac[0, :] == torch.transpose(net.f.weight, 0, 1))
-    print('Done!')
+    print(torch.all(torch.eq(jac[0, :], torch.transpose(net.f.weight, 0, 1)))) 
+
+    jac_2 = torch.autograd.functional.jacobian(net.bb, y) 
+    jac_2 = torch.transpose(torch.diagonal(jac_2, dim1 = 0, dim2 = 2), 0, 2)
+    print(torch.all(torch.eq(jac_2[0, :], torch.transpose(net.b.weight, 0, 1)))) 
     '''
+    #print('Done!')
+    
 
-    #Coding the learning procedure
-
+    #Coding the learning procedure    
+    
     _, (x, _) = next(enumerate(train_loader))     
     x = x.to(device)
     net = prototype(args)
@@ -137,11 +151,13 @@ if __name__ == '__main__':
         dr = (r_noise - r)
         loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1) + ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
         #loss_b = ((1/args.noise)*((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
-        dist_jac = compute_dist_jacobians(net, x, y)
+        if args.jacobian:
+            dist_jac, angle = compute_dist_jacobians(net, x, y)
+            print('Distance between jacobians at step {}: {:5f}'.format(iter, dist_jac))
         print('Feedback loss at step {}: {:5f}'.format(iter, loss_b))
-        print('Distance between jacobians at step {}: {:5f}'.format(iter, dist_jac))
+        print('Angle at step {}: {:5f}'.format(iter, angle))
         optimizer_b.zero_grad()
         loss_b.backward(retain_graph = True)
         optimizer_b.step()
      
-    print('Done!')
+    print('Done!') 
