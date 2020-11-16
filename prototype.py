@@ -9,7 +9,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import matplotlib.pyplot as plt
 
+
+from plotFunctions import *
+from tools import *
 
 parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
 
@@ -92,30 +96,36 @@ def compute_dist_jacobians(net, x, y):
     jac_G = torch.transpose(torch.diagonal(jac_G, dim1=0, dim2=2), 0, 2)
    
     jac_G = torch.transpose(jac_G, 1, 2) 
-    #print(jac_F.size())
-    #print(jac_G.size())
-    frob_dist = ((jac_F - jac_G)**2).sum(2).sum(1).mean()
-   
-    jac_F_flat = torch.reshape(jac_F, (jac_F.size(0), -1))
-    jac_G_flat = torch.reshape(jac_G, (jac_F.size(0), -1))
-    
-    cos_angle = ((jac_F_flat*jac_G_flat).sum(1))/torch.sqrt(((jac_F_flat**2).sum(1))*((jac_G_flat**2).sum(1))) 
-    
+ 
+    #dist, angle = compute_dist_angle(jac_F, jac_G)                
+    #return dist, angle
+
+    return jac_F, jac_G
+
+def compute_dist_angle(F, G):
+    if len(F.size()) > 2:    
+        dist = ((F - G)**2).sum(2).sum(1).mean()
+    else:
+        dist = ((F - G)**2).sum()
+
+    F_flat = torch.reshape(F, (F.size(0), -1))
+    G_flat = torch.reshape(G, (G.size(0), -1))
+    cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
     angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
-    #print(angle)        
+
+    return dist, angle
     
-    return frob_dist, angle
 
 if __name__ == '__main__':    
 
     #Testing prototype
-        
+    '''        
     _, (x, _) = next(enumerate(train_loader))     
     x = x.to(device)
     net = prototype(args)
     net.to(device)
     y, r = net(x)
-   
+    '''
     #testing jacobian computation on a simple case 
     
     #compute_dist_jacobians(net, x, y)
@@ -131,33 +141,59 @@ if __name__ == '__main__':
     '''
     #print('Done!')
     
-
     #Coding the learning procedure    
-    
-    _, (x, _) = next(enumerate(train_loader))     
-    x = x.to(device)
+    BASE_PATH = createPath(args) 
+    createHyperparameterfile(BASE_PATH, args)
+    #_, (x, _) = next(enumerate(train_loader))     
+    #x = x.to(device)
     net = prototype(args)
     net.to(device)
 
-
-    optimizer_b = torch.optim.SGD([{'params': net.b.parameters()}], lr=args.lr, momentum=9e-1)
-    
-    
+    optimizer_b = torch.optim.SGD([{'params': net.b.parameters()}], lr=args.lr, momentum=9e-1)   
+    angle_jac_tab, dist_jac_tab, loss_tab, angle_weight_tab, dist_weight_tab = [], [], [], [], []      
+   
     for iter in range(1, args.epochs + 1):
-        y, r = net(x)
-        noise = args.noise*torch.randn_like(x)
-        y_noise, r_noise = net(x + noise)
-        dy = (y_noise - y)
-        dr = (r_noise - r)
-        loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1) + ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
-        #loss_b = ((1/args.noise)*((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
-        if args.jacobian:
-            dist_jac, angle = compute_dist_jacobians(net, x, y)
-            print('Distance between jacobians at step {}: {:5f}'.format(iter, dist_jac))
+        _, (x, _) = next(enumerate(train_loader))     
+        x = x.to(device)
+        for _ in range(20):
+            y, r = net(x)
+            noise = args.noise*torch.randn_like(x)
+            y_noise, r_noise = net(x + noise)
+            dy = (y_noise - y)
+            dr = (r_noise - r)
+            loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1) + ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
+            #loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1)  - ((noise*dr).sum(1))**2).mean()
+            #loss_b = ((1/args.noise)*((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
+            optimizer_b.zero_grad()
+            loss_b.backward(retain_graph = True)
+            optimizer_b.step()
+        
+        loss_tab.append(loss_b)
+        results_dict = {'loss': loss_tab}
         print('Feedback loss at step {}: {:5f}'.format(iter, loss_b))
-        print('Angle at step {}: {:5f}'.format(iter, angle))
-        optimizer_b.zero_grad()
-        loss_b.backward(retain_graph = True)
-        optimizer_b.step()
-     
-    print('Done!') 
+        
+        if args.jacobian:
+            jac_f, jac_b = compute_dist_jacobians(net, x, y)
+            dist_jac, angle_jac = compute_dist_angle(jac_f, jac_b)
+            dist_jac_tab.append(dist_jac)
+            angle_jac_tab.append(angle_jac)
+            results_dict_jac = {'dist_jac': dist_jac_tab, 'angle_jac': angle_jac_tab}
+            results_dict.update(results_dict_jac)
+            print('Distance between jacobians at step {}: {:5f}'.format(iter, dist_jac))
+            print('Jacobian angle at step {}: {:5f}'.format(iter, angle_jac))
+       
+        dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight.t())
+        dist_weight_tab.append(dist_weight)
+        angle_weight_tab.append(angle_weight)  
+        results_dict_weight = {'dist_weight': dist_weight_tab, 'angle_weight': angle_weight_tab}
+        results_dict.update(results_dict_weight)
+        print('Distance between weights at step {}: {:5f}'.format(iter, dist_weight))
+        print('Weight angle at step {}: {:5f}'.format(iter, angle_weight))
+ 
+        outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+        pickle.dump(results_dict, outfile)
+        outfile.close()
+ 
+    print('Done!')
+    plot_results(results_dict) 
+    plt.show()
