@@ -21,6 +21,7 @@ parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
 parser.add_argument('--in_size', type=int, default=784, help='input dimension (default: 784)')   
 parser.add_argument('--out_size', type=int, default=512, help='output dimension (default: 512)')   
 parser.add_argument('--epochs', type=int, default=15, help='number of epochs to train feedback weights(default: 15)') 
+parser.add_argument('--iter', type=int, default=20, help='number of iterationson feedback weights per batch samples (default: 20)') 
 parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
 parser.add_argument('--device-label', type=int, default=0, help='device (default: 1)')   
 parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
@@ -89,6 +90,17 @@ class prototype(nn.Module):
         
         return y, r
 
+
+    def weight_b_normalize(self, dx, dy, dr):
+        
+        factor = ((dy**2).sum(1))/((noise*dr).sum(1))
+        factor = factor.mean()
+        #factor = 0.5*factor
+
+        with torch.no_grad():
+            self.b.weight.data = factor*self.b.weight.data
+
+
 def compute_dist_jacobians(net, x, y):
     jac_F = torch.autograd.functional.jacobian(net.ff, x) 
     jac_F = torch.transpose(torch.diagonal(jac_F, dim1=0, dim2=2), 0, 2)
@@ -97,8 +109,6 @@ def compute_dist_jacobians(net, x, y):
    
     jac_G = torch.transpose(jac_G, 1, 2) 
  
-    #dist, angle = compute_dist_angle(jac_F, jac_G)                
-    #return dist, angle
 
     return jac_F, jac_G
 
@@ -142,6 +152,7 @@ if __name__ == '__main__':
     #print('Done!')
     
     #Coding the learning procedure    
+    
     BASE_PATH = createPath(args) 
     createHyperparameterfile(BASE_PATH, args)
     #_, (x, _) = next(enumerate(train_loader))     
@@ -152,25 +163,51 @@ if __name__ == '__main__':
     optimizer_b = torch.optim.SGD([{'params': net.b.parameters()}], lr=args.lr, momentum=9e-1)   
     angle_jac_tab, dist_jac_tab, loss_tab, angle_weight_tab, dist_weight_tab = [], [], [], [], []      
    
-    for iter in range(1, args.epochs + 1):
+    for iter_x in range(1, args.epochs + 1):
         _, (x, _) = next(enumerate(train_loader))     
         x = x.to(device)
-        for _ in range(20):
+        for iter in range(1, args.iter + 1):
             y, r = net(x)
             noise = args.noise*torch.randn_like(x)
             y_noise, r_noise = net(x + noise)
             dy = (y_noise - y)
             dr = (r_noise - r)
-            loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1) + ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
-            #loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1)  - ((noise*dr).sum(1))**2).mean()
-            #loss_b = ((1/args.noise)*((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
+           
+            #LOSS 1 
+            #loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1) + ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
+            
+            #LOSS 2
+            #loss_b =-(args.lamb/(args.noise**2))*(dr**2).sum(1).mean() + (1/(args.noise**4))*( ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
+            
+
+            #LOSS 3
+            #net.weight_b_normalize(noise, dy, dr)
+            #loss_b = -(noise*dr).sum(1).mean()
+            
+            #LOSS 4
+            #net.weight_b_normalize(noise, dy, dr)
+            #loss_b = -(((noise*dr).sum(1))**2).mean()
+
+            #LOSS 5
+            #net.weight_b_normalize(noise, dy, dr)
+
+            loss_b = -(noise*dr).sum(1).mean() + args.lamb*(dr**2).sum(1).mean()
             optimizer_b.zero_grad()
-            loss_b.backward(retain_graph = True)
+               
+            if iter < args.iter:
+                loss_b.backward(retain_graph = True)
+            else:
+                loss_b.backward()
+
             optimizer_b.step()
-        
+       
+        #WATCH OUT: renormalize once per sample
+        net.weight_b_normalize(noise, dy, dr)        
+ 
         loss_tab.append(loss_b)
         results_dict = {'loss': loss_tab}
-        print('Feedback loss at step {}: {:5f}'.format(iter, loss_b))
+        print('\n Batch {} ({} trials per batch): \n'.format(iter_x, args.iter))
+        print('Feedback loss: {:.2f}'.format(loss_b))
         
         if args.jacobian:
             jac_f, jac_b = compute_dist_jacobians(net, x, y)
@@ -179,16 +216,16 @@ if __name__ == '__main__':
             angle_jac_tab.append(angle_jac)
             results_dict_jac = {'dist_jac': dist_jac_tab, 'angle_jac': angle_jac_tab}
             results_dict.update(results_dict_jac)
-            print('Distance between jacobians at step {}: {:5f}'.format(iter, dist_jac))
-            print('Jacobian angle at step {}: {:5f}'.format(iter, angle_jac))
+            print('Distance between jacobians: {:.2f}'.format(dist_jac))
+            print('Jacobian angle: {:.2f} deg'.format(angle_jac))
        
         dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight.t())
         dist_weight_tab.append(dist_weight)
         angle_weight_tab.append(angle_weight)  
         results_dict_weight = {'dist_weight': dist_weight_tab, 'angle_weight': angle_weight_tab}
         results_dict.update(results_dict_weight)
-        print('Distance between weights at step {}: {:5f}'.format(iter, dist_weight))
-        print('Weight angle at step {}: {:5f}'.format(iter, angle_weight))
+        print('Distance between weights: {:.2f}'.format(dist_weight))
+        print('Weight angle: {:.2f} deg'.format(angle_weight))
  
         outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
         pickle.dump(results_dict, outfile)
