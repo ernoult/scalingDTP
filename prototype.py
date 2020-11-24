@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 
 from plotFunctions import *
 from tools import *
+from utils import * 
 
 parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
 
@@ -61,15 +62,24 @@ else:
 
 train_loader = torch.utils.data.DataLoader(
 torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                         transform=torchvision.transforms.Compose(transforms),
-                         target_transform=ReshapeTransformTarget(10)),
+                         transform=torchvision.transforms.Compose(transforms)
+                        #,target_transform=ReshapeTransformTarget(10)
+                        ),
 batch_size = args.batch_size, shuffle=True)
+
+
+test_loader = torch.utils.data.DataLoader(
+torchvision.datasets.MNIST(root='./data', train=False, download=True,
+                         transform=torchvision.transforms.Compose(transforms)
+                        #,target_transform=ReshapeTransformTarget(10)
+                        ),
+batch_size = args.batch_size, shuffle=True)
+
 
 if args.device_label >= 0:    
     device = torch.device("cuda:"+str(args.device_label))
 else:
     device = torch.device("cpu")
-
 
 class prototype(nn.Module):
     def __init__(self, args):
@@ -86,8 +96,7 @@ class prototype(nn.Module):
     def bb(self, y):
         r = self.b(torch.tanh(y))
         #r = self.b(y)
-        return r
-        
+        return r        
 
     def forward(self, x):
         y = self.ff(x)
@@ -174,7 +183,66 @@ def compute_dist_angle(F, G, jac = False):
     angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
 
     return dist, angle
-    
+  
+
+class smallNet_benchmark(nn.Module):
+    def __init__(self):
+        super(smallNet_benchmark, self).__init__()
+        size = 28
+        self.conv1 = nn.Conv2d(1, 128, 5, stride = 2)
+        size = np.floor((size - 5)/2 + 1)
+        self.conv2 = nn.Conv2d(128, 256, 5, stride = 2)
+        size = int(np.floor((size - 5)/2 + 1))
+        self.fc = nn.Linear(256*size**2, 10)
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = F.relu(self.conv2(out))
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        return out
+
+def train(epoch):
+    print('\nEpoch: %d' % epoch)
+    net.train()
+    train_loss = 0
+    correct = 0
+    total = 0
+    for batch_idx, (inputs, targets) in enumerate(train_loader):
+        inputs, targets = inputs.to(device), targets.to(device)
+        optimizer.zero_grad()
+        outputs = net(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
+
+        train_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
+                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+
+def test(epoch):
+    net.eval()
+    test_loss = 0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = net(inputs)
+            loss = criterion(outputs, targets)
+
+            test_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            progress_bar(batch_idx, len(test_loader), 'Loss: %.3f | Test Acc: %.3f%% (%d/%d)'
+                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+  
 
 if __name__ == '__main__':    
 
@@ -202,8 +270,26 @@ if __name__ == '__main__':
     print(net.f.weight.size())
     print(net.b.weight.size())    
     '''
-    #testing jacobian computation on a simple case 
     
+    #testing smallNet_benchmark
+    _, (x, _) = next(enumerate(train_loader))
+    
+    x = x.to(device)
+    net = smallNet_benchmark()
+    net.to(device) 
+    out = net(x)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(net.parameters(), lr=args.lr,
+                        momentum=0.9)
+    for epochs in range(1, args.epochs + 1):
+        train(epochs)
+        test(epochs)
+
+    print('All right!') 
+
+
+    #testing jacobian computation on a simple case 
+ 
     #compute_dist_jacobians(net, x, y)
     
     '''
@@ -218,7 +304,7 @@ if __name__ == '__main__':
     #print('Done!')
     
     #Coding the learning procedure    
-     
+    ''' 
     BASE_PATH = createPath(args) 
     createHyperparameterfile(BASE_PATH, args)
     
@@ -315,5 +401,5 @@ if __name__ == '__main__':
     print('Done!')
     plot_results(results_dict) 
     plt.show()
-    
+    '''
 
