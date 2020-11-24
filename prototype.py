@@ -29,6 +29,7 @@ parser.add_argument('--lr', type=float, default=0.001, help='learning rate (defa
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
 parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1 (default: False)')
 parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
+parser.add_argument('--conv', default=False, action='store_true',help='select the conv archi (default: False)')
 args = parser.parse_args()  
 
 if args.seed:
@@ -52,7 +53,10 @@ class ReshapeTransformTarget:
         return target_onehot.scatter_(1, target, 1).squeeze(0)
 
 
-transforms=[torchvision.transforms.ToTensor(),ReshapeTransform((-1,))]
+if (args.conv):
+    transforms=[torchvision.transforms.ToTensor()]
+else:
+    transforms=[torchvision.transforms.ToTensor(),ReshapeTransform((-1,))]
 
 
 train_loader = torch.utils.data.DataLoader(
@@ -65,6 +69,7 @@ if args.device_label >= 0:
     device = torch.device("cuda:"+str(args.device_label))
 else:
     device = torch.device("cpu")
+
 
 class prototype(nn.Module):
     def __init__(self, args):
@@ -93,7 +98,51 @@ class prototype(nn.Module):
 
     def weight_b_normalize(self, dx, dy, dr):
         
-        factor = ((dy**2).sum(1))/((noise*dr).sum(1))
+        factor = ((dy**2).sum(1))/((dx*dr).sum(1))
+        factor = factor.mean()
+        #factor = 0.5*factor
+
+        with torch.no_grad():
+            self.b.weight.data = factor*self.b.weight.data
+
+class prototype_conv(nn.Module):
+    def __init__(self, args):
+        super(prototype_conv, self).__init__()
+        self.f = nn.Conv2d(1, 128, 5, stride = 2)
+        self.b = nn.ConvTranspose2d(128, 1, 5, stride = 2)
+    
+
+    def ff(self, x):
+        y = F.relu(self.f(x))
+        #y = self.f(x)
+        return y
+
+    def bb(self, x, y):
+        #r = F.relu(self.b(y))
+        r = F.relu(self.b(y, output_size = x.size()))
+        #r = self.b(y)
+        return r
+        
+
+    def forward(self, x):
+        y = self.ff(x)
+        r = self.bb(x, y)
+        
+        return y, r
+
+
+    def weight_b_normalize(self, dx, dy, dr):
+        
+        dy = dy.view(dy.size(0), -1)
+        dx = dx.view(dx.size(0), -1)
+        dr = dr.view(dr.size(0), -1)
+       
+
+        print(dy.size())
+        print(dx.size())
+        print(dr.size())
+ 
+        factor = ((dy**2).sum(1))/((dx*dr).sum(1))
         factor = factor.mean()
         #factor = 0.5*factor
 
@@ -101,7 +150,7 @@ class prototype(nn.Module):
             self.b.weight.data = factor*self.b.weight.data
 
 
-def compute_dist_jacobians(net, x, y):
+def compute_jacobians(net, x, y):
     jac_F = torch.autograd.functional.jacobian(net.ff, x) 
     jac_F = torch.transpose(torch.diagonal(jac_F, dim1=0, dim2=2), 0, 2)
     jac_G = torch.autograd.functional.jacobian(net.bb, y) 
@@ -112,8 +161,9 @@ def compute_dist_jacobians(net, x, y):
 
     return jac_F, jac_G
 
-def compute_dist_angle(F, G):
-    if len(F.size()) > 2:    
+def compute_dist_angle(F, G, jac = False):
+    
+    if jac:    
         dist = ((F - G)**2).sum(2).sum(1).mean()
     else:
         dist = ((F - G)**2).sum()
@@ -131,10 +181,26 @@ if __name__ == '__main__':
     #Testing prototype
     '''        
     _, (x, _) = next(enumerate(train_loader))     
+    
+    #x = torch.randn(args.batch_size, 1, 28, 28)
     x = x.to(device)
-    net = prototype(args)
+
+    if args.conv:
+        net = prototype_conv(args)
+    else:
+        net = prototype(args)
+    
     net.to(device)
     y, r = net(x)
+    
+    print(x.size())
+    print(y.size())
+    print(r.size())    
+
+    print('Done!')
+    
+    print(net.f.weight.size())
+    print(net.b.weight.size())    
     '''
     #testing jacobian computation on a simple case 
     
@@ -152,20 +218,28 @@ if __name__ == '__main__':
     #print('Done!')
     
     #Coding the learning procedure    
-    
+     
     BASE_PATH = createPath(args) 
     createHyperparameterfile(BASE_PATH, args)
-    #_, (x, _) = next(enumerate(train_loader))     
-    #x = x.to(device)
-    net = prototype(args)
+    
+    if args.conv:
+        net = prototype_conv(args)
+    else:
+        net = prototype(args)        
+
     net.to(device)
 
     optimizer_b = torch.optim.SGD([{'params': net.b.parameters()}], lr=args.lr, momentum=9e-1)   
     angle_jac_tab, dist_jac_tab, loss_tab, angle_weight_tab, dist_weight_tab = [], [], [], [], []      
-   
+  
+    #WATCH OUT: only ONE data point!
+    _, (x, _) = next(enumerate(train_loader))     
+    x = x.to(device)
+ 
     for iter_x in range(1, args.epochs + 1):
-        _, (x, _) = next(enumerate(train_loader))     
-        x = x.to(device)
+        #_, (x, _) = next(enumerate(train_loader))     
+        #x = x.to(device)
+
         for iter in range(1, args.iter + 1):
             y, r = net(x)
             noise = args.noise*torch.randn_like(x)
@@ -189,9 +263,12 @@ if __name__ == '__main__':
             #loss_b = -(((noise*dr).sum(1))**2).mean()
 
             #LOSS 5
-            #net.weight_b_normalize(noise, dy, dr)
+            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+            
+    
+            #LOSS 6
+            #loss_b = 1 - ((dr**2).sum(1).mean())/((noise*dr).sum(1).mean())
 
-            loss_b = -(noise*dr).sum(1).mean() + args.lamb*(dr**2).sum(1).mean()
             optimizer_b.zero_grad()
                
             if iter < args.iter:
@@ -210,8 +287,8 @@ if __name__ == '__main__':
         print('Feedback loss: {:.2f}'.format(loss_b))
         
         if args.jacobian:
-            jac_f, jac_b = compute_dist_jacobians(net, x, y)
-            dist_jac, angle_jac = compute_dist_angle(jac_f, jac_b)
+            jac_f, jac_b = compute_jacobians(net, x, y)
+            dist_jac, angle_jac = compute_dist_angle(jac_f, jac_b, jac = True)
             dist_jac_tab.append(dist_jac)
             angle_jac_tab.append(angle_jac)
             results_dict_jac = {'dist_jac': dist_jac_tab, 'angle_jac': angle_jac_tab}
@@ -219,7 +296,11 @@ if __name__ == '__main__':
             print('Distance between jacobians: {:.2f}'.format(dist_jac))
             print('Jacobian angle: {:.2f} deg'.format(angle_jac))
        
-        dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight.t())
+        if args.conv:
+            dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight) 
+        else:
+            dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight.t())
+
         dist_weight_tab.append(dist_weight)
         angle_weight_tab.append(angle_weight)  
         results_dict_weight = {'dist_weight': dist_weight_tab, 'angle_weight': angle_weight_tab}
@@ -234,3 +315,5 @@ if __name__ == '__main__':
     print('Done!')
     plot_results(results_dict) 
     plt.show()
+    
+
