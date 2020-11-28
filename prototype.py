@@ -27,14 +27,19 @@ parser.add_argument('--epochs', type=int, default=15, help='number of epochs to 
 parser.add_argument('--iter', type=int, default=20, help='number of iterationson feedback weights per batch samples (default: 20)') 
 parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
 parser.add_argument('--device-label', type=int, default=0, help='device (default: 1)')   
-parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
+#parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate (default: 0.001)')   
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
 parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1 (default: False)')
 parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
 parser.add_argument('--conv', default=False, action='store_true',help='select the conv archi (default: False)')
 parser.add_argument('--C', nargs = '+', type=int, default=[128, 512], help='tab of channels (default: [128, 512])')
+parser.add_argument('--noise', nargs = '+', type=float, default=[0.05, 0.5], help='tab of noise amplitude (default: [0.05, 0.5])')
+
+
 args = parser.parse_args()  
+
+#print(args.seed)
 
 if args.seed:
     torch.manual_seed(1)
@@ -118,7 +123,6 @@ class layer_fc(nn.Module):
         y.requires_grad = True
 
         return y, r
-
 
     def weight_b_normalize(self, dx, dy, dr):
                      
@@ -269,7 +273,7 @@ if __name__ == '__main__':
 
 
     #Testing globalNet
-    '''    
+   
     net = globalNet(args)
     net.to(device)
     
@@ -288,9 +292,12 @@ if __name__ == '__main__':
         
     for i in range(len(net.layers) - 1):
         optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr})
+        #print(net.layers[i + 1].b.weight.size())
 
     optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
     optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
+
+    #print(optimizer_b.state_dict())  
 
     #forward pass
 
@@ -305,14 +312,16 @@ if __name__ == '__main__':
     #train feedback weights
     
     for id_layer in range(len(net.layers) - 1):
-        print('Layer {}...'.format(id_layer + 2))
         
+        #if (id_layer == len(net.layers) - 2 ):
+            #print('Layer {}...'.format(id_layer + 2))
+            
         for iter in range(1, args.iter + 1):
             if (iter % 10 == 0):
                 print('Iteration {}'.format(iter))
 
             y_temp, r_temp = net.layers[id_layer + 1](y[id_layer])
-            noise = args.noise*torch.randn_like(y[id_layer])
+            noise = args.noise[id_layer]*torch.randn_like(y[id_layer])
             
             noisy_input = y[id_layer] + noise
                                   
@@ -323,13 +332,16 @@ if __name__ == '__main__':
            
             loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
             
-
             optimizer_b.zero_grad()
                
             if iter < args.iter:
                 loss_b.backward(retain_graph = True)
             else:
                 loss_b.backward()
+            
+            #print(net.layers[id_layer + 1].b.weight.size()) 
+            #if (net.layers[id_layer + 1].b.weight.grad is not None):
+                #print(net.layers[id_layer + 1].b.weight.grad.mean())
 
             optimizer_b.step()
        
@@ -344,8 +356,8 @@ if __name__ == '__main__':
         print('Distance between weights: {:.2f}'.format(dist_weight))
         print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
-    print('Good!')    
-    '''
+        print('Good!')
+
     #Testing prototype
     
     '''           
@@ -413,7 +425,7 @@ if __name__ == '__main__':
     #print('Done!')
     
     #Coding the learning procedure for the feedback weights 
-           
+    '''           
     BASE_PATH = createPath(args) 
     createHyperparameterfile(BASE_PATH, args)
     
@@ -506,3 +518,4 @@ if __name__ == '__main__':
     print('Done!')
     plot_results(results_dict) 
     plt.show()
+    '''
