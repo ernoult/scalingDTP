@@ -251,8 +251,8 @@ class globalNet(nn.Module):
             size = int(np.floor((size - 5)/2 + 1))
         
         layers.append(layer_fc((size**2)*args.C[-1], 10, last_layer = True))
-
         self.layers = layers
+        self.logsoft = nn.LogSoftmax(dim=1) 
 
     def forward(self, x):
         s = x
@@ -292,12 +292,10 @@ if __name__ == '__main__':
         
     for i in range(len(net.layers) - 1):
         optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr})
-        #print(net.layers[i + 1].b.weight.size())
 
     optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
     optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
 
-    #print(optimizer_b.state_dict())  
 
     #forward pass
 
@@ -312,10 +310,6 @@ if __name__ == '__main__':
     #train feedback weights
     
     for id_layer in range(len(net.layers) - 1):
-        
-        #if (id_layer == len(net.layers) - 2 ):
-            #print('Layer {}...'.format(id_layer + 2))
-            
         for iter in range(1, args.iter + 1):
             if (iter % 10 == 0):
                 print('Iteration {}'.format(iter))
@@ -339,10 +333,6 @@ if __name__ == '__main__':
             else:
                 loss_b.backward()
             
-            #print(net.layers[id_layer + 1].b.weight.size()) 
-            #if (net.layers[id_layer + 1].b.weight.grad is not None):
-                #print(net.layers[id_layer + 1].b.weight.grad.mean())
-
             optimizer_b.step()
        
         #WATCH OUT: renormalize once per sample
@@ -356,10 +346,30 @@ if __name__ == '__main__':
         print('Distance between weights: {:.2f}'.format(dist_weight))
         print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
-        print('Good!')
+        #print('Good!')
+
+    #train forward weights
+        
+    #compute prediction
+    pred = torch.exp(net.logsoft(y[-1])) 
+
+    #compute first target on the softmax logits
+    t = y[-1] - args.beta*(target - pred)
+
+    for i in range(len(net.layers - 1):
+        #update forward weights
+        loss_f = 0.5*((y[-1 - i] - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = loss_f.mean()
+        
+        optimizer_f.zero_grad()
+        loss_f.backward(retain_graph = True)
+        optimizer_f.step()
+
+        #compute previous targets
+        t = y[-1 - (i + 1)] + net.layers[-1 - i].bb(t) - r[-1 - (i + 1)]
+
 
     #Testing prototype
-    
     '''           
     _, (x, _) = next(enumerate(train_loader))     
     
