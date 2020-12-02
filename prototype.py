@@ -30,6 +30,7 @@ parser.add_argument('--device-label', type=int, default=0, help='device (default
 #parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate (default: 0.001)')   
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
+parser.add_argument('--beta', type=float, default=0.1, help='nudging parameter (default: 0.1)')   
 parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1 (default: False)')
 parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
 parser.add_argument('--conv', default=False, action='store_true',help='select the conv archi (default: False)')
@@ -281,7 +282,7 @@ if __name__ == '__main__':
     _, (data, target) = next(enumerate(train_loader))         
     
     data = data.to(device)    
-
+    target = target.to(device)
     #Initialize optimizers for forward and backward weights
     
     optim_params_f = []
@@ -308,7 +309,7 @@ if __name__ == '__main__':
     
     
     #train feedback weights
-    
+    ''' 
     for id_layer in range(len(net.layers) - 1):
         for iter in range(1, args.iter + 1):
             if (iter % 10 == 0):
@@ -347,27 +348,36 @@ if __name__ == '__main__':
         print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
         #print('Good!')
+    '''
 
     #train forward weights
         
     #compute prediction
     pred = torch.exp(net.logsoft(y[-1])) 
+    target = F.one_hot(target, num_classes=10).float()
 
     #compute first target on the softmax logits
     t = y[-1] - args.beta*(target - pred)
 
-    for i in range(len(net.layers - 1):
+    print(t.size())
+
+    for i in range(len(net.layers) - 1):
         #update forward weights
-        loss_f = 0.5*((y[-1 - i] - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = 0.5*((y[-1 - i] - t)**2).view(y[-1 - i].size(0), -1).sum(1)
         loss_f = loss_f.mean()
         
         optimizer_f.zero_grad()
         loss_f.backward(retain_graph = True)
         optimizer_f.step()
 
+        #print(y[-1 - (i + 1)].size())
+        #print(net.layers[-1 - i].bb(y[-1 - (i + 1)], t).size())
+        #print(r[-1 - i].size())
         #compute previous targets
-        t = y[-1 - (i + 1)] + net.layers[-1 - i].bb(t) - r[-1 - (i + 1)]
-
+        
+        t = y[-1 - (i + 1)] + net.layers[-1 - i].bb(y[-1 - (i + 1)], t) - r[-1 - i]
+        
+        #print(t.size())
 
     #Testing prototype
     '''           
