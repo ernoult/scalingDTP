@@ -252,10 +252,7 @@ class layer_conv(nn.Module):
     
     def weight_b_sym(self):
         with torch.no_grad():
-            self.b.weight.data = self.f.weight.data
-
-
-        
+            self.b.weight.data = self.f.weight.data        
 
 class globalNet(nn.Module):
     def __init__(self, args):
@@ -305,9 +302,12 @@ if __name__ == '__main__':
     net = globalNet(args)
     net.to(device)
     
-    #WATCH OUT: symmetricize weights
-    net.weight_b_sym() 
-        
+    #*****WATCH OUT: symmetricize weights*****#
+    
+    #net.weight_b_sym() 
+    
+    #*****************************************#
+    
     #Initialize optimizers for forward and backward weights
     
     optim_params_f = []
@@ -321,12 +321,14 @@ if __name__ == '__main__':
 
     optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
     optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
-
+    
+    _, (data, target) = next(enumerate(train_loader))             
+    data = data.to(device)    
+    target = target.to(device)
 
     #forward pass
     #y, r = net(data)
-    
-    
+       
     #check layer sizes
     ''' 
     for i in range(len(y)):
@@ -335,19 +337,16 @@ if __name__ == '__main__':
     '''
     
     #train feedback weights
-    ''' 
-    for id_layer in range(len(net.layers) - 1):
+    y = net.layers[0](data).detach()
+    
+    for id_layer in range(len(net.layers) - 1):  
         for iter in range(1, args.iter + 1):
             if (iter % 10 == 0):
                 print('Iteration {}'.format(iter))
 
-            y_temp, r_temp = net.layers[id_layer + 1](y[id_layer])
-            noise = args.noise[id_layer]*torch.randn_like(y[id_layer])
-            
-            noisy_input = y[id_layer] + noise
-                                  
-            y_noise, r_noise = net.layers[id_layer + 1](noisy_input)
-
+            y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
+            noise = args.noise[id_layer]*torch.randn_like(y)
+            y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
             dy = (y_noise - y_temp)
             dr = (r_noise - r_temp)
            
@@ -373,13 +372,14 @@ if __name__ == '__main__':
         print('Distance between weights: {:.2f}'.format(dist_weight))
         print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
-        #print('Good!')
-    '''
-    
-    #_, (data, target) = next(enumerate(train_loader))             
-    #data = data.to(device)    
-    #target = target.to(device)
+        #go to the next layer
+        y = net.layers[id_layer + 1](y).detach()
+        
+        print('Good!')
 
+    
+    #train forward weights
+    '''
     net.train()
     train_loss = 0
     correct = 0
@@ -413,11 +413,11 @@ if __name__ == '__main__':
            
             loss_f.backward(retain_graph = True)
             
-            '''
-            for id_layers in range(len(net.layers)):
-                if net.layers[id_layers].f.weight.grad is not None:
-                    print('After backward: layer {} has mean grad {}'.format(id_layers,net.layers[id_layers].f.weight.grad.mean()))        
-            '''
+            
+            #for id_layers in range(len(net.layers)):
+            #    if net.layers[id_layers].f.weight.grad is not None:
+            #        print('After backward: layer {} has mean grad {}'.format(id_layers,net.layers[id_layers].f.weight.grad.mean()))        
+            
 
             optimizer_f.step()
              
@@ -435,6 +435,7 @@ if __name__ == '__main__':
 
         progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
                      % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+    '''
 
     #Testing prototype
     '''          
