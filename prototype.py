@@ -186,6 +186,10 @@ class layer_fc(nn.Module):
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data
 
+    def weight_b_sym(self):
+        with torch.no_grad():
+            self.f.weight.data = self.b.weight.data.t()
+
 class layer_conv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(layer_conv, self).__init__()
@@ -245,6 +249,13 @@ class layer_conv(nn.Module):
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data
         '''
+    
+    def weight_b_sym(self):
+        with torch.no_grad():
+            self.b.weight.data = self.f.weight.data
+
+
+        
 
 class globalNet(nn.Module):
     def __init__(self, args):
@@ -283,20 +294,20 @@ class globalNet(nn.Module):
 
             return s, r
 
+    def weight_b_sym(self):
+        for i in range(len(self.layers)):
+            self.layers[i].weight_b_sym()
+
 if __name__ == '__main__':
 
     #Testing globalNet
-   
+ 
     net = globalNet(args)
     net.to(device)
     
-    
-    _, (data, target) = next(enumerate(train_loader))         
-    
-    data = data.to(device)    
-    target = target.to(device)
-    
-
+    #WATCH OUT: symmetricize weights
+    net.weight_b_sym() 
+        
     #Initialize optimizers for forward and backward weights
     
     optim_params_f = []
@@ -364,40 +375,66 @@ if __name__ == '__main__':
 
         #print('Good!')
     '''
+    
+    #_, (data, target) = next(enumerate(train_loader))             
+    #data = data.to(device)    
+    #target = target.to(device)
 
-    #train forward weights    
-    y, r = net(data, ind = len(net.layers))
+    net.train()
+    train_loss = 0
+    correct = 0
+    total = 0
+    
+    for batch_idx, (data, target) in enumerate(train_loader):
 
-    #compute prediction
-    pred = torch.exp(net.logsoft(y)) 
-    target = F.one_hot(target, num_classes=10).float()
+        data, target = data.to(device), target.to(device)
 
-    #compute first target on the softmax logits
-    t = y - args.beta*(target - pred)
+        #train forward weights    
+        y, r = net(data, ind = len(net.layers))
 
-    for i in range(len(net.layers)):        
-        print('Layer {}'.format(len(net.layers) - 1 - i))
+        #compute prediction
+        pred = torch.exp(net.logsoft(y)) 
+        target = F.one_hot(target, num_classes=10).float()
 
-        #update forward weights
-        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
-        loss_f = loss_f.mean()
-                
-        optimizer_f.zero_grad()
-       
-        loss_f.backward(retain_graph = True)
+        #compute first target on the softmax logits
+        t = y + args.beta*(target - pred)
+
+        for i in range(len(net.layers)):        
+            #print('Layer {}'.format(len(net.layers) - 1 - i))
+
+            #update forward weights
+            loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+            loss_f = loss_f.mean()
+            
+            if i == 0:
+                loss = loss_f
         
-        for id_layers in range(len(net.layers)):
-            if net.layers[id_layers].f.weight.grad is not None:
-                print('After backward: layer {} has mean grad {}'.format(id_layers,net.layers[id_layers].f.weight.grad.mean()))        
+            optimizer_f.zero_grad()
+           
+            loss_f.backward(retain_graph = True)
+            
+            '''
+            for id_layers in range(len(net.layers)):
+                if net.layers[id_layers].f.weight.grad is not None:
+                    print('After backward: layer {} has mean grad {}'.format(id_layers,net.layers[id_layers].f.weight.grad.mean()))        
+            '''
 
-        optimizer_f.step()
-         
-        #compute previous targets         
-        if (i < len(net.layers) - 1):
-            delta = net.layers[-1 - i].bb(r, t) - r
-            y, r = net(data, ind = len(net.layers) - 1 - i)
-            t = (y + delta).detach()
+            optimizer_f.step()
+             
+            #compute previous targets         
+            if (i < len(net.layers) - 1):
+                delta = net.layers[-1 - i].bb(r, t) - r
+                y, r = net(data, ind = len(net.layers) - 1 - i)
+                t = (y + delta).detach()
         
+        train_loss += loss.item()
+        _, predicted = pred.max(1)
+        _, targets = target.max(1)
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
+                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
     #Testing prototype
     '''          
