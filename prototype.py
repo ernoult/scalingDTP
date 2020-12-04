@@ -91,108 +91,16 @@ else:
     device = torch.device("cpu")
 
 
-class layer_fc(nn.Module):
-    def __init__(self, in_size, out_size, last_layer = False):
-        super(layer_fc, self).__init__()
-        self.f = nn.Linear(in_size, out_size)
-        self.b = nn.Linear(out_size, in_size)
-        self.last_layer = last_layer
-
-    def ff(self, x):
-        #y = self.f(torch.tanh(x))
-        if self.last_layer:
-            x_flat = x.view(x.size(0), - 1)
-            y = self.f(x_flat)
-        else:
-            y = self.f(x)
-        return y
-
-    def bb(self, x, y):
-        #r = self.b(torch.tanh(y))
-        r = self.b(y)
-        
-        if self.last_layer:
-            r = r.view(x.size())
-
-        return r        
-
-    def forward(self, x):
-        y = self.ff(x)
-        r = self.bb(x, y)
-        
-        y = y.detach()
-        y.requires_grad = True
-
-        return y, r
-
-    def weight_b_normalize(self, dx, dy, dr):
-                     
-        factor = ((dy**2).sum(1))/((dx*dr).view(dx.size(0), -1).sum(1))
-        factor = factor.mean()
-        #factor = 0.5*factor
-
-        with torch.no_grad():
-            self.b.weight.data = factor*self.b.weight.data
-
-class layer_conv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(layer_conv, self).__init__()
-        self.f = nn.Conv2d(in_channels, out_channels, 5, stride = 2)
-        self.b = nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)
+def copy(y, ind_y):
+    y_copy = []
     
+    for i in range(len(y)):
+        y_copy.append(y[i].clone())
 
-    def ff(self, x):
-        y = F.relu(self.f(x))
-        #y = self.f(x)
-        return y
+    #WATCH OUT: detach previous node!
+    y_copy[ind_y - 1] = y_copy[ind_y - 1].detach()    
 
-    def bb(self, x, y):
-        #r = F.relu(self.b(y))
-        r = F.relu(self.b(y, output_size = x.size()))
-        return r 
-
-    def forward(self, x):
-        y = self.ff(x)
-        r = self.bb(x, y)
-        y = y.detach()
-        y.requires_grad = True
-        return y, r
-
-
-    def weight_b_normalize(self, dx, dy, dr):
-        
-        #first technique: same normalization for all out fmaps        
-        
-        dy = dy.view(dy.size(0), -1)
-        dx = dx.view(dx.size(0), -1)
-        dr = dr.view(dr.size(0), -1)
-       
-
-        #print(dy.size())
-        #print(dx.size())
-        #print(dr.size())
- 
-        factor = ((dy**2).sum(1))/((dx*dr).sum(1))
-        factor = factor.mean()
-        #factor = 0.5*factor
-
-        with torch.no_grad():
-            self.b.weight.data = factor*self.b.weight.data    
-
-        #second technique: fmaps-wise normalization
-        '''
-        dy_square = ((dy.view(dy.size(0), dy.size(1), -1))**2).sum(-1) 
-        dx = dx.view(dx.size(0), dx.size(1), -1)
-        dr = dr.view(dr.size(0), dr.size(1), -1)
-        dxdr = (dx*dr).sum(-1)
-        
-        factor = torch.bmm(dy_square.unsqueeze(-1), dxdr.unsqueeze(-1).transpose(1,2)).mean(0)
-       
-        factor = factor.view(factor.size(0), factor.size(1), 1, 1)
-         
-        with torch.no_grad():
-            self.b.weight.data = factor*self.b.weight.data
-        '''
+    return y_copy
 
 def compute_jacobians(net, x, y):
     jac_F = torch.autograd.functional.jacobian(net.ff, x) 
@@ -238,6 +146,106 @@ class smallNet_benchmark(nn.Module):
         return out
 
 
+class layer_fc(nn.Module):
+    def __init__(self, in_size, out_size, last_layer = False):
+        super(layer_fc, self).__init__()
+        self.f = nn.Linear(in_size, out_size)
+        self.b = nn.Linear(out_size, in_size)
+        self.last_layer = last_layer
+
+    def ff(self, x):
+        if self.last_layer:
+            x_flat = x.view(x.size(0), - 1)
+            y = self.f(x_flat)
+        else:
+            y = self.f(x)
+        return y
+
+    def bb(self, x, y):
+        r = self.b(y)
+        
+        if self.last_layer:
+            r = r.view(x.size())
+
+        return r        
+
+    def forward(self, x, back = False):
+        y = self.ff(x)
+    
+        if back:
+            r = self.bb(x, y)
+            return y, r 
+        else:
+            return y     
+
+    def weight_b_normalize(self, dx, dy, dr):
+                     
+        factor = ((dy**2).sum(1))/((dx*dr).view(dx.size(0), -1).sum(1))
+        factor = factor.mean()
+
+        with torch.no_grad():
+            self.b.weight.data = factor*self.b.weight.data
+
+class layer_conv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(layer_conv, self).__init__()
+        self.f = nn.Conv2d(in_channels, out_channels, 5, stride = 2)
+        self.b = nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)
+    
+
+    def ff(self, x):
+        y = F.relu(self.f(x))
+        return y
+
+    def bb(self, x, y):
+        r = F.relu(self.b(y, output_size = x.size()))
+        return r 
+
+    def forward(self, x, back = False):
+        y = self.ff(x)
+        
+        if back:
+            r = self.bb(x, y)
+            return y, r
+        else:
+            return y
+
+        #return y
+
+    def weight_b_normalize(self, dx, dy, dr):
+        
+        #first technique: same normalization for all out fmaps        
+        
+        dy = dy.view(dy.size(0), -1)
+        dx = dx.view(dx.size(0), -1)
+        dr = dr.view(dr.size(0), -1)
+       
+        #print(dy.size())
+        #print(dx.size())
+        #print(dr.size())
+ 
+        factor = ((dy**2).sum(1))/((dx*dr).sum(1))
+        factor = factor.mean()
+        #factor = 0.5*factor
+
+        with torch.no_grad():
+            self.b.weight.data = factor*self.b.weight.data    
+
+        #second technique: fmaps-wise normalization
+        '''
+        dy_square = ((dy.view(dy.size(0), dy.size(1), -1))**2).sum(-1) 
+        dx = dx.view(dx.size(0), dx.size(1), -1)
+        dr = dr.view(dr.size(0), dr.size(1), -1)
+        dxdr = (dx*dr).sum(-1)
+        
+        factor = torch.bmm(dy_square.unsqueeze(-1), dxdr.unsqueeze(-1).transpose(1,2)).mean(0)
+       
+        factor = factor.view(factor.size(0), factor.size(1), 1, 1)
+         
+        with torch.no_grad():
+            self.b.weight.data = factor*self.b.weight.data
+        '''
+
 class globalNet(nn.Module):
     def __init__(self, args):
         super(globalNet, self).__init__()
@@ -255,23 +263,27 @@ class globalNet(nn.Module):
         self.layers = layers
         self.logsoft = nn.LogSoftmax(dim=1) 
 
-    def forward(self, x):
+    def forward(self, x, ind = None):
         s = x
-        y = []
-        r = []
 
-        for i in range(len(self.layers)):
-            y_temp, r_temp = self.layers[i](s)      
-            y.append(y_temp)
-            if i > 0:
-                r.append(r_temp)
-            s = y_temp
+        if ind is None:
+            for i in range(len(self.layers)):
+                s  = self.layers[i](s)
+       
+            return s
 
-        return y, r
- 
+        else:
+            for i in range(ind):
+                if i == ind - 1:
+                    s = s.detach()
+                    s.requires_grad = True
+                    s, r = self.layers[i](s, back = True)
+                else:
+                    s = self.layers[i](s) 
+
+            return s, r
 
 if __name__ == '__main__':
-
 
     #Testing globalNet
    
@@ -283,6 +295,8 @@ if __name__ == '__main__':
     
     data = data.to(device)    
     target = target.to(device)
+    
+
     #Initialize optimizers for forward and backward weights
     
     optim_params_f = []
@@ -299,14 +313,15 @@ if __name__ == '__main__':
 
 
     #forward pass
-
-    y, r = net(data)
+    #y, r = net(data)
     
-     
-    #for i in range(len(y)):
-    #    print('Layer y {}: {}'.format(i + 1, y[i].size()))
-    #    print('Layer r {}: {}'.format(i + 1, r[i].size()))
     
+    #check layer sizes
+    ''' 
+    for i in range(len(y)):
+        print('Layer y {}: {}'.format(i + 1, y[i].size()))
+        print('Layer r {}: {}'.format(i + 1, r[i].size()))
+    '''
     
     #train feedback weights
     ''' 
@@ -350,37 +365,42 @@ if __name__ == '__main__':
         #print('Good!')
     '''
 
-    #train forward weights
-        
+    #train forward weights    
+    y, r = net(data, ind = len(net.layers))
+
     #compute prediction
-    pred = torch.exp(net.logsoft(y[-1])) 
+    pred = torch.exp(net.logsoft(y)) 
     target = F.one_hot(target, num_classes=10).float()
 
     #compute first target on the softmax logits
-    t = y[-1] - args.beta*(target - pred)
+    t = y - args.beta*(target - pred)
 
-    print(t.size())
+    for i in range(len(net.layers)):        
+        print('Layer {}'.format(len(net.layers) - 1 - i))
 
-    for i in range(len(net.layers) - 1):
         #update forward weights
-        loss_f = 0.5*((y[-1 - i] - t)**2).view(y[-1 - i].size(0), -1).sum(1)
+        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
         loss_f = loss_f.mean()
-        
+                
         optimizer_f.zero_grad()
+       
         loss_f.backward(retain_graph = True)
-        optimizer_f.step()
+        
+        for id_layers in range(len(net.layers)):
+            if net.layers[id_layers].f.weight.grad is not None:
+                print('After backward: layer {} has mean grad {}'.format(id_layers,net.layers[id_layers].f.weight.grad.mean()))        
 
-        #print(y[-1 - (i + 1)].size())
-        #print(net.layers[-1 - i].bb(y[-1 - (i + 1)], t).size())
-        #print(r[-1 - i].size())
-        #compute previous targets
+        optimizer_f.step()
+         
+        #compute previous targets         
+        if (i < len(net.layers) - 1):
+            delta = net.layers[-1 - i].bb(r, t) - r
+            y, r = net(data, ind = len(net.layers) - 1 - i)
+            t = (y + delta).detach()
         
-        t = y[-1 - (i + 1)] + net.layers[-1 - i].bb(y[-1 - (i + 1)], t) - r[-1 - i]
-        
-        #print(t.size())
 
     #Testing prototype
-    '''           
+    '''          
     _, (x, _) = next(enumerate(train_loader))     
     
     #x = torch.randn(args.batch_size, 1, 28, 28)
