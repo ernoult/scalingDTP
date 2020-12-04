@@ -28,10 +28,12 @@ parser.add_argument('--iter', type=int, default=20, help='number of iterationson
 parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
 parser.add_argument('--device-label', type=int, default=0, help='device (default: 1)')   
 #parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
-parser.add_argument('--lr', type=float, default=0.001, help='learning rate (default: 0.001)')   
+parser.add_argument('--lr_f', type=float, default=0.05, help='learning rate (default: 0.05)')   
+parser.add_argument('--lr_b', type=float, default=0.5, help='learning rate of the feedback weights (default: 0.5)')   
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
 parser.add_argument('--beta', type=float, default=0.1, help='nudging parameter (default: 0.1)')   
 parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1 (default: False)')
+parser.add_argument('--sym', default=False, action='store_true',help='sets symmetric weight initialization (default: False)')
 parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
 parser.add_argument('--conv', default=False, action='store_true',help='select the conv archi (default: False)')
 parser.add_argument('--C', nargs = '+', type=int, default=[128, 512], help='tab of channels (default: [128, 512])')
@@ -298,14 +300,13 @@ class globalNet(nn.Module):
 if __name__ == '__main__':
 
     #Testing globalNet
- 
+
     net = globalNet(args)
     net.to(device)
     
     #*****WATCH OUT: symmetricize weights*****#
-    
-    #net.weight_b_sym() 
-    
+    if args.sym:
+        net.weight_b_sym() 
     #*****************************************#
     
     #Initialize optimizers for forward and backward weights
@@ -314,36 +315,27 @@ if __name__ == '__main__':
     optim_params_b = []
 
     for i in range(len(net.layers)):
-        optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr})
+        optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
         
     for i in range(len(net.layers) - 1):
-        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr})
+        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b})
 
     optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
     optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
     
+  
+    #test layer-wise feedback weight training
+    '''
     _, (data, target) = next(enumerate(train_loader))             
     data = data.to(device)    
     target = target.to(device)
-
-    #forward pass
-    #y, r = net(data)
-       
-    #check layer sizes
-    ''' 
-    for i in range(len(y)):
-        print('Layer y {}: {}'.format(i + 1, y[i].size()))
-        print('Layer r {}: {}'.format(i + 1, r[i].size()))
-    '''
     
-    #train feedback weights
     y = net.layers[0](data).detach()
     
     for id_layer in range(len(net.layers) - 1):  
         for iter in range(1, args.iter + 1):
-            if (iter % 10 == 0):
-                print('Iteration {}'.format(iter))
-
+            #if (iter % 10 == 0):
+            #    print('Iteration {}'.format(iter))
             y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
             noise = args.noise[id_layer]*torch.randn_like(y)
             y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
@@ -364,22 +356,18 @@ if __name__ == '__main__':
         #WATCH OUT: renormalize once per sample
         net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)        
         
-        if id_layer < len(net.layers) - 2:
-            dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
-        else:
-            dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
+        #if id_layer < len(net.layers) - 2:
+        #    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
+        #else:
+        #    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
 
-        print('Distance between weights: {:.2f}'.format(dist_weight))
-        print('Weight angle: {:.2f} deg'.format(angle_weight))         
+        #print('Distance between weights: {:.2f}'.format(dist_weight))
+        #print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
         #go to the next layer
         y = net.layers[id_layer + 1](y).detach()
-        
-        print('Good!')
-
-    
-    #train forward weights
     '''
+     
     net.train()
     train_loss = 0
     correct = 0
@@ -388,8 +376,37 @@ if __name__ == '__main__':
     for batch_idx, (data, target) in enumerate(train_loader):
 
         data, target = data.to(device), target.to(device)
+        
+        #****FEEDBACK WEIGHTS****#
+        
+        y = net.layers[0](data).detach() 
+        for id_layer in range(len(net.layers) - 1):  
+            for iter in range(1, args.iter + 1):
+                y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
+                noise = args.noise[id_layer]*torch.randn_like(y)
+                y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
+                dy = (y_noise - y_temp)
+                dr = (r_noise - r_temp)
+               
+                loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+                
+                optimizer_b.zero_grad()
+                   
+                if iter < args.iter:
+                    loss_b.backward(retain_graph = True)
+                else:
+                    loss_b.backward()
+                
+                optimizer_b.step()
+           
+            #renormalize once per sample
+            net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)        
+            
+            #go to the next layer
+            y = net.layers[id_layer + 1](y).detach()
 
-        #train forward weights    
+        #****FORWARD WEIGHTS****#
+    
         y, r = net(data, ind = len(net.layers))
 
         #compute prediction
@@ -400,7 +417,6 @@ if __name__ == '__main__':
         t = y + args.beta*(target - pred)
 
         for i in range(len(net.layers)):        
-            #print('Layer {}'.format(len(net.layers) - 1 - i))
 
             #update forward weights
             loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
@@ -410,15 +426,7 @@ if __name__ == '__main__':
                 loss = loss_f
         
             optimizer_f.zero_grad()
-           
-            loss_f.backward(retain_graph = True)
-            
-            
-            #for id_layers in range(len(net.layers)):
-            #    if net.layers[id_layers].f.weight.grad is not None:
-            #        print('After backward: layer {} has mean grad {}'.format(id_layers,net.layers[id_layers].f.weight.grad.mean()))        
-            
-
+            loss_f.backward(retain_graph = True) 
             optimizer_f.step()
              
             #compute previous targets         
@@ -435,7 +443,6 @@ if __name__ == '__main__':
 
         progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
                      % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-    '''
 
     #Testing prototype
     '''          
