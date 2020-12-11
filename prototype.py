@@ -373,76 +373,77 @@ if __name__ == '__main__':
     correct = 0
     total = 0
     
-    for batch_idx, (data, target) in enumerate(train_loader):
+    for _ in range(args.epochs): 
+        for batch_idx, (data, target) in enumerate(train_loader):
 
-        data, target = data.to(device), target.to(device)
-        
-        #****FEEDBACK WEIGHTS****#
-        
-        y = net.layers[0](data).detach() 
-        for id_layer in range(len(net.layers) - 1):  
-            for iter in range(1, args.iter + 1):
-                y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
-                noise = args.noise[id_layer]*torch.randn_like(y)
-                y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
-                dy = (y_noise - y_temp)
-                dr = (r_noise - r_temp)
-               
-                loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-                
-                optimizer_b.zero_grad()
+            data, target = data.to(device), target.to(device)
+            
+            #****FEEDBACK WEIGHTS****#
+            
+            y = net.layers[0](data).detach() 
+            for id_layer in range(len(net.layers) - 1):  
+                for iter in range(1, args.iter + 1):
+                    y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
+                    noise = args.noise[id_layer]*torch.randn_like(y)
+                    y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
+                    dy = (y_noise - y_temp)
+                    dr = (r_noise - r_temp)
                    
-                if iter < args.iter:
-                    loss_b.backward(retain_graph = True)
-                else:
-                    loss_b.backward()
+                    loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+                    
+                    optimizer_b.zero_grad()
+                       
+                    if iter < args.iter:
+                        loss_b.backward(retain_graph = True)
+                    else:
+                        loss_b.backward()
+                    
+                    optimizer_b.step()
+               
+                #renormalize once per sample
+                net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)        
                 
-                optimizer_b.step()
-           
-            #renormalize once per sample
-            net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)        
-            
-            #go to the next layer
-            y = net.layers[id_layer + 1](y).detach()
+                #go to the next layer
+                y = net.layers[id_layer + 1](y).detach()
 
-        #****FORWARD WEIGHTS****#
-    
-        y, r = net(data, ind = len(net.layers))
-
-        #compute prediction
-        pred = torch.exp(net.logsoft(y)) 
-        target = F.one_hot(target, num_classes=10).float()
-
-        #compute first target on the softmax logits
-        t = y + args.beta*(target - pred)
-
-        for i in range(len(net.layers)):        
-
-            #update forward weights
-            loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
-            loss_f = loss_f.mean()
-            
-            if i == 0:
-                loss = loss_f
+            #****FORWARD WEIGHTS****#
         
-            optimizer_f.zero_grad()
-            loss_f.backward(retain_graph = True) 
-            optimizer_f.step()
-             
-            #compute previous targets         
-            if (i < len(net.layers) - 1):
-                delta = net.layers[-1 - i].bb(r, t) - r
-                y, r = net(data, ind = len(net.layers) - 1 - i)
-                t = (y + delta).detach()
-        
-        train_loss += loss.item()
-        _, predicted = pred.max(1)
-        _, targets = target.max(1)
-        total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+            y, r = net(data, ind = len(net.layers))
 
-        progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            #compute prediction
+            pred = torch.exp(net.logsoft(y)) 
+            target = F.one_hot(target, num_classes=10).float()
+
+            #compute first target on the softmax logits
+            t = y + args.beta*(target - pred)
+
+            for i in range(len(net.layers)):        
+
+                #update forward weights
+                loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+                loss_f = loss_f.mean()
+                
+                if i == 0:
+                    loss = loss_f
+            
+                optimizer_f.zero_grad()
+                loss_f.backward(retain_graph = True) 
+                optimizer_f.step()
+                 
+                #compute previous targets         
+                if (i < len(net.layers) - 1):
+                    delta = net.layers[-1 - i].bb(r, t) - r
+                    y, r = net(data, ind = len(net.layers) - 1 - i)
+                    t = (y + delta).detach()
+            
+            train_loss += loss.item()
+            _, predicted = pred.max(1)
+            _, targets = target.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
+                         % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
     #Testing prototype
     '''          
