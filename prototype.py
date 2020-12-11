@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 
 from plotFunctions import *
 from tools import *
-from utils import * 
 
 parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
 
@@ -27,7 +26,6 @@ parser.add_argument('--epochs', type=int, default=15, help='number of epochs to 
 parser.add_argument('--iter', type=int, default=20, help='number of iterationson feedback weights per batch samples (default: 20)') 
 parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
 parser.add_argument('--device-label', type=int, default=0, help='device (default: 1)')   
-#parser.add_argument('--noise', type=float, default=0.05, help='noise level (default: 0.05)')   
 parser.add_argument('--lr_f', type=float, default=0.05, help='learning rate (default: 0.05)')   
 parser.add_argument('--lr_b', type=float, default=0.5, help='learning rate of the feedback weights (default: 0.5)')   
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
@@ -42,7 +40,6 @@ parser.add_argument('--noise', nargs = '+', type=float, default=[0.05, 0.5], hel
 
 args = parser.parse_args()  
 
-#print(args.seed)
 
 if args.seed:
     torch.manual_seed(1)
@@ -226,13 +223,9 @@ class layer_conv(nn.Module):
         dx = dx.view(dx.size(0), -1)
         dr = dr.view(dr.size(0), -1)
        
-        #print(dy.size())
-        #print(dx.size())
-        #print(dr.size())
  
         factor = ((dy**2).sum(1))/((dx*dr).sum(1))
         factor = factor.mean()
-        #factor = 0.5*factor
 
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data    
@@ -300,7 +293,7 @@ class globalNet(nn.Module):
 if __name__ == '__main__':
 
     #Testing globalNet
-
+    '''
     net = globalNet(args)
     net.to(device)
     
@@ -322,52 +315,7 @@ if __name__ == '__main__':
 
     optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
     optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
-    
-  
-    #test layer-wise feedback weight training
-    '''
-    _, (data, target) = next(enumerate(train_loader))             
-    data = data.to(device)    
-    target = target.to(device)
-    
-    y = net.layers[0](data).detach()
-    
-    for id_layer in range(len(net.layers) - 1):  
-        for iter in range(1, args.iter + 1):
-            #if (iter % 10 == 0):
-            #    print('Iteration {}'.format(iter))
-            y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
-            noise = args.noise[id_layer]*torch.randn_like(y)
-            y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
-            dy = (y_noise - y_temp)
-            dr = (r_noise - r_temp)
-           
-            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-            
-            optimizer_b.zero_grad()
-               
-            if iter < args.iter:
-                loss_b.backward(retain_graph = True)
-            else:
-                loss_b.backward()
-            
-            optimizer_b.step()
-       
-        #WATCH OUT: renormalize once per sample
-        net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)        
-        
-        #if id_layer < len(net.layers) - 2:
-        #    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
-        #else:
-        #    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
 
-        #print('Distance between weights: {:.2f}'.format(dist_weight))
-        #print('Weight angle: {:.2f} deg'.format(angle_weight))         
-
-        #go to the next layer
-        y = net.layers[id_layer + 1](y).detach()
-    '''
-     
     net.train()
     train_loss = 0
     correct = 0
@@ -445,72 +393,84 @@ if __name__ == '__main__':
             progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
                          % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
-    #Testing prototype
-    '''          
-    _, (x, _) = next(enumerate(train_loader))     
+    '''
     
-    #x = torch.randn(args.batch_size, 1, 28, 28)
-    x = x.to(device)
+    #Coding the learning procedure for the feedback weights
 
-    if args.conv:
-        net = layer_conv(args.in_channels, args.out_channels)
-    else:
-        net = layer_fc(args.in_size, args.out_size)
-    
+    net = globalNet(args)
     net.to(device)
-    y, r = net(x)
    
-    #test normalization
+    optim_params_b = []
+        
+    for i in range(len(net.layers) - 1):
+        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b})
 
-    noise = args.noise*torch.randn_like(x)
-    y_noise, r_noise = net(x + noise)
-
-    net.weight_b_normalize(noise, y_noise - y, r_noise - r)        
- 
-    #print(x.size())
-    #print(y.size())
-    #print(r.size())    
-
-    print('Done!')
+    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
     
-    print(net.f.weight.size())
-    print(net.b.weight.size())
-    '''
+    weight_tab = []
+    loss_tab = []
 
-    #testing smallNet_benchmark
-    '''
-    _, (x, _) = next(enumerate(train_loader))
-    
-    x = x.to(device)
-    net = smallNet_benchmark()
-    net.to(device) 
-    out = net(x)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                        momentum=0.9)
-    for epochs in range(1, args.epochs + 1):
-        train(epochs)
-        test(epochs)
+    for id_layer in range(len(net.layers) - 1):
+        weight_tab.append({'dist_weight' : [], 'angle_weight' : []})
+        loss_tab.append([])
 
-    print('All right!') 
-    '''
 
-    #testing jacobian computation on a simple case 
- 
-    #compute_dist_jacobians(net, x, y)
-    
-    '''
-    jac = torch.autograd.functional.jacobian(net.ff, x) 
-    jac = torch.transpose(torch.diagonal(jac, dim1 = 0, dim2 = 2), 0, 2)
-    print(torch.all(torch.eq(jac[0, :], torch.transpose(net.f.weight, 0, 1)))) 
+    for batch_iter in range(args.epochs):
+        _, (data, target) = next(enumerate(train_loader))             
+        data, target = data.to(device), target.to(device)
+                                   
+        y = net.layers[0](data).detach()
+        print('\n Batch iteration {}'.format(batch_iter + 1))
+        for id_layer in range(len(net.layers) - 1):  
+            for iter in range(1, args.iter + 1):
+                y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
+                noise = args.noise[id_layer]*torch.randn_like(y)
+                y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
+                dy = (y_noise - y_temp)
+                dr = (r_noise - r_temp)
+               
+                loss_b = - (noise*dr).view(dr.size(0), -1).sum(1).mean()
+                
+                optimizer_b.zero_grad()
+                   
+                if iter < args.iter:
+                    loss_b.backward(retain_graph = True)
+                else:
+                    loss_b.backward()
+                
+                optimizer_b.step()
+           
+            #renormalize once per sample
+            net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)
+            
+            if id_layer < len(net.layers) - 2:
+                dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
+            else:
+                dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
 
-    jac_2 = torch.autograd.functional.jacobian(net.bb, y) 
-    jac_2 = torch.transpose(torch.diagonal(jac_2, dim1 = 0, dim2 = 2), 0, 2)
-    print(torch.all(torch.eq(jac_2[0, :], torch.transpose(net.b.weight, 0, 1)))) 
-    '''
-    #print('Done!')
-    
-    #Coding the learning procedure for the feedback weights 
+            loss_tab[id_layer].append(loss_b)
+            weight_tab[id_layer]['dist_weight'].append(dist_weight)
+            weight_tab[id_layer]['angle_weight'].append(angle_weight)
+                       
+        
+            if id_layer < len(net.layers) - 2:
+                layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
+            else:
+                layer_str = 'FC layer:'  
+
+            print(layer_str)
+            print('Distance between weights: {:.2f}'.format(dist_weight))
+            print('Weight angle: {:.2f} deg'.format(angle_weight))         
+
+            #go to the next layer
+            y = net.layers[id_layer + 1](y).detach()
+
+        results = {'weight_tab' : weight_tab, 'loss_tab' : loss_tab}
+
+    plot_results(results)
+    plt.show()
+
+
     '''           
     BASE_PATH = createPath(args) 
     createHyperparameterfile(BASE_PATH, args)
@@ -604,4 +564,22 @@ if __name__ == '__main__':
     print('Done!')
     plot_results(results_dict) 
     plt.show()
+    '''
+
+    #testing smallNet_benchmark
+    '''
+    _, (x, _) = next(enumerate(train_loader))
+    
+    x = x.to(device)
+    net = smallNet_benchmark()
+    net.to(device) 
+    out = net(x)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(net.parameters(), lr=args.lr,
+                        momentum=0.9)
+    for epochs in range(1, args.epochs + 1):
+        train(epochs)
+        test(epochs)
+
+    print('All right!') 
     '''

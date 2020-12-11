@@ -11,10 +11,10 @@ linewidth = 5
 def plot_results(results):
     
     #Loss stuff    
-    epochs = len(results['loss'])
+    epochs = len(results['loss_tab'][0])
     fig1 = plt.figure(figsize=(5, 4))
     plt.rcParams.update({'font.size': fontsize}) 
-    plt.plot(np.linspace(1, epochs, epochs), results['loss'], linewidth=2.5, alpha=0.8)
+    plt.plot(np.linspace(1, epochs, epochs), results['loss_tab'][0], linewidth=2.5, alpha=0.8)
     plt.xlabel('Batch iterations')
     plt.ylabel('Loss of feedback weights')
     plt.grid()
@@ -22,36 +22,18 @@ def plot_results(results):
     fig1.tight_layout()    
     fig1.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
     
-    #Jacobian stuff
-    if 'angle_jac' in results:
-        fig2 = plt.figure(figsize=(8, 4))
-        plt.rcParams.update({'font.size': fontsize}) 
-        plt.subplot(121)
-        plt.plot(np.linspace(1, epochs, epochs), results['angle_jac'], linewidth=2.5, alpha=0.8)
-        plt.xlabel('Batch iterations')
-        plt.ylabel('Angle between ' + r'$ dF/ds^\top$'+ ' and ' + r'$dG/ds$' + r' $ (\circ)$')
-        plt.grid()
-        fig2.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-        plt.subplot(122)
-        plt.plot(np.linspace(1, epochs, epochs), results['dist_jac'], linewidth=2.5, alpha=0.8)
-        plt.xlabel('Batch iterations')
-        plt.ylabel('Distance between ' + r'$ dF/ds^\top$'+ ' and ' + r'$dG/ds$')
-        plt.grid()
-        plt.subplots_adjust(hspace = 0.5)
-        fig2.tight_layout() 
-        fig2.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
 
     #Weight stuff
     fig3 = plt.figure(figsize=(8, 4))
     plt.rcParams.update({'font.size': fontsize}) 
     plt.subplot(121)
-    plt.plot(np.linspace(1, epochs, epochs), results['angle_weight'], linewidth=2.5, alpha=0.8)
+    plt.plot(np.linspace(1, epochs, epochs), results['weight_tab'][0]['angle_weight'], linewidth=2.5, alpha=0.8)
     plt.xlabel('Batch iterations')
     plt.ylabel('Angle between ' + r'$w_f^\top$'+ ' and ' + r'$w_b$' + r' $ (\circ)$')
     plt.grid()
     fig3.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
     plt.subplot(122)
-    plt.plot(np.linspace(1, epochs, epochs), results['dist_weight'], linewidth=2.5, alpha=0.8)
+    plt.plot(np.linspace(1, epochs, epochs), results['weight_tab'][0]['dist_weight'], linewidth=2.5, alpha=0.8)
     plt.xlabel('Batch iterations')
     plt.ylabel('Distance between ' + r'$w_f^\top$'+ ' and ' + r'$w_b$')
     plt.grid()
