@@ -93,7 +93,10 @@ def format_time(seconds):
 
 def createPath(args):
 
-    BASE_PATH = os.getcwd() + '/learn_jacobian' 
+    if args.action == 'train':
+        BASE_PATH = os.getcwd() + '/train_forward' 
+    elif args.action == 'test':
+        BASE_PATH = os.getcwd() + '/train_feedback' 
     
     if not os.path.exists(BASE_PATH):
         os.mkdir(BASE_PATH)
@@ -126,16 +129,19 @@ def createPath(args):
 
     return BASE_PATH
 
-def createHyperparameterfile(BASE_PATH, args):    
+def createHyperparameterfile(BASE_PATH, command_line, args):    
 
     hyperparameters = open(BASE_PATH + r"/hyperparameters.txt","w+") 
     L = ["List of hyperparameters " + "(" +  datetime.datetime.now().strftime("cuda" + str(args.device_label)+"-%Y-%m-%d") + ") \n",
         "- noise: {}".format(args.noise) + "\n",
-        "- learning rate: {}".format(args.lr) + "\n",
-        "- lambda: {}".format(args.lamb) + "\n",
+        "- learning rate for forward weights: {}".format(args.lr_f) + "\n",
+        "- learning rate for feedback weights: {}".format(args.lr_b) + "\n",
         "- batch size: {}".format(args.batch_size) + "\n",
+        "- symmetric weight initialization: {}".format(args.sym) + "\n",
         "- number of epochs: {}".format(args.epochs) + "\n",
-        "- fixed seed: {}".format(args.seed) + "\n"]
+        "- fixed seed: {}".format(args.seed) + "\n", 
+        "\n To reproduce this simulation, type in the terminal:\n",
+        "\n" + command_line + "\n"]
 
 
     hyperparameters.writelines(L) 

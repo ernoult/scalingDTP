@@ -36,10 +36,9 @@ parser.add_argument('--jacobian', default=False, action='store_true',help='compu
 parser.add_argument('--conv', default=False, action='store_true',help='select the conv archi (default: False)')
 parser.add_argument('--C', nargs = '+', type=int, default=[128, 512], help='tab of channels (default: [128, 512])')
 parser.add_argument('--noise', nargs = '+', type=float, default=[0.05, 0.5], help='tab of noise amplitude (default: [0.05, 0.5])')
-
+parser.add_argument('--action', type=str, default='train', help='action to execute (default: train)') 
 
 args = parser.parse_args()  
-
 
 if args.seed:
     torch.manual_seed(1)
@@ -265,6 +264,8 @@ class globalNet(nn.Module):
         layers.append(layer_fc((size**2)*args.C[-1], 10, last_layer = True))
         self.layers = layers
         self.logsoft = nn.LogSoftmax(dim=1) 
+        self.noise = args.noise
+        self.beta = args.beta
 
     def forward(self, x, ind = None):
         s = x
@@ -290,281 +291,178 @@ class globalNet(nn.Module):
         for i in range(len(self.layers)):
             self.layers[i].weight_b_sym()
 
-if __name__ == '__main__':
-
-    #Testing globalNet
-    '''
-    net = globalNet(args)
-    net.to(device)
-    
-    #*****WATCH OUT: symmetricize weights*****#
-    if args.sym:
-        net.weight_b_sym() 
-    #*****************************************#
-    
-    #Initialize optimizers for forward and backward weights
-    
-    optim_params_f = []
-    optim_params_b = []
-
-    for i in range(len(net.layers)):
-        optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
-        
-    for i in range(len(net.layers) - 1):
-        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b})
-
-    optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
-    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
-
-    net.train()
-    train_loss = 0
-    correct = 0
-    total = 0
-    
-    for _ in range(args.epochs): 
-        for batch_idx, (data, target) in enumerate(train_loader):
-
-            data, target = data.to(device), target.to(device)
-            
-            #****FEEDBACK WEIGHTS****#
-            
-            y = net.layers[0](data).detach() 
-            for id_layer in range(len(net.layers) - 1):  
-                for iter in range(1, args.iter + 1):
-                    y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
-                    noise = args.noise[id_layer]*torch.randn_like(y)
-                    y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
-                    dy = (y_noise - y_temp)
-                    dr = (r_noise - r_temp)
-                   
-                    loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-                    
-                    optimizer_b.zero_grad()
-                       
-                    if iter < args.iter:
-                        loss_b.backward(retain_graph = True)
-                    else:
-                        loss_b.backward()
-                    
-                    optimizer_b.step()
-               
-                #renormalize once per sample
-                net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)        
-                
-                #go to the next layer
-                y = net.layers[id_layer + 1](y).detach()
-
-            #****FORWARD WEIGHTS****#
-        
-            y, r = net(data, ind = len(net.layers))
-
-            #compute prediction
-            pred = torch.exp(net.logsoft(y)) 
-            target = F.one_hot(target, num_classes=10).float()
-
-            #compute first target on the softmax logits
-            t = y + args.beta*(target - pred)
-
-            for i in range(len(net.layers)):        
-
-                #update forward weights
-                loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
-                loss_f = loss_f.mean()
-                
-                if i == 0:
-                    loss = loss_f
-            
-                optimizer_f.zero_grad()
-                loss_f.backward(retain_graph = True) 
-                optimizer_f.step()
-                 
-                #compute previous targets         
-                if (i < len(net.layers) - 1):
-                    delta = net.layers[-1 - i].bb(r, t) - r
-                    y, r = net(data, ind = len(net.layers) - 1 - i)
-                    t = (y + delta).detach()
-            
-            train_loss += loss.item()
-            _, predicted = pred.max(1)
-            _, targets = target.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-
-            progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
-                         % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-    '''
-    
-    #Coding the learning procedure for the feedback weights
-
-    net = globalNet(args)
-    net.to(device)
-   
-    optim_params_b = []
-        
-    for i in range(len(net.layers) - 1):
-        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b})
-
-    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
-    
-    weight_tab = []
-    loss_tab = []
-
-    for id_layer in range(len(net.layers) - 1):
-        weight_tab.append({'dist_weight' : [], 'angle_weight' : []})
-        loss_tab.append([])
-
-
-    for batch_iter in range(args.epochs):
-        _, (data, target) = next(enumerate(train_loader))             
-        data, target = data.to(device), target.to(device)
-                                   
-        y = net.layers[0](data).detach()
-        print('\n Batch iteration {}'.format(batch_iter + 1))
-        for id_layer in range(len(net.layers) - 1):  
-            for iter in range(1, args.iter + 1):
-                y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
-                noise = args.noise[id_layer]*torch.randn_like(y)
-                y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
-                dy = (y_noise - y_temp)
-                dr = (r_noise - r_temp)
-               
-                loss_b = - (noise*dr).view(dr.size(0), -1).sum(1).mean()
-                
-                optimizer_b.zero_grad()
-                   
-                if iter < args.iter:
-                    loss_b.backward(retain_graph = True)
-                else:
-                    loss_b.backward()
-                
-                optimizer_b.step()
+    def weight_b_train(self, y, nb_iter, optimizer, arg_return = False):
+        for iter in range(1, nb_iter + 1):
+            y_temp, r_temp = self.layers[id_layer + 1](y, back = True)
+            noise = self.noise[id_layer]*torch.randn_like(y)
+            y_noise, r_noise = self.layers[id_layer + 1](y + noise, back = True)
+            dy = (y_noise - y_temp)
+            dr = (r_noise - r_temp)
            
-            #renormalize once per sample
-            net.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)
-            
-            if id_layer < len(net.layers) - 2:
-                dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
-            else:
-                dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
-
-            loss_tab[id_layer].append(loss_b)
-            weight_tab[id_layer]['dist_weight'].append(dist_weight)
-            weight_tab[id_layer]['angle_weight'].append(angle_weight)
-                       
-        
-            if id_layer < len(net.layers) - 2:
-                layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
-            else:
-                layer_str = 'FC layer:'  
-
-            print(layer_str)
-            print('Distance between weights: {:.2f}'.format(dist_weight))
-            print('Weight angle: {:.2f} deg'.format(angle_weight))         
-
-            #go to the next layer
-            y = net.layers[id_layer + 1](y).detach()
-
-        results = {'weight_tab' : weight_tab, 'loss_tab' : loss_tab}
-
-    plot_results(results)
-    plt.show()
-
-
-    '''           
-    BASE_PATH = createPath(args) 
-    createHyperparameterfile(BASE_PATH, args)
-    
-    if args.conv:
-        net = layer_conv(args.in_channels, args.out_channels)
-    else:
-        net = layer_fc(args.in_size, args.out_size)        
-
-    net.to(device)
-
-    optimizer_b = torch.optim.SGD([{'params': net.b.parameters()}], lr=args.lr, momentum=9e-1)   
-    angle_jac_tab, dist_jac_tab, loss_tab, angle_weight_tab, dist_weight_tab = [], [], [], [], []      
-  
-    #WATCH OUT: only ONE data point!
-    _, (x, _) = next(enumerate(train_loader))     
-    x = x.to(device)
- 
-    for iter_x in range(1, args.epochs + 1):
-        #_, (x, _) = next(enumerate(train_loader))     
-        #x = x.to(device)
-
-        for iter in range(1, args.iter + 1):
-            y, r = net(x)
-            noise = args.noise*torch.randn_like(x)
-            y_noise, r_noise = net(x + noise)
-            dy = (y_noise - y)
-            dr = (r_noise - r)
-           
-            #LOSS 1 
-            #loss_b =(1/args.noise)*(-args.lamb*(dr**2).sum(1) + ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
-            
-            #LOSS 2
-            #loss_b =-(args.lamb/(args.noise**2))*(dr**2).sum(1).mean() + (1/(args.noise**4))*( ((dy**2).sum(1) - (noise*dr).sum(1))**2).mean()
-            
-
-            #LOSS 3
-            #net.weight_b_normalize(noise, dy, dr)
-            #loss_b = -(noise*dr).sum(1).mean()
-            
-            #LOSS 4
-            #net.weight_b_normalize(noise, dy, dr)
-            #loss_b = -(((noise*dr).sum(1))**2).mean()
-
-            #LOSS 5
             loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
             
-
-            optimizer_b.zero_grad()
+            optimizer.zero_grad()
                
             if iter < args.iter:
                 loss_b.backward(retain_graph = True)
             else:
                 loss_b.backward()
+            
+            optimizer.step()
+           
+            #renormalize once per sample
+            self.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)
+        
+        if arg_return:
+            return loss_b
 
-            optimizer_b.step()
-       
-        #WATCH OUT: renormalize once per sample
-        net.weight_b_normalize(noise, dy, dr)        
- 
-        loss_tab.append(loss_b)
-        results_dict = {'loss': loss_tab}
-        print('\n Batch {} ({} trials per batch): \n'.format(iter_x, args.iter))
-        print('Feedback loss: {:.2f}'.format(loss_b))
+    def weight_f_train(self, y, r, t, id_layer, optimizer):        
+        #update forward weights
+        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = loss_f.mean()
+         
+        optimizer.zero_grad()
+        loss_f.backward(retain_graph = True) 
+        optimizer.step()
+         
+        #compute previous targets         
+        if (id_layer < len(self.layers) - 1):
+            delta = self.layers[-1 - id_layer].bb(r, t) - r
+            y, r = self(data, ind = len(self.layers) - 1 - id_layer)
+            t = (y + delta).detach()
+
+        return y, r, t, loss_f
+
+
+if __name__ == '__main__':
+    
+    BASE_PATH = createPath(args)
+    command_line = ' '.join(sys.argv) 
+    createHyperparameterfile(BASE_PATH, command_line, args)
+
+    net = globalNet(args)
+    net.to(device)
+
+    if args.action == 'train': 
+        if args.sym:
+            net.weight_b_sym() 
         
-        if args.jacobian:
-            jac_f, jac_b = compute_jacobians(net, x, y)
-            dist_jac, angle_jac = compute_dist_angle(jac_f, jac_b, jac = True)
-            dist_jac_tab.append(dist_jac)
-            angle_jac_tab.append(angle_jac)
-            results_dict_jac = {'dist_jac': dist_jac_tab, 'angle_jac': angle_jac_tab}
-            results_dict.update(results_dict_jac)
-            print('Distance between jacobians: {:.2f}'.format(dist_jac))
-            print('Jacobian angle: {:.2f} deg'.format(angle_jac))       
-        if args.conv:
-            dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight) 
-        else:
-            dist_weight, angle_weight = compute_dist_angle(net.f.weight, net.b.weight.t())
+        #Initialize optimizers for forward and backward weights
+        optim_params_f = []
+        optim_params_b = []
+
+        for i in range(len(net.layers)):
+            optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
+            
+        for i in range(len(net.layers) - 1):
+            optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b})
+
+        optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
+        optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
+
+        net.train()
+        train_loss = 0
+        correct = 0
+        total = 0
         
-        dist_weight_tab.append(dist_weight)
-        angle_weight_tab.append(angle_weight)  
-        results_dict_weight = {'dist_weight': dist_weight_tab, 'angle_weight': angle_weight_tab}
-        results_dict.update(results_dict_weight)
-        print('Distance between weights: {:.2f}'.format(dist_weight))
-        print('Weight angle: {:.2f} deg'.format(angle_weight))
+        train_acc = []       
  
-        outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
-        pickle.dump(results_dict, outfile)
-        outfile.close()
+        for _ in range(args.epochs): 
+            for batch_idx, (data, target) in enumerate(train_loader):
+
+                data, target = data.to(device), target.to(device)
+                
+                #****FEEDBACK WEIGHTS****#
+                if not args.sym:                
+                    y = net.layers[0](data).detach() 
+                    for id_layer in range(len(net.layers) - 1):                     
+                        net.weight_b_train(y, args.iter, optimizer_b)
+                        #go to the next layer
+                        y = net.layers[id_layer + 1](y).detach()
+
+                #****FORWARD WEIGHTS****#
+                y, r = net(data, ind = len(net.layers))
+
+                pred = torch.exp(net.logsoft(y)) 
+                target = F.one_hot(target, num_classes=10).float()
  
-    print('Done!')
-    plot_results(results_dict) 
-    plt.show()
-    '''
+                t = y + args.beta*(target - pred)
+
+                for id_layer in range(len(net.layers)):        
+                    y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f)        
+                    if id_layer == 0:
+                        loss = loss_f
+                    
+                train_loss += loss.item()
+                _, predicted = pred.max(1)
+                _, targets = target.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+
+                progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
+                             % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            
+            train_acc.append(100.*correct/total)
+            results = {'train_acc' : train_acc}
+            outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+            pickle.dump(results, outfile)
+            outfile.close() 
+
+    #Coding the learning procedure for the feedback weights
+    elif args.action == 'test':
+              
+        optim_params_b = []
+            
+        for i in range(len(net.layers) - 1):
+            optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b})
+
+        optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
+        
+        weight_tab = []
+        loss_tab = []
+
+        for id_layer in range(len(net.layers) - 1):
+            weight_tab.append({'dist_weight' : [], 'angle_weight' : []})
+            loss_tab.append([])
+
+
+        for batch_iter in range(args.epochs):
+            _, (data, target) = next(enumerate(train_loader))             
+            data, target = data.to(device), target.to(device)
+                                       
+            y = net.layers[0](data).detach()
+            print('\n Batch iteration {}'.format(batch_iter + 1))
+            
+            
+            for id_layer in range(len(net.layers) - 1):  
+                loss_b = net.weight_b_train(y, args.iter, optimizer_b, arg_return = True)
+ 
+                if id_layer < len(net.layers) - 2:
+                    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
+                else:
+                    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
+
+                loss_tab[id_layer].append(loss_b)
+                weight_tab[id_layer]['dist_weight'].append(dist_weight)
+                weight_tab[id_layer]['angle_weight'].append(angle_weight)
+                           
+            
+                if id_layer < len(net.layers) - 2:
+                    layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
+                else:
+                    layer_str = 'FC layer:'  
+
+                print(layer_str)
+                print('Distance between weights: {:.2f}'.format(dist_weight))
+                print('Weight angle: {:.2f} deg'.format(angle_weight))         
+
+                #go to the next layer
+                y = net.layers[id_layer + 1](y).detach()
+
+            results = {'weight_tab' : weight_tab, 'loss_tab' : loss_tab}
+            outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+            pickle.dump(results, outfile)
+            outfile.close() 
 
     #testing smallNet_benchmark
     '''
