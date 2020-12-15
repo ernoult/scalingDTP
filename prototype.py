@@ -111,6 +111,7 @@ def compute_jacobians(net, x, y):
 
     return jac_F, jac_G
 
+'''
 def compute_dist_angle(F, G, jac = False):
     
     if jac:    
@@ -124,7 +125,7 @@ def compute_dist_angle(F, G, jac = False):
     angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
 
     return dist, angle
-  
+'''  
 
 class smallNet_benchmark(nn.Module):
     def __init__(self):
@@ -187,7 +188,107 @@ class layer_fc(nn.Module):
     def weight_b_sym(self):
         with torch.no_grad():
             self.f.weight.data = self.b.weight.data.t()
+    
+    def compute_dist_angle(self, x):
+        F = self.f.weight
+        G = self.b.weight.t()
 
+        dist = ((F - G)**2).sum()
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+
+        return dist, angle
+      
+class layer_sigmapi_fc(nn.Module):
+    def __init__(self, in_size, out_size, last_layer = False):
+        super(layer_sigmapi_fc, self).__init__()
+        self.f = nn.Linear(in_size, out_size)
+        
+        #*************WATCH OUT**************#
+        b = nn.ModuleList([nn.Linear(out_size, in_size), nn.Linear(out_size, in_size)])
+        #b = nn.ModuleList([])
+        #b1 = nn.Linear(out_size, in_size)
+        #b.append(b1)
+        #b2 = nn.Linear(out_size, in_size)
+        #b.append(b2)
+        self.b = b
+        #************************************#
+
+        self.last_layer = last_layer
+
+    def ff(self, x):
+        if self.last_layer:
+            x_flat = x.view(x.size(0), - 1)
+            y = self.f(x_flat)
+        else:
+            y = self.f(x)
+        return y
+
+    def bb(self, x, y):
+
+        #*******WATCH OUT*******#
+        r = self.b[0](y)*self.b[1](y)
+        #***********************#
+
+        if self.last_layer:
+            r = r.view(x.size())
+
+        return r        
+
+    def forward(self, x, back = False):
+        y = self.ff(x)
+    
+        if back:
+            r = self.bb(x, y)
+            return y, r 
+        else:
+            return y     
+
+    def weight_b_normalize(self, dx, dy, dr):
+        
+        #****************************WATCH OUT***************************************#
+        pre_factor = ((dy**2).sum(1))/((dx*dr).view(dx.size(0), -1).sum(1))
+        sign_factor = torch.sign(pre_factor)
+        factor = torch.sqrt(torch.abs(pre_factor))
+        #****************************************************************************#
+
+        factor = factor.mean()
+        sign_factor = torch.sign(sign_factor.mean())
+        pos_sign = [1, 1] 
+        pos_sign[np.random.randint(2)] = int(sign_factor.item())
+
+        #print(pos_sign)        
+
+        with torch.no_grad():
+            #*****************WATCH OUT******************#
+            self.b[0].weight.data = pos_sign[0]*factor*self.b[0].weight.data
+            self.b[1].weight.data = pos_sign[1]*factor*self.b[1].weight.data 
+            #********************************************#
+
+    def weight_b_sym(self):
+        with torch.no_grad():
+            self.f.weight.data = self.b.weight.data.t()
+
+    def compute_dist_angle(self, x):
+ 
+        #*****WATCH OUT******# 
+        F = self.f.weight
+        y = self.ff(x)
+        G = (self.b[0].weight)*(self.b[1](y).mean(0).unsqueeze(1))+ (self.b[1].weight)*(self.b[0](y).mean(0).unsqueeze(1)) 
+        G = G.t()
+        #********************#
+
+        dist = ((F - G)**2).sum()
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+
+        return dist, angle
+
+ 
 class layer_conv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(layer_conv, self).__init__()
@@ -248,6 +349,18 @@ class layer_conv(nn.Module):
         with torch.no_grad():
             self.b.weight.data = self.f.weight.data        
 
+    def compute_dist_angle(self, x):
+        F = self.f.weight
+        G = self.b.weight
+
+        dist = ((F - G)**2).sum()
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+
+        return dist, angle
+ 
 class globalNet(nn.Module):
     def __init__(self, args):
         super(globalNet, self).__init__()
@@ -261,7 +374,12 @@ class globalNet(nn.Module):
             layers.append(layer_conv(args.C[i], args.C[i + 1]))
             size = int(np.floor((size - 5)/2 + 1))
         
-        layers.append(layer_fc((size**2)*args.C[-1], 10, last_layer = True))
+        
+        #*******************************WATCH OUT*********************************#
+        #layers.append(layer_fc((size**2)*args.C[-1], 10, last_layer = True))
+        layers.append(layer_sigmapi_fc((size**2)*args.C[-1], 10, last_layer = True))
+        #*************************************************************************#
+
         self.layers = layers
         self.logsoft = nn.LogSoftmax(dim=1) 
         self.noise = args.noise
@@ -336,9 +454,9 @@ class globalNet(nn.Module):
 
 if __name__ == '__main__':
     
-    BASE_PATH = createPath(args)
-    command_line = ' '.join(sys.argv) 
-    createHyperparameterfile(BASE_PATH, command_line, args)
+    #BASE_PATH = createPath(args)
+    #command_line = ' '.join(sys.argv) 
+    #createHyperparameterfile(BASE_PATH, command_line, args)
 
     net = globalNet(args)
     net.to(device)
@@ -435,34 +553,31 @@ if __name__ == '__main__':
             
             
             for id_layer in range(len(net.layers) - 1):  
-                loss_b = net.weight_b_train(y, args.iter, optimizer_b, arg_return = True)
- 
-                if id_layer < len(net.layers) - 2:
-                    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight) 
-                else:
-                    dist_weight, angle_weight = compute_dist_angle(net.layers[id_layer + 1].f.weight, net.layers[id_layer + 1].b.weight.t())
+                if id_layer > 0:
+                    loss_b = net.weight_b_train(y, args.iter, optimizer_b, arg_return = True)
+     
+                    dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
 
-                loss_tab[id_layer].append(loss_b)
-                weight_tab[id_layer]['dist_weight'].append(dist_weight)
-                weight_tab[id_layer]['angle_weight'].append(angle_weight)
-                           
-            
-                if id_layer < len(net.layers) - 2:
-                    layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
-                else:
-                    layer_str = 'FC layer:'  
+                    loss_tab[id_layer].append(loss_b)
+                    weight_tab[id_layer]['dist_weight'].append(dist_weight)
+                    weight_tab[id_layer]['angle_weight'].append(angle_weight)
+                    
+                    if id_layer < len(net.layers) - 2:
+                        layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
+                    else:
+                        layer_str = 'FC layer:'  
 
-                print(layer_str)
-                print('Distance between weights: {:.2f}'.format(dist_weight))
-                print('Weight angle: {:.2f} deg'.format(angle_weight))         
+                    print(layer_str)
+                    print('Distance between weights: {:.2f}'.format(dist_weight))
+                    print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
                 #go to the next layer
                 y = net.layers[id_layer + 1](y).detach()
 
-            results = {'weight_tab' : weight_tab, 'loss_tab' : loss_tab}
-            outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
-            pickle.dump(results, outfile)
-            outfile.close() 
+            #results = {'weight_tab' : weight_tab, 'loss_tab' : loss_tab}
+            #outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+            #pickle.dump(results, outfile)
+            #outfile.close() 
 
     #testing smallNet_benchmark
     '''
