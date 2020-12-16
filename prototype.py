@@ -178,10 +178,20 @@ class layer_fc(nn.Module):
             return y     
 
     def weight_b_normalize(self, dx, dy, dr):
-                     
-        factor = ((dy**2).sum(1))/((dx*dr).view(dx.size(0), -1).sum(1))
+         
+        factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
         factor = factor.mean()
-
+      
+       
+        ''' 
+        num = (1/(3*(args.noise[-1])**2))*(((dy**2).sum(-1, keepdim = True))*((dx**2).view(dx.size(0),dx.size(1), -1))).mean(0)
+        denom = (dx*dr).view(dx.size(0), dx.size(1), -1).mean(0)
+        factor = (num/denom)
+        
+        factor = torch.where(denom == 0, torch.ones_like(factor), factor)
+        factor = factor.mean(0).unsqueeze(1)
+        '''
+         
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data
 
@@ -200,7 +210,43 @@ class layer_fc(nn.Module):
         angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
 
         return dist, angle
-      
+    
+    def weight_b_train(self, y, nb_iter, optimizer, sigma, arg_return = False):
+        
+        noise_tab = []
+        dy_tab = []
+        dr_tab = []
+
+        for iter in range(1, nb_iter + 1):
+            y_temp, r_temp = self(y, back = True)
+            noise = sigma*torch.randn_like(y)
+            y_noise, r_noise = self(y + noise, back = True)
+            dy = (y_noise - y_temp)
+            dr = (r_noise - r_temp)
+           
+            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+            
+            optimizer.zero_grad()
+ 
+            loss_b.backward()            
+
+            optimizer.step()
+            noise_tab.append(noise)            
+            dy_tab.append(dy)
+            dr_tab.append(dr)
+
+        #renormalize once per sample
+        #self.weight_b_normalize(noise, dy, dr)
+        
+        noise_tab = torch.stack(noise_tab, dim=0)
+        dy_tab = torch.stack(dy_tab, dim=0)
+        dr_tab = torch.stack(dr_tab, dim=0)
+        self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
+        
+        if arg_return:
+            return loss_b
+
+  
 class layer_sigmapi_fc(nn.Module):
     def __init__(self, in_size, out_size, last_layer = False):
         super(layer_sigmapi_fc, self).__init__()
@@ -247,9 +293,10 @@ class layer_sigmapi_fc(nn.Module):
             return y     
 
     def weight_b_normalize(self, dx, dy, dr):
-        
+         
         #****************************WATCH OUT***************************************#
-        pre_factor = ((dy**2).sum(1))/((dx*dr).view(dx.size(0), -1).sum(1))
+        #pre_factor = ((dy**2).sum(1))/((dx*dr).view(dx.size(0), -1).sum(1))
+        pre_factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
         sign_factor = torch.sign(pre_factor)
         factor = torch.sqrt(torch.abs(pre_factor))
         #****************************************************************************#
@@ -288,6 +335,39 @@ class layer_sigmapi_fc(nn.Module):
 
         return dist, angle
 
+    def weight_b_train(self, y, nb_iter, optimizer, sigma, arg_return = False):
+        
+        noise_tab = []
+        dy_tab = []
+        dr_tab = []
+
+        for iter in range(1, nb_iter + 1):
+            y_temp, r_temp = self(y, back = True)
+            noise = sigma*torch.randn_like(y)
+            y_noise, r_noise = self(y + noise, back = True)
+            dy = (y_noise - y_temp)
+            dr = (r_noise - r_temp)
+           
+            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+            
+            optimizer.zero_grad()
+            loss_b.backward()
+            optimizer.step()
+            
+            noise_tab.append(noise)
+            dy_tab.append(dy)
+            dr_tab.append(dr)
+
+        #renormalize once per sample
+        #self.weight_b_normalize(noise, dy, dr)
+        noise_tab = torch.stack(noise_tab, dim=0)
+        dy_tab = torch.stack(dy_tab, dim=0)
+        dr_tab = torch.stack(dr_tab, dim=0)
+        self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
+  
+        if arg_return:
+            return loss_b
+
  
 class layer_conv(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -317,16 +397,18 @@ class layer_conv(nn.Module):
 
     def weight_b_normalize(self, dx, dy, dr):
         
-        #first technique: same normalization for all out fmaps        
-        
+        #first technique: same normalization for all out fmaps                
         dy = dy.view(dy.size(0), -1)
         dx = dx.view(dx.size(0), -1)
         dr = dr.view(dr.size(0), -1)
-       
- 
         factor = ((dy**2).sum(1))/((dx*dr).sum(1))
+        
+        #dy = dy.view(dy.size(0), dy.size(1), -1)
+        #dx = dx.view(dx.size(0), dx.size(1), -1)
+        #dr = dr.view(dr.size(0), dr.size(1), -1)
+        #factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
         factor = factor.mean()
-
+ 
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data    
 
@@ -360,6 +442,40 @@ class layer_conv(nn.Module):
         angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
 
         return dist, angle
+    
+    def weight_b_train(self, y, nb_iter, optimizer, sigma, arg_return = False):
+        
+        #noise_tab = []
+        #dy_tab = []
+        #dr_tab = []
+
+        for iter in range(1, nb_iter + 1):
+            y_temp, r_temp = self(y, back = True)
+            noise = sigma*torch.randn_like(y)
+            y_noise, r_noise = self(y + noise, back = True)
+            dy = (y_noise - y_temp)
+            dr = (r_noise - r_temp)
+           
+            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+            
+            optimizer.zero_grad()
+            loss_b.backward()
+            optimizer.step()
+           
+            #noise_tab.append(noise.detach())
+            #dy_tab.append(dy.detach())
+            #dr_tab.append(dr.detach())        
+
+        #renormalize once per sample
+        self.weight_b_normalize(noise, dy, dr)
+        #noise_tab = torch.stack(noise_tab, dim=0)
+        #dy_tab = torch.stack(dy_tab, dim=0)
+        #dr_tab = torch.stack(dr_tab, dim=0)
+        #self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
+        
+        if arg_return:
+            return loss_b
+
  
 class globalNet(nn.Module):
     def __init__(self, args):
@@ -376,8 +492,8 @@ class globalNet(nn.Module):
         
         
         #*******************************WATCH OUT*********************************#
-        #layers.append(layer_fc((size**2)*args.C[-1], 10, last_layer = True))
-        layers.append(layer_sigmapi_fc((size**2)*args.C[-1], 10, last_layer = True))
+        layers.append(layer_fc((size**2)*args.C[-1], 10, last_layer = True))
+        #layers.append(layer_sigmapi_fc((size**2)*args.C[-1], 10, last_layer = True))
         #*************************************************************************#
 
         self.layers = layers
@@ -408,7 +524,7 @@ class globalNet(nn.Module):
     def weight_b_sym(self):
         for i in range(len(self.layers)):
             self.layers[i].weight_b_sym()
-
+    '''
     def weight_b_train(self, y, nb_iter, optimizer, arg_return = False):
         for iter in range(1, nb_iter + 1):
             y_temp, r_temp = self.layers[id_layer + 1](y, back = True)
@@ -433,6 +549,7 @@ class globalNet(nn.Module):
         
         if arg_return:
             return loss_b
+    '''
 
     def weight_f_train(self, y, r, t, id_layer, optimizer):        
         #update forward weights
@@ -494,7 +611,7 @@ if __name__ == '__main__':
                 if not args.sym:                
                     y = net.layers[0](data).detach() 
                     for id_layer in range(len(net.layers) - 1):                     
-                        net.weight_b_train(y, args.iter, optimizer_b)
+                        net.layers[id_layer + 1].weight_b_train(y, args.iter, optimizer_b, args.noise[id_layer])
                         #go to the next layer
                         y = net.layers[id_layer + 1](y).detach()
 
@@ -553,8 +670,9 @@ if __name__ == '__main__':
             
             
             for id_layer in range(len(net.layers) - 1):  
-                if id_layer > 0:
-                    loss_b = net.weight_b_train(y, args.iter, optimizer_b, arg_return = True)
+                if id_layer == 0:
+                    #loss_b = net.weight_b_train(y, args.iter, optimizer_b, arg_return = True)
+                    loss_b = net.layers[id_layer + 1].weight_b_train(y, args.iter, optimizer_b, args.noise[id_layer])
      
                     dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
 
