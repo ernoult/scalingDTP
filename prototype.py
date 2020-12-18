@@ -219,34 +219,38 @@ class layer_fc(nn.Module):
 
         for iter in range(1, nb_iter + 1):
             y_temp, r_temp = self(y, back = True)
+            
+                       
             noise = sigma*torch.randn_like(y)
             y_noise, r_noise = self(y + noise, back = True)
             dy = (y_noise - y_temp)
             dr = (r_noise - r_temp)
-           
-            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
             
-            optimizer.zero_grad()
- 
-            loss_b.backward()            
+            #loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+            
 
+            noise_y = sigma*torch.randn_like(y_temp)
+            r_noise_y = self.bb(y, y_temp + noise_y)
+            dr_y = (r_noise_y - r_temp)
+            loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+ 
+            optimizer.zero_grad() 
+            loss_b.backward()            
             optimizer.step()
+
             noise_tab.append(noise)            
             dy_tab.append(dy)
             dr_tab.append(dr)
 
-        #renormalize once per sample
-        #self.weight_b_normalize(noise, dy, dr)
-        
-        noise_tab = torch.stack(noise_tab, dim=0)
-        dy_tab = torch.stack(dy_tab, dim=0)
-        dr_tab = torch.stack(dr_tab, dim=0)
-        self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
+        #renormalize once per sample 
+        #noise_tab = torch.stack(noise_tab, dim=0)
+        #dy_tab = torch.stack(dy_tab, dim=0)
+        #dr_tab = torch.stack(dr_tab, dim=0)
+        #self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
         
         if arg_return:
             return loss_b
 
-  
 class layer_sigmapi_fc(nn.Module):
     def __init__(self, in_size, out_size, last_layer = False):
         super(layer_sigmapi_fc, self).__init__()
@@ -272,16 +276,19 @@ class layer_sigmapi_fc(nn.Module):
             y = self.f(x)
         return y
 
+    #************WATCH OUT************#
     def bb(self, x, y):
+    #*********************************#
 
-        #*******WATCH OUT*******#
+        #*********WATCH OUT*********#
         r = self.b[0](y)*self.b[1](y)
-        #***********************#
+        #***************************#
 
         if self.last_layer:
             r = r.view(x.size())
-
+                        
         return r        
+
 
     def forward(self, x, back = False):
         y = self.ff(x)
@@ -337,9 +344,9 @@ class layer_sigmapi_fc(nn.Module):
 
     def weight_b_train(self, y, nb_iter, optimizer, sigma, arg_return = False):
         
-        noise_tab = []
-        dy_tab = []
-        dr_tab = []
+        #noise_tab = []
+        #dy_tab = []
+        #dr_tab = []
 
         for iter in range(1, nb_iter + 1):
             y_temp, r_temp = self(y, back = True)
@@ -347,23 +354,26 @@ class layer_sigmapi_fc(nn.Module):
             y_noise, r_noise = self(y + noise, back = True)
             dy = (y_noise - y_temp)
             dr = (r_noise - r_temp)
-           
-            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+            #loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
             
+            noise_y = sigma*torch.randn_like(y_temp)
+            r_noise_y = self.bb(y, y_temp + noise_y)
+            dr_y = (r_noise_y - r_temp)
+            loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+ 
             optimizer.zero_grad()
             loss_b.backward()
             optimizer.step()
             
-            noise_tab.append(noise)
-            dy_tab.append(dy)
-            dr_tab.append(dr)
-
+            #noise_tab.append(noise)
+            #dy_tab.append(dy)
+            #dr_tab.append(dr)
+        
         #renormalize once per sample
-        #self.weight_b_normalize(noise, dy, dr)
-        noise_tab = torch.stack(noise_tab, dim=0)
-        dy_tab = torch.stack(dy_tab, dim=0)
-        dr_tab = torch.stack(dr_tab, dim=0)
-        self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
+        #noise_tab = torch.stack(noise_tab, dim=0)
+        #dy_tab = torch.stack(dy_tab, dim=0)
+        #dr_tab = torch.stack(dr_tab, dim=0)
+        #self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
   
         if arg_return:
             return loss_b
@@ -377,11 +387,13 @@ class layer_conv(nn.Module):
     
 
     def ff(self, x):
-        y = F.relu(self.f(x))
+        #y = F.relu(self.f(x))
+        y = self.f(x)
         return y
 
     def bb(self, x, y):
-        r = F.relu(self.b(y, output_size = x.size()))
+        #r = F.relu(self.b(y, output_size = x.size()))
+        r = self.b(y, output_size = x.size())
         return r 
 
     def forward(self, x, back = False):
@@ -407,6 +419,7 @@ class layer_conv(nn.Module):
         #dx = dx.view(dx.size(0), dx.size(1), -1)
         #dr = dr.view(dr.size(0), dr.size(1), -1)
         #factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
+
         factor = factor.mean()
  
         with torch.no_grad():
@@ -455,9 +468,16 @@ class layer_conv(nn.Module):
             y_noise, r_noise = self(y + noise, back = True)
             dy = (y_noise - y_temp)
             dr = (r_noise - r_temp)
+            #loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
            
-            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-            
+            noise_y = sigma*torch.randn_like(y_temp)
+            r_noise_y = self.bb(y, y_temp + noise_y)
+            dr_y = (r_noise_y - r_temp)
+            #print(r_temp.mean())
+            loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+ 
+            #print(loss_b)            
+
             optimizer.zero_grad()
             loss_b.backward()
             optimizer.step()
@@ -467,7 +487,7 @@ class layer_conv(nn.Module):
             #dr_tab.append(dr.detach())        
 
         #renormalize once per sample
-        self.weight_b_normalize(noise, dy, dr)
+        #self.weight_b_normalize(noise, dy, dr)
         #noise_tab = torch.stack(noise_tab, dim=0)
         #dy_tab = torch.stack(dy_tab, dim=0)
         #dr_tab = torch.stack(dr_tab, dim=0)
@@ -524,32 +544,6 @@ class globalNet(nn.Module):
     def weight_b_sym(self):
         for i in range(len(self.layers)):
             self.layers[i].weight_b_sym()
-    '''
-    def weight_b_train(self, y, nb_iter, optimizer, arg_return = False):
-        for iter in range(1, nb_iter + 1):
-            y_temp, r_temp = self.layers[id_layer + 1](y, back = True)
-            noise = self.noise[id_layer]*torch.randn_like(y)
-            y_noise, r_noise = self.layers[id_layer + 1](y + noise, back = True)
-            dy = (y_noise - y_temp)
-            dr = (r_noise - r_temp)
-           
-            loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-            
-            optimizer.zero_grad()
-               
-            if iter < args.iter:
-                loss_b.backward(retain_graph = True)
-            else:
-                loss_b.backward()
-            
-            optimizer.step()
-           
-            #renormalize once per sample
-            self.layers[id_layer + 1].weight_b_normalize(noise, dy, dr)
-        
-        if arg_return:
-            return loss_b
-    '''
 
     def weight_f_train(self, y, r, t, id_layer, optimizer):        
         #update forward weights
@@ -667,7 +661,6 @@ if __name__ == '__main__':
                                        
             y = net.layers[0](data).detach()
             print('\n Batch iteration {}'.format(batch_iter + 1))
-            
             
             for id_layer in range(len(net.layers) - 1):  
                 if id_layer == 0:
