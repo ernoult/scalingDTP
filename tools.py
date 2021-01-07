@@ -134,6 +134,7 @@ def createHyperparameterfile(BASE_PATH, command_line, args):
     hyperparameters = open(BASE_PATH + r"/hyperparameters.txt","w+") 
     L = ["List of hyperparameters " + "(" +  datetime.datetime.now().strftime("cuda" + str(args.device_label)+"-%Y-%m-%d") + ") \n",
         "- noise: {}".format(args.noise) + "\n",
+        "- algorithm used to train the feedback weights: {}".format(args.alg) + "\n",
         "- learning rate for forward weights: {}".format(args.lr_f) + "\n",
         "- learning rate for feedback weights: {}".format(args.lr_b) + "\n",
         "- batch size: {}".format(args.batch_size) + "\n",
