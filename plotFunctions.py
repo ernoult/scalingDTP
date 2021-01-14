@@ -12,31 +12,19 @@ def plot_results(results):
     
     #Loss stuff
         
-    epochs = len(results['loss_tab'][1])
-    '''
-    print(results['loss_tab'][1])
-    fig1 = plt.figure(figsize=(5, 4))
-    plt.rcParams.update({'font.size': fontsize}) 
-    plt.plot(np.linspace(1, epochs, epochs), results['loss_tab'][1], linewidth=2.5, alpha=0.8)
-    plt.xlabel('Batch iterations')
-    plt.ylabel('Loss of feedback weights')
-    plt.grid()
-    plt.subplots_adjust(hspace = 0.5)
-    fig1.tight_layout()    
-    fig1.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-    '''
+    epochs = len(results['weight_tab']['dist_weight'])
 
     #Weight stuff
     fig3 = plt.figure(figsize=(8, 4))
     plt.rcParams.update({'font.size': fontsize}) 
     plt.subplot(121)
-    plt.plot(np.linspace(1, epochs, epochs), results['weight_tab'][1]['angle_weight'], linewidth=2.5, alpha=0.8)
+    plt.plot(np.linspace(1, epochs, epochs), results['weight_tab']['angle_weight'], linewidth=2.5, alpha=0.8)
     plt.xlabel('Batch iterations')
     plt.ylabel('Angle between ' + r'$w_f^\top$'+ ' and ' + r'$w_b$' + r' $ (\circ)$')
     plt.grid()
     fig3.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
     plt.subplot(122)
-    plt.plot(np.linspace(1, epochs, epochs), results['weight_tab'][1]['dist_weight'], linewidth=2.5, alpha=0.8)
+    plt.plot(np.linspace(1, epochs, epochs), results['weight_tab']['dist_weight'], linewidth=2.5, alpha=0.8)
     plt.xlabel('Batch iterations')
     plt.ylabel('Distance between ' + r'$w_f^\top$'+ ' and ' + r'$w_b$')
     plt.grid()

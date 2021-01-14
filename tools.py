@@ -6,7 +6,7 @@ import copy
 import time
 
 
-
+'''
 _, term_width = os.popen('stty size', 'r').read().split()
 term_width = int(term_width)
 
@@ -88,26 +88,32 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
-
+'''
 
 
 def createPath(args):
 
-    if args.action == 'train':
-        BASE_PATH = os.getcwd() + '/train_forward' 
-    elif args.action == 'test':
-        BASE_PATH = os.getcwd() + '/train_feedback' 
-    
-    if not os.path.exists(BASE_PATH):
-        os.mkdir(BASE_PATH)
+    if args.path is None:
+        if args.action == 'train':
+            BASE_PATH = os.getcwd() + '/train_forward' 
+        elif args.action == 'test':
+            BASE_PATH = os.getcwd() + '/train_feedback' 
+        
+        if not os.path.exists(BASE_PATH):
+            os.mkdir(BASE_PATH)
 
-    BASE_PATH = BASE_PATH + '/' + datetime.datetime.now().strftime("%Y-%m-%d")
+        BASE_PATH = BASE_PATH + '/' + datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    else:
+        BASE_PATH = os.getcwd() + '/' + args.path
 
     if not os.path.exists(BASE_PATH):
         os.mkdir(BASE_PATH)
 
     files = os.listdir(BASE_PATH)
 
+    BASE_PATH_glob = BASE_PATH
+    
     if not files:
         BASE_PATH = BASE_PATH + '/' + 'Trial-1'
     else:
@@ -125,6 +131,9 @@ def createPath(args):
     
     #************************************#
     copyfile('plotFunctions.py', BASE_PATH + '/plotFunctions.py')
+    
+    if args.last_trial:
+        copyfile('compute_stats.py', BASE_PATH_glob + '/compute_stats.py')    
     #************************************#
 
     return BASE_PATH
@@ -133,6 +142,9 @@ def createHyperparameterfile(BASE_PATH, command_line, args):
 
     hyperparameters = open(BASE_PATH + r"/hyperparameters.txt","w+") 
     L = ["List of hyperparameters " + "(" +  datetime.datetime.now().strftime("cuda" + str(args.device_label)+"-%Y-%m-%d") + ") \n",
+        "- number of channels per conv layer: {}".format(args.C) + "\n",
+        "- number of feedback optim steps per batch: {}".format(args.iter) + "\n",
+        "- activation function: {}".format(args.activation) + "\n",
         "- noise: {}".format(args.noise) + "\n",
         "- algorithm used to train the feedback weights: {}".format(args.alg) + "\n",
         "- learning rate for forward weights: {}".format(args.lr_f) + "\n",
