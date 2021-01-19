@@ -90,7 +90,6 @@ def format_time(seconds):
     return f
 '''
 
-
 def createPath(args):
 
     if args.path is None:
