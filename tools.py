@@ -1,10 +1,10 @@
 import os, sys
+import stat
 import pickle
 import datetime
 from shutil import copyfile
 import copy
 import time
-
 
 '''
 _, term_width = os.popen('stty size', 'r').read().split()
@@ -137,7 +137,13 @@ def createPath(args):
 
     return BASE_PATH
 
-def createHyperparameterfile(BASE_PATH, command_line, args):    
+def createHyperparameterfile(BASE_PATH, command_line, seed, args):    
+    
+    command = 'python '+ command_line
+
+    if args.seed is None:
+        command += ' --seed ' + str(seed)
+        
 
     hyperparameters = open(BASE_PATH + r"/hyperparameters.txt","w+") 
     L = ["List of hyperparameters " + "(" +  datetime.datetime.now().strftime("cuda" + str(args.device_label)+"-%Y-%m-%d") + ") \n",
@@ -151,10 +157,60 @@ def createHyperparameterfile(BASE_PATH, command_line, args):
         "- batch size: {}".format(args.batch_size) + "\n",
         "- symmetric weight initialization: {}".format(args.sym) + "\n",
         "- number of epochs: {}".format(args.epochs) + "\n",
-        "- fixed seed: {}".format(args.seed) + "\n", 
+        "- seed: {}".format(seed) + "\n", 
         "\n To reproduce this simulation, type in the terminal:\n",
-        "\n" + command_line + "\n"]
-
+        "\n" + command + "\n"]
 
     hyperparameters.writelines(L) 
     hyperparameters.close()
+
+    script = open(BASE_PATH + r"/reproduce_exp.sh", "w+")
+    L = ["(cd " + os.getcwd() + ";" + command + ")"]
+    script.writelines(L)
+    script.close()
+   
+    script_name = BASE_PATH + '/reproduce_exp.sh'
+    st = os.stat(script_name)
+    os.chmod(script_name, st.st_mode | stat.S_IEXEC)    
+ 
+def train(epoch):
+    print('\nEpoch: %d' % epoch)
+    net.train()
+    train_loss = 0
+    correct = 0
+    total = 0
+    for batch_idx, (inputs, targets) in enumerate(train_loader):
+        inputs, targets = inputs.to(device), targets.to(device)
+        optimizer.zero_grad()
+        outputs = net(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
+
+        train_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += targets.size(0)
+        correct += predicted.eq(targets).sum().item()
+
+        progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
+                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+
+def test(epoch):
+    net.eval()
+    test_loss = 0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = net(inputs)
+            loss = criterion(outputs, targets)
+
+            test_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            progress_bar(batch_idx, len(test_loader), 'Loss: %.3f | Test Acc: %.3f%% (%d/%d)'
+                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+

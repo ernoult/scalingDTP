@@ -32,11 +32,11 @@ parser.add_argument('--lr_f', type=float, default=0.05, help='learning rate (def
 parser.add_argument('--lr_b', nargs = '+', type=float, default=[0.05, 0.05], help='learning rates for the feedback weights (default: [0.05, 0.05])')
 parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
 parser.add_argument('--beta', type=float, default=0.1, help='nudging parameter (default: 0.1)')   
-parser.add_argument('--seed', default=False, action='store_true',help='fixes the seed to 1 (default: False)')
 parser.add_argument('--sym', default=False, action='store_true',help='sets symmetric weight initialization (default: False)')
 parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
 parser.add_argument('--C', nargs = '+', type=int, default=[32, 64], help='tab of channels (default: [32, 64])')
 parser.add_argument('--sigmapi', default=False, action = 'store_true', help='use of sigma-pi G functions (default: False)')
+parser.add_argument('--mlp', default=False, action = 'store_true', help='use of MLP G functions (default: False)')
 parser.add_argument('--noise', nargs = '+', type=float, default=[0.05, 0.5], help='tab of noise amplitude (default: [0.05, 0.5])')
 parser.add_argument('--action', nargs = '+', type=str, default=['test'], help='action and subaction to take (default: [test])')
 #parser.add_argument('--action', type=str, default='train', help='action to execute (default: train)')
@@ -44,12 +44,13 @@ parser.add_argument('--alg', nargs = '+', type=int, default=[1, 2], help='algori
 parser.add_argument('--activation', type=str, default='elu', help='activation function in conv layers (default: elu)')
 parser.add_argument('--path', type=str, default= None, help='Path directory for the results (default: None)')
 parser.add_argument('--last-trial', default=False, action='store_true',help='specifies if the current trial is the last one (default: False)')
-parser.add_argument('--save', default=False, action='store_true',help='saves data when action test is taken (default: False)')
+#parser.add_argument('--save', default=False, action='store_true',help='saves data when action test is taken (default: False)')
+parser.add_argument('--warmup', type=int, default=0, help='number of warmup steps (default: 0)')
+parser.add_argument('--seed', type=int, default=None, help='seed selected (default: None)')
+parser.add_argument('--jac', default=False, action='store_true',help='compute jacobian distance/angle instead of weight distance/angle (default: False)')   
 
 args = parser.parse_args()  
 
-if args.seed:
-    torch.manual_seed(1)
 
 
 class ReshapeTransform:
@@ -97,6 +98,21 @@ else:
     device = torch.device("cpu")
 
 
+if args.seed is not None:
+    seed = args.seed
+    torch.manual_seed(seed)
+else:
+    g = torch.Generator(device = device)
+    seed = g.seed()
+    torch.manual_seed(seed)
+
+print('Selected seed: {}'.format(seed))
+
+#Debugging seed
+#a = torch.randn(3, device = device)
+#print('Testing reproducibility of the seed: {}'.format(a))
+
+
 def copy(y, ind_y):
     y_copy = []
     
@@ -120,22 +136,26 @@ def compute_jacobians(net, x, y):
     return jac_F, jac_G
 
 class smallNet_benchmark(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super(smallNet_benchmark, self).__init__()
         size = 28
-        self.conv1 = nn.Conv2d(1, 128, 5, stride = 2)
+        self.conv1 = nn.Conv2d(1, args.C[0], 5, stride = 2)
         size = np.floor((size - 5)/2 + 1)
-        self.conv2 = nn.Conv2d(128, 256, 5, stride = 2)
+        self.conv2 = nn.Conv2d(args.C[0], args.C[1], 5, stride = 2)
         size = int(np.floor((size - 5)/2 + 1))
-        self.fc = nn.Linear(256*size**2, 10)
-
+        self.fc = nn.Linear(args.C[-1]*size**2, 10)
+        
+        if args.activation == 'elu':
+            self.rho = nn.ELU()
+        elif args.activation == 'relu':
+            self.rho = nn.ReLU()
+    
     def forward(self, x):
-        out = F.relu(self.conv1(x))
-        out = F.relu(self.conv2(out))
+        out = self.rho(self.conv1(x))
+        out = self.rho(self.conv2(out))
         out = out.view(out.size(0), -1)
         out = self.fc(out)
         return out
-
 
 class layer_fc(nn.Module):
     def __init__(self, in_size, out_size, alg, iter, noise, last_layer = False):
@@ -248,6 +268,135 @@ class layer_fc(nn.Module):
             dr_tab = torch.stack(dr_tab, dim=0)
             self.weight_b_normalize(noise_tab, dy_tab, dr_tab) 
             #*************************************************#
+ 
+        elif self.alg == 2:
+            noise_tab = []
+            dy_tab = []
+            dr_tab = []
+
+            for iter in range(1, nb_iter + 1):
+                y_temp, r_temp = self(y, back = True)
+                
+                           
+                noise = sigma*torch.randn_like(y)
+                y_noise, r_noise = self(y + noise, back = True)
+                dy = (y_noise - y_temp)
+                dr = (r_noise - r_temp)              
+
+                #***************************************#
+                noise_y = sigma*torch.randn_like(y_temp)
+                r_noise_y = self.bb(y, y_temp + noise_y)
+                dr_y = (r_noise_y - r_temp)
+                loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+                #***************************************#
+                
+                optimizer.zero_grad() 
+                loss_b.backward()            
+                optimizer.step()
+
+                noise_tab.append(noise)            
+                dy_tab.append(dy)
+                dr_tab.append(dr)
+  
+        if arg_return:
+            return loss_b
+
+class layer_mlp_fc(nn.Module):
+    def __init__(self, in_size, out_size, activation, alg, iter, noise, last_layer = False):
+        super(layer_mlp_fc, self).__init__()
+        self.f = nn.Linear(in_size, out_size)
+        self.last_layer = last_layer
+        
+        #*****************************************************************************#
+        b = nn.ModuleList([nn.Linear(out_size, out_size), nn.Linear(out_size, in_size)])
+        self.b = b
+        #*****************************************************************************#
+        #******************************# 
+        if activation == 'elu':
+            self.rho = nn.ELU()
+        elif activation == 'relu':
+            self.rho = nn.ReLU()
+        elif activation == 'tanh':
+            self.rho == nn.Tanh()
+        elif activation == 'sigmoid':
+            self.rho == nn.Sigmoid()
+        #******************************#
+        
+        #**************#
+        self.alg = alg
+        self.iter = iter
+        self.noise = noise
+        #**************#
+
+    def ff(self, x):
+        if self.last_layer:
+            x_flat = x.view(x.size(0), - 1)
+            y = self.f(x_flat)
+        else:
+            y = self.f(x)
+        return y
+
+    def ff_jac(self, x):
+        y = self.f(x)
+        return y
+
+    def bb(self, x, y):
+        #*********************************************#
+        r = self.rho(self.b[1](self.rho(self.b[0](y))))
+        #*********************************************#        
+
+        if self.last_layer:
+            r = r.view(x.size())
+
+        return r        
+    
+    def bb_jac(self, y):
+        #*********************************************#
+        r = self.rho(self.b[1](self.rho(self.b[0](y))))
+        #*********************************************#
+        
+        return r        
+
+    def forward(self, x, back = False):
+        y = self.ff(x)
+    
+        if back:
+            r = self.bb(x, y)
+            return y, r 
+        else:
+            return y     
+
+        
+    def compute_dist_angle(self, *args):
+        if len(args)> 0:
+            x = args[0]
+        
+        x = x.view(x.size(0), -1)
+        F = torch.autograd.functional.jacobian(self.ff_jac, x)
+        F = torch.transpose(torch.diagonal(F, dim1=0, dim2=2), 0, 2)
+        y = self.ff_jac(x)
+        G = torch.autograd.functional.jacobian(self.bb_jac, y) 
+        G = torch.transpose(torch.diagonal(G, dim1=0, dim2=2), 0, 2)
+        G = torch.transpose(G, 1, 2) 
+
+        #************************************************#
+        dist = torch.sqrt(((F - G)**2).sum(2).sum(1).mean()/(F**2).sum(2).sum(1).mean())
+        #************************************************#
+
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+
+        return dist, angle
+    
+    def weight_b_train(self, y, optimizer, arg_return = False):
+        
+        nb_iter = self.iter
+        sigma = self.noise
+
+        if self.alg == 1:
+            raise Exception("Alg 1 does not apply to the class layer_MLP_fc")           
  
         elif self.alg == 2:
             noise_tab = []
@@ -439,7 +588,7 @@ class layer_sigmapi_fc(nn.Module):
 
  
 class layer_conv(nn.Module):
-    def __init__(self, in_channels, out_channels, activation, alg=None, iter=None, noise=None):
+    def __init__(self, args, in_channels, out_channels, activation, alg=None, iter=None, noise=None):
         super(layer_conv, self).__init__()
         self.f = nn.Conv2d(in_channels, out_channels, 5, stride = 2)
         self.b = nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)
@@ -455,6 +604,7 @@ class layer_conv(nn.Module):
         self.alg = alg
         self.iter = iter
         self.noise = noise
+        self.jac = args.jac
         #******************#
     
     def ff(self, x):
@@ -464,9 +614,8 @@ class layer_conv(nn.Module):
         return y
 
     def bb(self, x, y):
-        r = self.rho(self.b(y, output_size = x.size()))
-        #r = F.relu(self.b(y, output_size = x.size()))
-        #r = self.b(y, output_size = x.size())
+        #r = self.rho(self.b(y, output_size = x.size()))
+        r = self.b(self.rho(y), output_size = x.size())
         return r 
 
     def forward(self, x, back = False):
@@ -516,14 +665,30 @@ class layer_conv(nn.Module):
             self.b.weight.data = self.f.weight.data        
 
     def compute_dist_angle(self, *args):
-        F = self.f.weight
-        G = self.b.weight
-        
-        #************************************************#
-        #dist = ((F - G)**2).sum()
-        dist = torch.sqrt(((F - G)**2).sum()/(F**2).sum())
-        #************************************************#
 
+        if self.jac:
+            if len(args)> 0:
+                x = args[0]
+            
+            F = torch.autograd.functional.jacobian(self.ff, x) 
+            F = torch.diagonal(F, dim1=0, dim2=4)
+            y = self.ff(x)
+            G = torch.autograd.functional.jacobian(lambda y: self.bb(x, y), y) 
+            G = torch.diagonal(G, dim1=0, dim2=4)
+            G = torch.transpose(G, 0, 3)
+            G = torch.transpose(G, 1, 4)
+            G = torch.transpose(G, 2, 5) 
+            
+            F = torch.reshape(F, (F.size(-1), -1))
+            G = torch.reshape(G, (G.size(-1), -1))
+            dist = torch.sqrt(((F - G)**2).sum(1).mean()/(F**2).sum(1).mean())
+
+        else:
+            F = self.f.weight
+            G = self.b.weight
+            dist = torch.sqrt(((F - G)**2).sum()/(F**2).sum())
+
+        
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
         cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
@@ -589,6 +754,204 @@ class layer_conv(nn.Module):
         if arg_return:
             return loss_b
 
+class layer_mlp_conv(nn.Module):
+    def __init__(self, in_channels, out_channels, activation, alg=None, iter=None, noise=None):
+        super(layer_mlp_conv, self).__init__()
+        self.f = nn.Conv2d(in_channels, out_channels, 5, stride = 2)
+        self.b = nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)
+
+        b = nn.ModuleList([nn.ConvTranspose2d(out_channels, out_channels, 5, stride = 1, padding = 2), nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)])
+        self.b = b
+       
+        #******************************# 
+        if activation == 'elu':
+            self.rho = nn.ELU()
+        elif activation == 'relu':
+            self.rho = nn.ReLU()
+        #******************************#
+
+        #******************#
+        self.alg = alg
+        self.iter = iter
+        self.noise = noise
+        #******************#
+    
+    def ff(self, x):
+        y = self.rho(self.f(x))
+        #y = F.relu(self.f(x))
+        #y = self.f(x)
+        return y
+
+    def bb(self, x, y):
+        #r = self.rho(self.b[0](y, output_size = y.size()))
+        #r = self.rho(self.b[1](r, output_size = x.size()))
+        r = self.b[0](self.rho(y), output_size = y.size())
+        r = self.b[1](self.rho(r), output_size = x.size())
+        return r 
+
+    def forward(self, x, back = False):
+        y = self.ff(x)
+        
+        if back:
+            r = self.bb(x, y)
+            return y, r
+        else:
+            return y
+
+    
+    def compute_dist_angle(self, *args):
+         
+        if len(args)> 0:
+            x = args[0]
+        
+        F = torch.autograd.functional.jacobian(self.ff, x) 
+        F = torch.diagonal(F, dim1=0, dim2=4)
+        y = self.ff(x)
+        G = torch.autograd.functional.jacobian(lambda y: self.bb(x, y), y) 
+        G = torch.diagonal(G, dim1=0, dim2=4)
+        G = torch.transpose(G, 0, 3)
+        G = torch.transpose(G, 1, 4)
+        G = torch.transpose(G, 2, 5) 
+        
+        F = torch.reshape(F, (F.size(-1), -1))
+        G = torch.reshape(G, (G.size(-1), -1))
+        dist = torch.sqrt(((F - G)**2).sum(1).mean()/(F**2).sum(1).mean())
+        
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+
+        return dist, angle
+    
+    def weight_b_train(self, y, optimizer, arg_return = False):
+
+        nb_iter = self.iter
+        sigma = self.noise
+
+        if self.alg == 1:        
+            raise Exception("Alg 1 not applicable to class conv_fc_layer")      
+ 
+        elif self.alg == 2:
+            for iter in range(1, nb_iter + 1):
+                y_temp, r_temp = self(y, back = True)
+                noise = sigma*torch.randn_like(y)
+                y_noise, r_noise = self(y + noise, back = True)
+                dy = (y_noise - y_temp)
+                dr = (r_noise - r_temp)
+              
+                #**************************************# 
+                noise_y = sigma*torch.randn_like(y_temp)
+                r_noise_y = self.bb(y, y_temp + noise_y)
+                dr_y = (r_noise_y - r_temp)
+                loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+                #**************************************#
+                
+                optimizer.zero_grad()
+                loss_b.backward()
+                optimizer.step()
+     
+        if arg_return:
+            return loss_b
+
+class layer_sigmapi_conv(nn.Module):
+    def __init__(self, in_channels, out_channels, activation, alg=None, iter=None, noise=None):
+        super(layer_sigmapi_conv, self).__init__()
+        self.f = nn.Conv2d(in_channels, out_channels, 5, stride = 2)
+        self.b = nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)
+
+        b = nn.ModuleList([nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2) , nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)])
+        self.b = b
+       
+        #******************************# 
+        if activation == 'elu':
+            self.rho = nn.ELU()
+        elif activation == 'relu':
+            self.rho = nn.ReLU()
+        #******************************#
+
+        #******************#
+        self.alg = alg
+        self.iter = iter
+        self.noise = noise
+        #******************#
+    
+    def ff(self, x):
+        y = self.rho(self.f(x))
+        #y = F.relu(self.f(x))
+        #y = self.f(x)
+        return y
+
+    def bb(self, x, y):
+        #r = self.rho(self.b[0](y, output_size = x.size())*self.b[1](y, output_size = x.size()))
+        r = self.b[0](self.rho(y), output_size = x.size())*self.b[1](self.rho(y), output_size = x.size())
+        return r 
+
+    def forward(self, x, back = False):
+        y = self.ff(x)
+        
+        if back:
+            r = self.bb(x, y)
+            return y, r
+        else:
+            return y
+
+    
+    def compute_dist_angle(self, *args):
+         
+        if len(args)> 0:
+            x = args[0]
+        
+        F = torch.autograd.functional.jacobian(self.ff, x) 
+        F = torch.diagonal(F, dim1=0, dim2=4)
+        y = self.ff(x)
+        G = torch.autograd.functional.jacobian(lambda y: self.bb(x, y), y) 
+        G = torch.diagonal(G, dim1=0, dim2=4)
+        G = torch.transpose(G, 0, 3)
+        G = torch.transpose(G, 1, 4)
+        G = torch.transpose(G, 2, 5) 
+        
+        F = torch.reshape(F, (F.size(-1), -1))
+        G = torch.reshape(G, (G.size(-1), -1))
+        dist = torch.sqrt(((F - G)**2).sum(1).mean()/(F**2).sum(1).mean())
+        
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+
+        return dist, angle
+    
+    def weight_b_train(self, y, optimizer, arg_return = False):
+
+        nb_iter = self.iter
+        sigma = self.noise
+
+        if self.alg == 1:        
+            raise Exception("Alg 1 not applicable to class conv_fc_layer")      
+ 
+        elif self.alg == 2:
+            for iter in range(1, nb_iter + 1):
+                y_temp, r_temp = self(y, back = True)
+                noise = sigma*torch.randn_like(y)
+                y_noise, r_noise = self(y + noise, back = True)
+                dy = (y_noise - y_temp)
+                dr = (r_noise - r_temp)
+              
+                #**************************************# 
+                noise_y = sigma*torch.randn_like(y_temp)
+                r_noise_y = self.bb(y, y_temp + noise_y)
+                dr_y = (r_noise_y - r_temp)
+                loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+                #**************************************#
+                
+                optimizer.zero_grad()
+                loss_b.backward()
+                optimizer.step()
+     
+        if arg_return:
+            return loss_b
+
  
 class globalNet(nn.Module):
     def __init__(self, args):
@@ -600,27 +963,56 @@ class globalNet(nn.Module):
 
         layers = nn.ModuleList([])
 
-
-        layers.append(layer_conv(args.C[0], args.C[1], args.activation))
+        layers.append(layer_conv(args, args.C[0], args.C[1], args.activation))
         size = int(np.floor((size - 5)/2 + 1))
 
-        for i in range(len(args.C) - 2):
-            layers.append(layer_conv(args.C[i + 1], args.C[i + 2], 
-                                    args.activation, args.alg[i], 
-                                    args.iter[i], args.noise[i]))
+        if args.mlp:
+            for i in range(len(args.C) - 2):
+                layers.append(layer_mlp_conv(args.C[i + 1], args.C[i + 2], 
+                                        args.activation, args.alg[i], 
+                                        args.iter[i], args.noise[i]))
+                
+                size = int(np.floor((size - 5)/2 + 1))
+        elif args.sigmapi:
+            for i in range(len(args.C) - 2):
+                layers.append(layer_sigmapi_conv(args.C[i + 1], args.C[i + 2], 
+                                        args.activation, args.alg[i], 
+                                        args.iter[i], args.noise[i]))
+                
+                size = int(np.floor((size - 5)/2 + 1))
+        else:
+            for i in range(len(args.C) - 2):
+                layers.append(layer_conv(args, args.C[i + 1], args.C[i + 2], 
+                                        args.activation, args.alg[i], 
+                                        args.iter[i], args.noise[i]))
+                
+                size = int(np.floor((size - 5)/2 + 1))
+ 
+        #*************************************************************#
+        if args.sigmapi:
+            #***************WATCH OUT: changed for training!*********************#
+            '''
+            layers.append(layer_sigmapi_fc((size**2)*args.C[-1], 10, 
+                                    args.activation, args.alg[-1], args.iter[-1],
+                                    args.noise[-1], last_layer = True))
+            '''
+
             
-            size = int(np.floor((size - 5)/2 + 1))
-        
-        if not args.sigmapi:
             layers.append(layer_fc((size**2)*args.C[-1], 10, 
                                     args.alg[-1], args.iter[-1],
                                     args.noise[-1], last_layer = True))
-                           
+            
+            #********************************************************************#
+        elif args.mlp:        
+            layers.append(layer_mlp_fc((size**2)*args.C[-1], 10, 
+                                    args.activation, args.alg[-1], args.iter[-1],
+                                    args.noise[-1], last_layer = True))
         else:
-            layers.append(layer_sigmapi_fc((size**2)*args.C[-1], 10, 
+            layers.append(layer_fc((size**2)*args.C[-1], 10, 
                                     args.alg[-1], args.iter[-1],
                                     args.noise[-1], last_layer = True))
- 
+        #*************************************************************#
+
 
         self.layers = layers
         self.logsoft = nn.LogSoftmax(dim=1) 
@@ -651,13 +1043,21 @@ class globalNet(nn.Module):
         for i in range(len(self.layers)):
             self.layers[i].weight_b_sym()
 
-    def weight_f_train(self, y, r, t, id_layer, optimizer, beta):        
+    def weight_f_train(self, y, r, t, id_layer, optimizer, beta):      
         #update forward weights
         loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
         #loss_f = ((0.5/beta)*((y - t)**2)).view(y.size(0), -1).sum(1)
         loss_f = loss_f.mean()
         optimizer.zero_grad()
-        loss_f.backward(retain_graph = True) 
+        loss_f.backward(retain_graph = True)
+        
+        #****DEBUGGING****#
+        '''
+        for name, param in net.named_parameters():
+            if param.grad is not None:
+                print('Parameter ' + name + 'has mean gradient: {}'.format(param.grad.mean()))
+         '''
+
         optimizer.step()
          
         #compute previous targets         
@@ -691,20 +1091,69 @@ def test(net, test_loader):
 
 if __name__ == '__main__':
 
-    if args.save:    
+    if args.path is not None:    
         BASE_PATH = createPath(args)
         command_line = ' '.join(sys.argv) 
-        createHyperparameterfile(BASE_PATH, command_line, args)
-
+        createHyperparameterfile(BASE_PATH, command_line, seed, args)
+    
+    #debugging forward weights training
+    '''
     net = globalNet(args)
     net.to(device)
 
     print(net)
+    #criterion = torch.nn.CrossEntropyLoss(reduction='none')
+    criterion = torch.nn.CrossEntropyLoss(reduction='none')
+    optim_params_f = []
+    optim_params_b = []
+    for i in range(len(net.layers)):
+        optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
+        
+    for i in range(len(net.layers) - 1):
+        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b[i]})
+    optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
+    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
+
+    _, (data, target) = next(enumerate(train_loader))
+    data, target = data.to(device), target.to(device)
+
+
+    y = net.layers[0](data).detach() 
+    for id_layer in range(len(net.layers) - 1):                     
+        net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
+        #go to the next layer
+        y = net.layers[id_layer + 1](y).detach()
+
+    optimizer_b.zero_grad()
+
+    y, r = net(data, ind = len(net.layers))
+
+    #pred = torch.exp(net.logsoft(y)) 
+    #target = F.one_hot(target, num_classes=10).float()
+    #error = args.beta*(target - pred)
+
+    L = criterion(y.float(), target).squeeze()
+    init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
+    grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
+    error = -args.beta*grads[0]
+
+
+    t = y + error
+    for id_layer in range(len(net.layers)):
+        print('Step {}'.format(id_layer + 1))        
+        y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
+        if id_layer == 0:
+            loss = loss_f
+    '''
+
 
     if args.action[0] == 'train': 
-        if args.sym:
-            net.weight_b_sym() 
-        
+        net = globalNet(args)
+        net.to(device)
+
+        print(net)
+        criterion = torch.nn.CrossEntropyLoss(reduction='none')
+
         #Initialize optimizers for forward and backward weights
         optim_params_f = []
         optim_params_b = []
@@ -719,46 +1168,118 @@ if __name__ == '__main__':
         optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
 
         net.train()
-        train_loss = 0
-        correct = 0
-        total = 0
-        
+                
         train_acc = []
         test_acc = []
         dist = [[], []]
         angle = [[], []]
 
-        for epoch in range(args.epochs): 
-            for batch_idx, (data, target) in enumerate(train_loader):
 
-                data, target = data.to(device), target.to(device)
-                
-                #****FEEDBACK WEIGHTS****#          
-                if not args.sym:                
+        #**STANDARD GENERAL TRAINING WITH FORWARD AND FEEDBACK WEIGHTS**#
+        if not args.sym:
+            for epoch in range(args.epochs): 
+                train_loss = 0
+                correct = 0
+                total = 0
+                for batch_idx, (data, target) in enumerate(train_loader):
+
+                    data, target = data.to(device), target.to(device)
+                    
+                    #****FEEDBACK WEIGHTS****#          
                     y = net.layers[0](data).detach() 
                     for id_layer in range(len(net.layers) - 1):                     
                         net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
                         #go to the next layer
                         y = net.layers[id_layer + 1](y).detach()
 
-                    if args.warmup and (epoch == 0) and (batch_idx == 20):
-                        for id_layer in range(len(net.layers) - 1):
-                            dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
-                            if id_layer < len(net.layers) - 2:
-                                print('Conv layer ' + str(id_layer + 1) + ': ')
-                            else:
-                                print('FC layer:')
 
-                            dist[id_layer].append(dist_weight)
-                            angle[id_layer].append(angle_weight)
-                            print('Distance between weights: {:.2f}'.format(dist_weight))
-                            print('Weight angle: {:.2f} deg'.format(angle_weight))         
-                        
-                        net.layers[1].iter = args.iter_fast[0]
-                        net.layers[2].iter = args.iter_fast[1]
+                    #*********FORWARD WEIGHTS********#
+                    if (not (args.warmup > 0)) or ((epoch > 0) or (batch_idx > args.warmup - 1)):
+                        y, r = net(data, ind = len(net.layers))
 
-                #*********FORWARD WEIGHTS********#
-                if args.sym or ((epoch > 0) or (batch_idx > 20)):    
+                        pred = torch.exp(net.logsoft(y)) 
+                        #target = F.one_hot(target, num_classes=10).float()
+                        #error = args.beta*(target - pred)
+
+                        L = criterion(y.float(), target).squeeze()
+                        init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
+                        grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
+                        error = -args.beta*grads[0]
+                                       
+                        t = y + error
+                        for id_layer in range(len(net.layers)):        
+                            y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
+                            if id_layer == 0:
+                                loss = loss_f
+                            
+                        train_loss += loss.item()
+                        _, predicted = pred.max(1)
+                        #_, targets = target.max(1)
+                        targets = target
+                        total += targets.size(0)
+                        correct += predicted.eq(targets).sum().item()
+
+                        #progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+
+                    else: 
+                        print('Warming up: batch iteration {}'.format(batch_idx + 1))
+                        if batch_idx == args.warmup - 1:
+                            '''
+                            for id_layer in range(len(net.layers) - 1):
+                                dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
+                                dist[id_layer].append(dist_weight)
+                                angle[id_layer].append(angle_weight)
+                                if id_layer < len(net.layers) - 2:
+                                    print('Conv layer ' + str(id_layer + 1) + ': ')
+                                else:
+                                    print('FC layer:')
+
+                                print('Initial weight distance: {:.2f}'.format(dist_weight))
+                                print('Initial weight angle: {:.2f} deg'.format(angle_weight))         
+                            '''                      
+                            net.layers[1].iter = args.iter_fast[0]
+                            net.layers[2].iter = args.iter_fast[1]
+
+                  
+                train_acc.append(100.*correct/total)
+                test_acc_temp = test(net, test_loader)
+                test_acc.append(test_acc_temp)
+
+                '''
+                for id_layer in range(len(net.layers) - 1):
+                    dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
+                    dist[id_layer].append(dist_weight)
+                    angle[id_layer].append(angle_weight)
+                    
+                    if id_layer < len(net.layers) - 2:
+                        print('Conv layer ' + str(id_layer + 1) + ': ')
+                    else:
+                        print('FC layer:')
+
+                    print('Weight distance: {:.2f}'.format(dist_weight))
+                    print('Weight angle: {:.2f} deg'.format(angle_weight))
+                '''
+
+                if args.path is not None:
+                    results = {'train_acc' : train_acc, 'test_acc' : test_acc, 'angle' : angle, 'dist' : dist}
+                    outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+                    pickle.dump(results, outfile)
+                    outfile.close()
+
+                if train_acc[-1] < 80: exit()                
+
+        #**SANITY CHECK**#
+        else:
+            #*****************#
+            net.weight_b_sym() 
+            #*****************#
+
+            for epoch in range(args.epochs): 
+                train_loss = 0
+                correct = 0
+                total = 0
+                for batch_idx, (data, target) in enumerate(train_loader):
+                    data, target = data.to(device), target.to(device)
                     y, r = net(data, ind = len(net.layers))
 
                     pred = torch.exp(net.logsoft(y)) 
@@ -778,40 +1299,30 @@ if __name__ == '__main__':
                     total += targets.size(0)
                     correct += predicted.eq(targets).sum().item()
 
-                    #progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
-                     #            % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+                    progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
-                else:
-                    print('Warming up: batch iteration {}'.format(batch_idx + 1))
-                                    
+                train_acc.append(100.*correct/total)
+                test_acc_temp = test(net, test_loader)
+                test_acc.append(test_acc_temp)
 
-            train_acc.append(100.*correct/total)
-                
-            test_acc_temp = test(net, test_loader)
-            test_acc.append(test_acc_temp)
-
-            for id_layer in range(len(net.layers) - 1):
-                dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
-                if id_layer < len(net.layers) - 2:
-                    print('Conv layer ' + str(id_layer + 1) + ': ')
-                else:
-                    print('FC layer:')
-                dist[id_layer].append(dist_weight)
-                angle[id_layer].append(angle_weight)
-
-                print('Distance between weights: {:.2f}'.format(dist_weight))
-                print('Weight angle: {:.2f} deg'.format(angle_weight))         
-            
-            
-            if args.save:
-                results = {'train_acc' : train_acc, 'test_acc' : test_acc, 'angle' : angle, 'dist' : dist}
-                outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
-                pickle.dump(results, outfile)
-                outfile.close() 
+                #*****************#
+                net.weight_b_sym() 
+                #*****************#
+         
+                if args.path is not None:
+                    results = {'train_acc' : train_acc, 'test_acc' : test_acc}
+                    outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+                    pickle.dump(results, outfile)
+                    outfile.close() 
 
     #Coding the learning procedure for the feedback weights
     elif args.action[0] == 'test':
-              
+        net = globalNet(args)
+        net.to(device)
+
+        print(net)
+        criterion = torch.nn.CrossEntropyLoss(reduction='none')
+           
         optim_params_b = []
             
         for i in range(len(net.layers) - 1):
@@ -832,48 +1343,46 @@ if __name__ == '__main__':
             print('\n Batch iteration {}'.format(batch_iter + 1))
             
             for id_layer in range(len(net.layers) - 1):  
-                #if id_layer == len(net.layers) - 2:
                 if (len(args.action) == 1) or id_layer == int(args.action[1]):
                     loss_b = net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
-     
-                    dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
+    
+                    if (batch_iter + 1) % 10  == 0: 
+                        dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
+                        weight_tab['dist_weight'].append(dist_weight)
+                        weight_tab['angle_weight'].append(angle_weight)
+                        
+                        if id_layer < len(net.layers) - 2:
+                            layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
+                        else:
+                            layer_str = 'FC layer:'  
 
-                    
-                    weight_tab['dist_weight'].append(dist_weight)
-                    weight_tab['angle_weight'].append(angle_weight)
-                    
-                    if id_layer < len(net.layers) - 2:
-                        layer_str = 'Conv layer ' + str(id_layer + 1) + ': '
-                    else:
-                        layer_str = 'FC layer:'  
-
-                    print(layer_str)
-                    print('Distance between weights: {:.2f}'.format(dist_weight))
-                    print('Weight angle: {:.2f} deg'.format(angle_weight))         
+                        print(layer_str)
+                        print('Distance between weights: {:.2f}'.format(dist_weight))
+                        print('Weight angle: {:.2f} deg'.format(angle_weight))         
 
                 #go to the next layer
                 y = net.layers[id_layer + 1](y).detach()
 
-            if args.save:
+            if args.path is not None:
                 results = {'weight_tab' : weight_tab}
                 outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
                 pickle.dump(results, outfile)
                 outfile.close() 
 
-    #testing smallNet_benchmark
-    '''
-    _, (x, _) = next(enumerate(train_loader))
-    
-    x = x.to(device)
-    net = smallNet_benchmark()
-    net.to(device) 
-    out = net(x)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                        momentum=0.9)
-    for epochs in range(1, args.epochs + 1):
-        train(epochs)
-        test(epochs)
-
-    print('All right!') 
-    '''
+    elif args.action[0] == 'benchmark':
+        _, (x, _) = next(enumerate(train_loader))
+        
+        x = x.to(device)
+        net = smallNet_benchmark(args)
+        print(net)
+        net.to(device) 
+        out = net(x)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.SGD(net.parameters(), lr=args.lr_f,
+                            momentum=0.9)
+        
+        '''
+        for epochs in range(1, args.epochs + 1):
+            train(epochs)
+            test(epochs)
+        '''
