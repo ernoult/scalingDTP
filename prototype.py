@@ -23,7 +23,6 @@ parser.add_argument('--out_size', type=int, default=512, help='output dimension 
 parser.add_argument('--in_channels', type=int, default=1, help='input channels (default: 1)')   
 parser.add_argument('--out_channels', type=int, default=128, help='output channels (default: 128)')   
 parser.add_argument('--epochs', type=int, default=15, help='number of epochs to train feedback weights(default: 15)') 
-#parser.add_argument('--iter', type=int, default=20, help='number of iterationson feedback weights per batch samples (default: 20)') 
 parser.add_argument('--iter', nargs = '+', type=int, default=[5, 10], help='number of learning iterating of feedback weights layer-wise per batch (default: [5, 10])')
 parser.add_argument('--iter_fast', nargs = '+', type=int, default=[5, 10], help='number of learning iterating of feedback weights layer-wise per batch (default: [5, 10])')
 parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
@@ -39,12 +38,10 @@ parser.add_argument('--sigmapi', default=False, action = 'store_true', help='use
 parser.add_argument('--mlp', default=False, action = 'store_true', help='use of MLP G functions (default: False)')
 parser.add_argument('--noise', nargs = '+', type=float, default=[0.05, 0.5], help='tab of noise amplitude (default: [0.05, 0.5])')
 parser.add_argument('--action', nargs = '+', type=str, default=['test'], help='action and subaction to take (default: [test])')
-#parser.add_argument('--action', type=str, default='train', help='action to execute (default: train)')
 parser.add_argument('--alg', nargs = '+', type=int, default=[1, 2], help='algorithm used to train the feedback weights layer-wise (default: [1, 2])')
 parser.add_argument('--activation', type=str, default='elu', help='activation function in conv layers (default: elu)')
 parser.add_argument('--path', type=str, default= None, help='Path directory for the results (default: None)')
 parser.add_argument('--last-trial', default=False, action='store_true',help='specifies if the current trial is the last one (default: False)')
-#parser.add_argument('--save', default=False, action='store_true',help='saves data when action test is taken (default: False)')
 parser.add_argument('--warmup', type=int, default=0, help='number of warmup steps (default: 0)')
 parser.add_argument('--seed', type=int, default=None, help='seed selected (default: None)')
 parser.add_argument('--jac', default=False, action='store_true',help='compute jacobian distance/angle instead of weight distance/angle (default: False)')   
@@ -70,16 +67,12 @@ class ReshapeTransformTarget:
         return target_onehot.scatter_(1, target, 1).squeeze(0)
 
 
-#if (args.conv):
 transforms=[torchvision.transforms.ToTensor()]
-#else:
-#transforms=[torchvision.transforms.ToTensor(),ReshapeTransform((-1,))]
 
 
 train_loader = torch.utils.data.DataLoader(
 torchvision.datasets.MNIST(root='./data', train=True, download=True,
                          transform=torchvision.transforms.Compose(transforms)
-                        #,target_transform=ReshapeTransformTarget(10)
                         ),
 batch_size = args.batch_size, shuffle=True)
 
@@ -87,7 +80,6 @@ batch_size = args.batch_size, shuffle=True)
 test_loader = torch.utils.data.DataLoader(
 torchvision.datasets.MNIST(root='./data', train=False, download=True,
                          transform=torchvision.transforms.Compose(transforms)
-                        #,target_transform=ReshapeTransformTarget(10)
                         ),
 batch_size = args.batch_size, shuffle=True)
 
@@ -108,10 +100,6 @@ else:
 
 print('Selected seed: {}'.format(seed))
 
-#Debugging seed
-#a = torch.randn(3, device = device)
-#print('Testing reproducibility of the seed: {}'.format(a))
-
 
 def copy(y, ind_y):
     y_copy = []
@@ -124,16 +112,6 @@ def copy(y, ind_y):
 
     return y_copy
 
-def compute_jacobians(net, x, y):
-    jac_F = torch.autograd.functional.jacobian(net.ff, x) 
-    jac_F = torch.transpose(torch.diagonal(jac_F, dim1=0, dim2=2), 0, 2)
-    jac_G = torch.autograd.functional.jacobian(net.bb, y) 
-    jac_G = torch.transpose(torch.diagonal(jac_G, dim1=0, dim2=2), 0, 2)
-   
-    jac_G = torch.transpose(jac_G, 1, 2) 
- 
-
-    return jac_F, jac_G
 
 class smallNet_benchmark(nn.Module):
     def __init__(self, args):
@@ -162,27 +140,19 @@ class layer_fc(nn.Module):
         super(layer_fc, self).__init__()
         self.f = nn.Linear(in_size, out_size)
         self.b = nn.Linear(out_size, in_size)
-        self.last_layer = last_layer
         
-        #**************#
         self.alg = alg
         self.iter = iter
         self.noise = noise
-        #**************#
 
     def ff(self, x):
-        if self.last_layer:
-            x_flat = x.view(x.size(0), - 1)
-            y = self.f(x_flat)
-        else:
-            y = self.f(x)
+        x_flat = x.view(x.size(0), - 1)
+        y = self.f(x_flat)
         return y
 
     def bb(self, x, y):
         r = self.b(y)
-        
-        if self.last_layer:
-            r = r.view(x.size())
+        r = r.view(x.size())
 
         return r        
 
@@ -200,15 +170,6 @@ class layer_fc(nn.Module):
         factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
         factor = factor.mean()
       
-       
-        ''' 
-        num = (1/(3*(args.noise[-1])**2))*(((dy**2).sum(-1, keepdim = True))*((dx**2).view(dx.size(0),dx.size(1), -1))).mean(0)
-        denom = (dx*dr).view(dx.size(0), dx.size(1), -1).mean(0)
-        factor = (num/denom)
-        
-        factor = torch.where(denom == 0, torch.ones_like(factor), factor)
-        factor = factor.mean(0).unsqueeze(1)
-        '''
          
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data
@@ -221,10 +182,7 @@ class layer_fc(nn.Module):
         F = self.f.weight
         G = self.b.weight.t()
 
-        #************************************************#
-         #dist = ((F - G)**2).sum()
         dist = torch.sqrt(((F - G)**2).sum()/(F**2).sum())
-        #************************************************#
 
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
@@ -250,9 +208,7 @@ class layer_fc(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
                 
-                #*****************************************************#        
                 loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-                #*****************************************************#
 
                 optimizer.zero_grad() 
                 loss_b.backward()            
@@ -262,12 +218,10 @@ class layer_fc(nn.Module):
                 dy_tab.append(dy.detach())
                 dr_tab.append(dr.detach())
 
-            #*************************************************# 
             noise_tab = torch.stack(noise_tab, dim=0)
             dy_tab = torch.stack(dy_tab, dim=0)
             dr_tab = torch.stack(dr_tab, dim=0)
             self.weight_b_normalize(noise_tab, dy_tab, dr_tab) 
-            #*************************************************#
  
         elif self.alg == 2:
             noise_tab = []
@@ -283,12 +237,10 @@ class layer_fc(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)              
 
-                #***************************************#
                 noise_y = sigma*torch.randn_like(y_temp)
                 r_noise_y = self.bb(y, y_temp + noise_y)
                 dr_y = (r_noise_y - r_temp)
                 loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
-                #***************************************#
                 
                 optimizer.zero_grad() 
                 loss_b.backward()            
@@ -300,18 +252,27 @@ class layer_fc(nn.Module):
   
         if arg_return:
             return loss_b
-
+    
+    def weight_f_train(self, y, t, optimizer):      
+        #update forward weights
+        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = loss_f.mean()
+        optimizer.zero_grad()
+        loss_f.backward(retain_graph = True)
+        optimizer.step()
+        
+        return loss_f
+   
+ 
 class layer_mlp_fc(nn.Module):
     def __init__(self, in_size, out_size, activation, alg, iter, noise, last_layer = False):
         super(layer_mlp_fc, self).__init__()
         self.f = nn.Linear(in_size, out_size)
         self.last_layer = last_layer
         
-        #*****************************************************************************#
         b = nn.ModuleList([nn.Linear(out_size, out_size), nn.Linear(out_size, in_size)])
         self.b = b
-        #*****************************************************************************#
-        #******************************# 
+        
         if activation == 'elu':
             self.rho = nn.ELU()
         elif activation == 'relu':
@@ -320,13 +281,10 @@ class layer_mlp_fc(nn.Module):
             self.rho == nn.Tanh()
         elif activation == 'sigmoid':
             self.rho == nn.Sigmoid()
-        #******************************#
         
-        #**************#
         self.alg = alg
         self.iter = iter
         self.noise = noise
-        #**************#
 
     def ff(self, x):
         if self.last_layer:
@@ -341,9 +299,7 @@ class layer_mlp_fc(nn.Module):
         return y
 
     def bb(self, x, y):
-        #*********************************************#
         r = self.rho(self.b[1](self.rho(self.b[0](y))))
-        #*********************************************#        
 
         if self.last_layer:
             r = r.view(x.size())
@@ -351,9 +307,7 @@ class layer_mlp_fc(nn.Module):
         return r        
     
     def bb_jac(self, y):
-        #*********************************************#
         r = self.rho(self.b[1](self.rho(self.b[0](y))))
-        #*********************************************#
         
         return r        
 
@@ -379,9 +333,7 @@ class layer_mlp_fc(nn.Module):
         G = torch.transpose(torch.diagonal(G, dim1=0, dim2=2), 0, 2)
         G = torch.transpose(G, 1, 2) 
 
-        #************************************************#
         dist = torch.sqrt(((F - G)**2).sum(2).sum(1).mean()/(F**2).sum(2).sum(1).mean())
-        #************************************************#
 
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
@@ -412,12 +364,10 @@ class layer_mlp_fc(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)              
 
-                #***************************************#
                 noise_y = sigma*torch.randn_like(y_temp)
                 r_noise_y = self.bb(y, y_temp + noise_y)
                 dr_y = (r_noise_y - r_temp) 
                 loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
-                #***************************************#
                 
                 optimizer.zero_grad() 
                 loss_b.backward()            
@@ -435,23 +385,17 @@ class layer_sigmapi_fc(nn.Module):
         super(layer_sigmapi_fc, self).__init__()
         self.f = nn.Linear(in_size, out_size)
         
-        #*****************************************************************************#
         b = nn.ModuleList([nn.Linear(out_size, in_size), nn.Linear(out_size, in_size)])
         self.b = b
-        #*****************************************************************************#
         
-        #******************************# 
         if activation == 'elu':
             self.rho = nn.ELU()
         elif activation == 'relu':
             self.rho = nn.ReLU()
-        #******************************#
         
-        #*****************#
         self.alg = alg
         self.iter = iter
         self.noise = noise
-        #*****************#
 
         self.last_layer = last_layer
 
@@ -465,16 +409,12 @@ class layer_sigmapi_fc(nn.Module):
 
     def bb(self, x, y):
 
-        #***************************#
         r = self.b[0](y)*self.b[1](y)
-        #***************************#
 
         if self.last_layer:
             r = r.view(x.size())
         
-        #*************#
         r = self.rho(r)
-        #*************#
 
         return r        
 
@@ -490,11 +430,9 @@ class layer_sigmapi_fc(nn.Module):
 
     def weight_b_normalize(self, dx, dy, dr):
          
-        #************************************************************************************************#
         pre_factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
         sign_factor = torch.sign(pre_factor)
         factor = torch.sqrt(torch.abs(pre_factor))
-        #************************************************************************************************#
 
         factor = factor.mean()
         sign_factor = torch.sign(sign_factor.mean())
@@ -502,24 +440,17 @@ class layer_sigmapi_fc(nn.Module):
         pos_sign[np.random.randint(2)] = int(sign_factor.item())
 
         with torch.no_grad():
-            #***************************************************************#
             self.b[0].weight.data = pos_sign[0]*factor*self.b[0].weight.data
             self.b[1].weight.data = pos_sign[1]*factor*self.b[1].weight.data 
-            #***************************************************************#
 
     def compute_dist_angle(self, x):
  
-        #********************# 
         F = self.f.weight
         y = self.ff(x)
         G = (self.b[0].weight)*(self.b[1](y).mean(0).unsqueeze(1))+ (self.b[1].weight)*(self.b[0](y).mean(0).unsqueeze(1)) 
         G = G.t()
-        #********************#
 
-        #************************************************#
-        #dist = ((F - G)**2).sum()
         dist = torch.sqrt(((F - G)**2).sum()/(F**2).sum())
-        #************************************************#
         
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
@@ -545,9 +476,7 @@ class layer_sigmapi_fc(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
                 
-                #*****************************************************#
                 loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-                #*****************************************************#
                 
                 optimizer.zero_grad()
                 loss_b.backward()
@@ -557,12 +486,10 @@ class layer_sigmapi_fc(nn.Module):
                 dy_tab.append(dy)
                 dr_tab.append(dr)
            
-            #************************************************# 
             noise_tab = torch.stack(noise_tab, dim=0)
             dy_tab = torch.stack(dy_tab, dim=0)
             dr_tab = torch.stack(dr_tab, dim=0)
             self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
-            #************************************************# 
         
         elif self.alg == 2:
 
@@ -573,12 +500,10 @@ class layer_sigmapi_fc(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
 
-                #**************************************#                
                 noise_y = sigma*torch.randn_like(y_temp)
                 r_noise_y = self.bb(y, y_temp + noise_y)
                 dr_y = (r_noise_y - r_temp)
                 loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
-                #**************************************#
                 optimizer.zero_grad()
                 loss_b.backward()
                 optimizer.step()
@@ -593,28 +518,21 @@ class layer_conv(nn.Module):
         self.f = nn.Conv2d(in_channels, out_channels, 5, stride = 2)
         self.b = nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)
        
-        #******************************# 
         if activation == 'elu':
             self.rho = nn.ELU()
         elif activation == 'relu':
             self.rho = nn.ReLU()
-        #******************************#
 
-        #******************#
         self.alg = alg
         self.iter = iter
         self.noise = noise
         self.jac = args.jac
-        #******************#
     
     def ff(self, x):
         y = self.rho(self.f(x))
-        #y = F.relu(self.f(x))
-        #y = self.f(x)
         return y
 
     def bb(self, x, y):
-        #r = self.rho(self.b(y, output_size = x.size()))
         r = self.b(self.rho(y), output_size = x.size())
         return r 
 
@@ -629,37 +547,16 @@ class layer_conv(nn.Module):
 
     def weight_b_normalize(self, dx, dy, dr):
         
-        #first technique: same normalization for all out fmaps                
         dy = dy.view(dy.size(0), -1)
         dx = dx.view(dx.size(0), -1)
         dr = dr.view(dr.size(0), -1)
         factor = ((dy**2).sum(1))/((dx*dr).sum(1))
         
-        #dy = dy.view(dy.size(0), dy.size(1), -1)
-        #dx = dx.view(dx.size(0), dx.size(1), -1)
-        #dr = dr.view(dr.size(0), dr.size(1), -1)
-        #factor = ((dy**2).sum(-1).mean(0))/((dx*dr).view(dx.size(0), dx.size(1), -1).sum(-1).mean(0)) 
-
         factor = factor.mean()
  
         with torch.no_grad():
             self.b.weight.data = factor*self.b.weight.data    
-
-        #second technique: fmaps-wise normalization
-        '''
-        dy_square = ((dy.view(dy.size(0), dy.size(1), -1))**2).sum(-1) 
-        dx = dx.view(dx.size(0), dx.size(1), -1)
-        dr = dr.view(dr.size(0), dr.size(1), -1)
-        dxdr = (dx*dr).sum(-1)
-        
-        factor = torch.bmm(dy_square.unsqueeze(-1), dxdr.unsqueeze(-1).transpose(1,2)).mean(0)
-       
-        factor = factor.view(factor.size(0), factor.size(1), 1, 1)
-         
-        with torch.no_grad():
-            self.b.weight.data = factor*self.b.weight.data
-        '''
-    
+            
     def weight_b_sym(self):
         with torch.no_grad():
             self.b.weight.data = self.f.weight.data        
@@ -702,10 +599,6 @@ class layer_conv(nn.Module):
         sigma = self.noise
 
         if self.alg == 1:        
-            #noise_tab = []
-            #dy_tab = []
-            #dr_tab = []
-
             for iter in range(1, nb_iter + 1):
                 y_temp, r_temp = self(y, back = True)
                 noise = sigma*torch.randn_like(y)
@@ -713,24 +606,13 @@ class layer_conv(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
                 
-                #*****************************************************#
                 loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
-                #*****************************************************#
 
                 optimizer.zero_grad()
                 loss_b.backward()
                 optimizer.step()
                
-                #noise_tab.append(noise.detach())
-                #dy_tab.append(dy.detach())
-                #dr_tab.append(dr.detach())        
-
-            #renormalize once per sample
             self.weight_b_normalize(noise, dy, dr)
-            #noise_tab = torch.stack(noise_tab, dim=0)
-            #dy_tab = torch.stack(dy_tab, dim=0)
-            #dr_tab = torch.stack(dr_tab, dim=0)
-            #self.weight_b_normalize(noise_tab, dy_tab, dr_tab)
 
         elif self.alg == 2:
             for iter in range(1, nb_iter + 1):
@@ -740,12 +622,10 @@ class layer_conv(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
               
-                #**************************************# 
                 noise_y = sigma*torch.randn_like(y_temp)
                 r_noise_y = self.bb(y, y_temp + noise_y)
                 dr_y = (r_noise_y - r_temp)
                 loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
-                #**************************************#
                 
                 optimizer.zero_grad()
                 loss_b.backward()
@@ -753,6 +633,18 @@ class layer_conv(nn.Module):
      
         if arg_return:
             return loss_b
+   
+    def weight_f_train(self, y, t, optimizer):      
+        #update forward weights
+        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = loss_f.mean()
+        optimizer.zero_grad()
+        loss_f.backward(retain_graph = True)
+        
+        optimizer.step()
+        
+        return loss_f
+
 
 class layer_mlp_conv(nn.Module):
     def __init__(self, in_channels, out_channels, activation, alg=None, iter=None, noise=None):
@@ -763,28 +655,20 @@ class layer_mlp_conv(nn.Module):
         b = nn.ModuleList([nn.ConvTranspose2d(out_channels, out_channels, 5, stride = 1, padding = 2), nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)])
         self.b = b
        
-        #******************************# 
         if activation == 'elu':
             self.rho = nn.ELU()
         elif activation == 'relu':
             self.rho = nn.ReLU()
-        #******************************#
 
-        #******************#
         self.alg = alg
         self.iter = iter
         self.noise = noise
-        #******************#
     
     def ff(self, x):
         y = self.rho(self.f(x))
-        #y = F.relu(self.f(x))
-        #y = self.f(x)
         return y
 
     def bb(self, x, y):
-        #r = self.rho(self.b[0](y, output_size = y.size()))
-        #r = self.rho(self.b[1](r, output_size = x.size()))
         r = self.b[0](self.rho(y), output_size = y.size())
         r = self.b[1](self.rho(r), output_size = x.size())
         return r 
@@ -840,12 +724,10 @@ class layer_mlp_conv(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
               
-                #**************************************# 
                 noise_y = sigma*torch.randn_like(y_temp)
                 r_noise_y = self.bb(y, y_temp + noise_y)
                 dr_y = (r_noise_y - r_temp)
                 loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
-                #**************************************#
                 
                 optimizer.zero_grad()
                 loss_b.backward()
@@ -863,27 +745,20 @@ class layer_sigmapi_conv(nn.Module):
         b = nn.ModuleList([nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2) , nn.ConvTranspose2d(out_channels, in_channels, 5, stride = 2)])
         self.b = b
        
-        #******************************# 
         if activation == 'elu':
             self.rho = nn.ELU()
         elif activation == 'relu':
             self.rho = nn.ReLU()
-        #******************************#
 
-        #******************#
         self.alg = alg
         self.iter = iter
         self.noise = noise
-        #******************#
     
     def ff(self, x):
         y = self.rho(self.f(x))
-        #y = F.relu(self.f(x))
-        #y = self.f(x)
         return y
 
     def bb(self, x, y):
-        #r = self.rho(self.b[0](y, output_size = x.size())*self.b[1](y, output_size = x.size()))
         r = self.b[0](self.rho(y), output_size = x.size())*self.b[1](self.rho(y), output_size = x.size())
         return r 
 
@@ -938,12 +813,10 @@ class layer_sigmapi_conv(nn.Module):
                 dy = (y_noise - y_temp)
                 dr = (r_noise - r_temp)
               
-                #**************************************# 
                 noise_y = sigma*torch.randn_like(y_temp)
                 r_noise_y = self.bb(y, y_temp + noise_y)
                 dr_y = (r_noise_y - r_temp)
                 loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
-                #**************************************#
                 
                 optimizer.zero_grad()
                 loss_b.backward()
@@ -951,6 +824,17 @@ class layer_sigmapi_conv(nn.Module):
      
         if arg_return:
             return loss_b
+    
+    def weight_f_train(self, y, t, optimizer):      
+        #update forward weights
+        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = loss_f.mean()
+        optimizer.zero_grad()
+        loss_f.backward(retain_graph = True)
+        
+        optimizer.step()
+         
+        return loss_f
 
  
 class globalNet(nn.Module):
@@ -988,7 +872,6 @@ class globalNet(nn.Module):
                 
                 size = int(np.floor((size - 5)/2 + 1))
  
-        #*************************************************************#
         if args.sigmapi:
             #***************WATCH OUT: changed for training!*********************#
             '''
@@ -1011,7 +894,6 @@ class globalNet(nn.Module):
             layers.append(layer_fc((size**2)*args.C[-1], 10, 
                                     args.alg[-1], args.iter[-1],
                                     args.noise[-1], last_layer = True))
-        #*************************************************************#
 
 
         self.layers = layers
@@ -1046,18 +928,10 @@ class globalNet(nn.Module):
     def weight_f_train(self, y, r, t, id_layer, optimizer, beta):      
         #update forward weights
         loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
-        #loss_f = ((0.5/beta)*((y - t)**2)).view(y.size(0), -1).sum(1)
         loss_f = loss_f.mean()
         optimizer.zero_grad()
         loss_f.backward(retain_graph = True)
         
-        #****DEBUGGING****#
-        '''
-        for name, param in net.named_parameters():
-            if param.grad is not None:
-                print('Parameter ' + name + 'has mean gradient: {}'.format(param.grad.mean()))
-         '''
-
         optimizer.step()
          
         #compute previous targets         
@@ -1096,65 +970,13 @@ if __name__ == '__main__':
         command_line = ' '.join(sys.argv) 
         createHyperparameterfile(BASE_PATH, command_line, seed, args)
     
-    #debugging forward weights training
-    '''
-    net = globalNet(args)
-    net.to(device)
-
-    print(net)
-    #criterion = torch.nn.CrossEntropyLoss(reduction='none')
-    criterion = torch.nn.CrossEntropyLoss(reduction='none')
-    optim_params_f = []
-    optim_params_b = []
-    for i in range(len(net.layers)):
-        optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
-        
-    for i in range(len(net.layers) - 1):
-        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b[i]})
-    optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
-    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
-
-    _, (data, target) = next(enumerate(train_loader))
-    data, target = data.to(device), target.to(device)
-
-
-    y = net.layers[0](data).detach() 
-    for id_layer in range(len(net.layers) - 1):                     
-        net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
-        #go to the next layer
-        y = net.layers[id_layer + 1](y).detach()
-
-    optimizer_b.zero_grad()
-
-    y, r = net(data, ind = len(net.layers))
-
-    #pred = torch.exp(net.logsoft(y)) 
-    #target = F.one_hot(target, num_classes=10).float()
-    #error = args.beta*(target - pred)
-
-    L = criterion(y.float(), target).squeeze()
-    init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
-    grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
-    error = -args.beta*grads[0]
-
-
-    t = y + error
-    for id_layer in range(len(net.layers)):
-        print('Step {}'.format(id_layer + 1))        
-        y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
-        if id_layer == 0:
-            loss = loss_f
-    '''
-
-
+    
     if args.action[0] == 'train': 
         net = globalNet(args)
         net.to(device)
-
         print(net)
+        
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
-
-        #Initialize optimizers for forward and backward weights
         optim_params_f = []
         optim_params_b = []
 
@@ -1171,151 +993,67 @@ if __name__ == '__main__':
                 
         train_acc = []
         test_acc = []
-        dist = [[], []]
-        angle = [[], []]
-
 
         #**STANDARD GENERAL TRAINING WITH FORWARD AND FEEDBACK WEIGHTS**#
-        if not args.sym:
-            for epoch in range(args.epochs): 
-                train_loss = 0
-                correct = 0
-                total = 0
-                for batch_idx, (data, target) in enumerate(train_loader):
+        for epoch in range(args.epochs): 
+            train_loss = 0
+            correct = 0
+            total = 0
+            for batch_idx, (data, target) in enumerate(train_loader):
 
-                    data, target = data.to(device), target.to(device)
+                data, target = data.to(device), target.to(device)
+                
+                #****FEEDBACK WEIGHTS****#          
+                y = net.layers[0](data).detach() 
+                for id_layer in range(len(net.layers) - 1):                     
+                    net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
+                    y = net.layers[id_layer + 1](y).detach()
+
+                pred = torch.exp(net.logsoft(y)) 
+
+                #*********FORWARD WEIGHTS********#
+                y, r = net(data, ind = len(net.layers))
+                
+                L = criterion(y.float(), target).squeeze()
+                init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
+                grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
+                delta = -args.beta*grads[0]
+                
+                t = (y + delta).detach()
+
+                for id_layer in range(len(net.layers)):        
+                    #y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
+                    loss_f = net.layers[-1 - id_layer].weight_f_train(y, t, optimizer_f)
+            
+                    #compute previous targets         
+                    if (id_layer < len(net.layers) - 1):
+                        delta = net.layers[-1 - id_layer].bb(r, t) - r
+                        y, r = net(data, ind = len(net.layers) - 1 - id_layer)
+                        t = (y + delta).detach()
+ 
+                    if id_layer == 0:
+                        loss = loss_f
                     
-                    #****FEEDBACK WEIGHTS****#          
-                    y = net.layers[0](data).detach() 
-                    for id_layer in range(len(net.layers) - 1):                     
-                        net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
-                        #go to the next layer
-                        y = net.layers[id_layer + 1](y).detach()
+                train_loss += loss.item()
+                _, predicted = pred.max(1)
+                targets = target
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
 
+                progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+              
+            train_acc.append(100.*correct/total)
+            test_acc_temp = test(net, test_loader)
+            test_acc.append(test_acc_temp)
 
-                    #*********FORWARD WEIGHTS********#
-                    if (not (args.warmup > 0)) or ((epoch > 0) or (batch_idx > args.warmup - 1)):
-                        y, r = net(data, ind = len(net.layers))
+            if args.path is not None:
+                results = {'train_acc' : train_acc, 'test_acc' : test_acc}
+                outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+                pickle.dump(results, outfile)
+                outfile.close()
 
-                        pred = torch.exp(net.logsoft(y)) 
-                        #target = F.one_hot(target, num_classes=10).float()
-                        #error = args.beta*(target - pred)
+            if train_acc[-1] < 80: exit()                
 
-                        L = criterion(y.float(), target).squeeze()
-                        init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
-                        grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
-                        error = -args.beta*grads[0]
-                                       
-                        t = y + error
-                        for id_layer in range(len(net.layers)):        
-                            y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
-                            if id_layer == 0:
-                                loss = loss_f
-                            
-                        train_loss += loss.item()
-                        _, predicted = pred.max(1)
-                        #_, targets = target.max(1)
-                        targets = target
-                        total += targets.size(0)
-                        correct += predicted.eq(targets).sum().item()
-
-                        #progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-                    else: 
-                        print('Warming up: batch iteration {}'.format(batch_idx + 1))
-                        if batch_idx == args.warmup - 1:
-                            '''
-                            for id_layer in range(len(net.layers) - 1):
-                                dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
-                                dist[id_layer].append(dist_weight)
-                                angle[id_layer].append(angle_weight)
-                                if id_layer < len(net.layers) - 2:
-                                    print('Conv layer ' + str(id_layer + 1) + ': ')
-                                else:
-                                    print('FC layer:')
-
-                                print('Initial weight distance: {:.2f}'.format(dist_weight))
-                                print('Initial weight angle: {:.2f} deg'.format(angle_weight))         
-                            '''                      
-                            net.layers[1].iter = args.iter_fast[0]
-                            net.layers[2].iter = args.iter_fast[1]
-
-                  
-                train_acc.append(100.*correct/total)
-                test_acc_temp = test(net, test_loader)
-                test_acc.append(test_acc_temp)
-
-                '''
-                for id_layer in range(len(net.layers) - 1):
-                    dist_weight, angle_weight = net.layers[id_layer + 1].compute_dist_angle(y)
-                    dist[id_layer].append(dist_weight)
-                    angle[id_layer].append(angle_weight)
-                    
-                    if id_layer < len(net.layers) - 2:
-                        print('Conv layer ' + str(id_layer + 1) + ': ')
-                    else:
-                        print('FC layer:')
-
-                    print('Weight distance: {:.2f}'.format(dist_weight))
-                    print('Weight angle: {:.2f} deg'.format(angle_weight))
-                '''
-
-                if args.path is not None:
-                    results = {'train_acc' : train_acc, 'test_acc' : test_acc, 'angle' : angle, 'dist' : dist}
-                    outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
-                    pickle.dump(results, outfile)
-                    outfile.close()
-
-                if train_acc[-1] < 80: exit()                
-
-        #**SANITY CHECK**#
-        else:
-            #*****************#
-            net.weight_b_sym() 
-            #*****************#
-
-            for epoch in range(args.epochs): 
-                train_loss = 0
-                correct = 0
-                total = 0
-                for batch_idx, (data, target) in enumerate(train_loader):
-                    data, target = data.to(device), target.to(device)
-                    y, r = net(data, ind = len(net.layers))
-
-                    pred = torch.exp(net.logsoft(y)) 
-                    target = F.one_hot(target, num_classes=10).float()
-                    
-                    beta = args.beta
-                    t = y + beta*(target - pred)
-
-                    for id_layer in range(len(net.layers)):        
-                        y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, beta)        
-                        if id_layer == 0:
-                            loss = loss_f
-                        
-                    train_loss += loss.item()
-                    _, predicted = pred.max(1)
-                    _, targets = target.max(1)
-                    total += targets.size(0)
-                    correct += predicted.eq(targets).sum().item()
-
-                    progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-                train_acc.append(100.*correct/total)
-                test_acc_temp = test(net, test_loader)
-                test_acc.append(test_acc_temp)
-
-                #*****************#
-                net.weight_b_sym() 
-                #*****************#
-         
-                if args.path is not None:
-                    results = {'train_acc' : train_acc, 'test_acc' : test_acc}
-                    outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
-                    pickle.dump(results, outfile)
-                    outfile.close() 
-
-    #Coding the learning procedure for the feedback weights
     elif args.action[0] == 'test':
         net = globalNet(args)
         net.to(device)
@@ -1386,3 +1124,60 @@ if __name__ == '__main__':
             train(epochs)
             test(epochs)
         '''
+    
+    elif args.action[0] == 'debug':
+
+        net = globalNet(args)
+        net.to(device)
+
+        print(net)
+        #criterion = torch.nn.CrossEntropyLoss(reduction='none')
+        criterion = torch.nn.CrossEntropyLoss(reduction='none')
+        optim_params_f = []
+        optim_params_b = []
+        for i in range(len(net.layers)):
+            optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
+            
+        for i in range(len(net.layers) - 1):
+            optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b[i]})
+        optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9) 
+        optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
+
+        _, (data, target) = next(enumerate(train_loader))
+        data, target = data.to(device), target.to(device)
+
+
+        y = net.layers[0](data).detach() 
+        for id_layer in range(len(net.layers) - 1):                     
+            net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
+            #go to the next layer
+            y = net.layers[id_layer + 1](y).detach()
+
+        optimizer_b.zero_grad()
+
+        #*****FORWARD WEIGHTS TRAINING*****#
+        
+        #Compute first target
+        L = criterion(y.float(), target).squeeze()
+        init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
+        grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
+        delta = -args.beta*grads[0]
+        
+        y, r = self(data, ind = len(self.layers))
+        t = (y + delta).detach()
+
+        for id_layer in range(len(net.layers)):
+            print('Step {}'.format(id_layer + 1))
+            loss_f = net.layers[- 1 - id_layer].weight_f_train(y, t)
+            
+            #y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
+            if id_layer == 0:
+                loss = loss_f
+        
+            #compute previous targets         
+            delta = net.layers[-1 - id_layer].bb(r, t) - r
+            y, r = self(data, ind = len(self.layers) - 1 - id_layer)
+            t = (y + delta).detach()
+
+
+
