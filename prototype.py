@@ -259,6 +259,13 @@ class layer_fc(nn.Module):
         loss_f = loss_f.mean()
         optimizer.zero_grad()
         loss_f.backward(retain_graph = True)
+        
+        ''' 
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name + ' has mean gradient {}'.format(p.grad.mean()))
+        '''
+
         optimizer.step()
         
         return loss_f
@@ -641,6 +648,12 @@ class layer_conv(nn.Module):
         optimizer.zero_grad()
         loss_f.backward(retain_graph = True)
         
+        ''' 
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name + ' has mean gradient {}'.format(p.grad.mean()))
+        '''
+        
         optimizer.step()
         
         return loss_f
@@ -831,7 +844,13 @@ class layer_sigmapi_conv(nn.Module):
         loss_f = loss_f.mean()
         optimizer.zero_grad()
         loss_f.backward(retain_graph = True)
-        
+
+        '''       
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name + ' has mean gradient {}'.format(p.grad.mean()))
+        '''
+     
         optimizer.step()
          
         return loss_f
@@ -1019,21 +1038,21 @@ if __name__ == '__main__':
                 grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
                 delta = -args.beta*grads[0]
                 
-                t = (y + delta).detach()
+                t = y + delta
 
                 for id_layer in range(len(net.layers)):        
                     #y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
                     loss_f = net.layers[-1 - id_layer].weight_f_train(y, t, optimizer_f)
-            
+      
                     #compute previous targets         
                     if (id_layer < len(net.layers) - 1):
                         delta = net.layers[-1 - id_layer].bb(r, t) - r
                         y, r = net(data, ind = len(net.layers) - 1 - id_layer)
                         t = (y + delta).detach()
- 
+                    
                     if id_layer == 0:
                         loss = loss_f
-                    
+
                 train_loss += loss.item()
                 _, predicted = pred.max(1)
                 targets = target
@@ -1154,30 +1173,30 @@ if __name__ == '__main__':
             y = net.layers[id_layer + 1](y).detach()
 
         optimizer_b.zero_grad()
-
-        #*****FORWARD WEIGHTS TRAINING*****#
         
-        #Compute first target
+        #*********FORWARD WEIGHTS********#
+        y, r = net(data, ind = len(net.layers))
+        
         L = criterion(y.float(), target).squeeze()
         init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
         grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
         delta = -args.beta*grads[0]
         
-        y, r = self(data, ind = len(self.layers))
-        t = (y + delta).detach()
+        t = y + delta
 
-        for id_layer in range(len(net.layers)):
-            print('Step {}'.format(id_layer + 1))
-            loss_f = net.layers[- 1 - id_layer].weight_f_train(y, t)
-            
+        for id_layer in range(len(net.layers)):        
             #y, r, t, loss_f = net.weight_f_train(y, r, t, id_layer, optimizer_f, args.beta)        
+            loss_f = net.layers[-1 - id_layer].weight_f_train(y, t, optimizer_f)
+    
+            #compute previous targets         
+            if (id_layer < len(net.layers) - 1):
+                print('Step {}'.format(id_layer + 1))
+                delta = net.layers[-1 - id_layer].bb(r, t) - r
+                y, r = net(data, ind = len(net.layers) - 1 - id_layer)
+                t = (y + delta).detach()
+
             if id_layer == 0:
                 loss = loss_f
-        
-            #compute previous targets         
-            delta = net.layers[-1 - id_layer].bb(r, t) - r
-            y, r = self(data, ind = len(self.layers) - 1 - id_layer)
-            t = (y + delta).detach()
 
-
+       
 
