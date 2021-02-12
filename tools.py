@@ -6,6 +6,7 @@ from shutil import copyfile
 import copy
 import time
 
+'''
 _, term_width = os.popen('stty size', 'r').read().split()
 term_width = int(term_width)
 
@@ -87,6 +88,7 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
+'''
 
 def createPath(args):
 

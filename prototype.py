@@ -914,10 +914,12 @@ class layer_convpool(nn.Module):
             return y
 
     def bb(self, x, y, ind):
-        r = self.unpool(y, ind, output_size = x.size())
-        r = self.b(self.rho(r), output_size = x.size())
-        
-        return r 
+        if hasattr(self, 'b'):
+            r = self.unpool(y, ind, output_size = x.size())
+            r = self.b(self.rho(r), output_size = x.size())
+            return r 
+        else:
+            return None
 
     def forward(self, x, back = False):
         
@@ -961,9 +963,9 @@ class layer_convpool(nn.Module):
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
         cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
-     
-        if arg_return:
-            return loss_b
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+        
+        return dist, angle
 
     def weight_b_train(self, y, optimizer, arg_return = False):
         
@@ -971,9 +973,9 @@ class layer_convpool(nn.Module):
         sigma = self.noise
             
         for iter in range(1, nb_iter + 1):
-            y_temp, r_temp, ind = self(y, back = True)
+            y_temp, (r_temp, ind) = self(y, back = True)
             noise = sigma*torch.randn_like(y)
-            y_noise, r_noise, ind_noise = self(y + noise, back = True)
+            y_noise, (r_noise, ind_noise) = self(y + noise, back = True)
             dy = (y_noise - y_temp)
             dr = (r_noise - r_temp)
           
@@ -1137,9 +1139,9 @@ def test(net, test_loader):
     return test_acc
 
 
-class ResNet(nn.Module):
+class VGG(nn.Module):
     def __init__(self, args):
-        super(ResNet, self).__init__()
+        super(VGG, self).__init__()
 
         #CIFAR-10       
         size = 32
@@ -1202,7 +1204,7 @@ if __name__ == '__main__':
         net = smallNet(args)
 
     elif args.dataset == 'cifar10':
-        net = ResNet(args)
+        net = VGG(args)
     
     net = net.to(device)
     print(net)    
@@ -1272,7 +1274,7 @@ if __name__ == '__main__':
                 total += targets.size(0)
                 correct += predicted.eq(targets).sum().item()
 
-                progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+                #progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
               
             train_acc.append(100.*correct/total)
             test_acc_temp = test(net, test_loader)
