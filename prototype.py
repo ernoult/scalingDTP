@@ -277,10 +277,12 @@ class layer_fc(nn.Module):
         optimizer.zero_grad()
         loss_f.backward(retain_graph = True)
 
-        #DEBUG        
+        #DEBUG       
+        ''' 
         for name, p in net.named_parameters():
             if p.grad is not None:
                 print(name + ' has mean gradient {}'.format(p.grad.mean()))
+        '''
 
         optimizer.step()
         
@@ -999,10 +1001,11 @@ class layer_convpool(nn.Module):
         optimizer.step()
         
         #DEBUG
+        '''
         for name, p in net.named_parameters():
             if p.grad is not None:
                 print(name + ' has mean gradient {}'.format(p.grad.mean()))
-        
+        '''
         
         return loss_f
 
@@ -1246,7 +1249,7 @@ if __name__ == '__main__':
                 pred = torch.exp(net.logsoft(y)) 
 
                 #*********FORWARD WEIGHTS********#
-                y, r = net(data, ind = len(net.layers))
+                y, r = net(data, ind_layer = len(net.layers))
                 
                 L = criterion(y.float(), target).squeeze()
                 init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=device, requires_grad=True) 
@@ -1262,7 +1265,7 @@ if __name__ == '__main__':
                     #compute previous targets         
                     if (id_layer < len(net.layers) - 1):
                         delta = net.layers[-1 - id_layer].propagateError(r, t)
-                        y, r = net(data, ind = len(net.layers) - 1 - id_layer)
+                        y, r = net(data, ind_layer = len(net.layers) - 1 - id_layer)
                         t = (y + delta).detach()
                     
                     if id_layer == 0:
@@ -1274,7 +1277,7 @@ if __name__ == '__main__':
                 total += targets.size(0)
                 correct += predicted.eq(targets).sum().item()
 
-                #progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+                progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
               
             train_acc.append(100.*correct/total)
             test_acc_temp = test(net, test_loader)
@@ -1286,7 +1289,7 @@ if __name__ == '__main__':
                 pickle.dump(results, outfile)
                 outfile.close()
 
-            if train_acc[-1] < 80: exit()                
+            if (args.dataset == 'mnist') and (train_acc[-1] < 80): exit()                
 
     elif args.action[0] == 'test':
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
