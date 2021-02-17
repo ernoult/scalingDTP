@@ -7,19 +7,15 @@ from models import *
 
 parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
 
-
-parser.add_argument('--in_size', type=int, default=784, help='input dimension (default: 784)')   
-parser.add_argument('--out_size', type=int, default=512, help='output dimension (default: 512)')   
+ 
 parser.add_argument('--in_channels', type=int, default=1, help='input channels (default: 1)')   
 parser.add_argument('--out_channels', type=int, default=128, help='output channels (default: 128)')   
 parser.add_argument('--epochs', type=int, default=15, help='number of epochs to train feedback weights(default: 15)') 
 parser.add_argument('--iter', nargs = '+', type=int, default=[5, 10], help='number of learning iterating of feedback weights layer-wise per batch (default: [5, 10])')
-parser.add_argument('--iter_fast', nargs = '+', type=int, default=[5, 10], help='number of learning iterating of feedback weights layer-wise per batch (default: [5, 10])')
 parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
 parser.add_argument('--device-label', type=int, default=0, help='device (default: 1)')   
 parser.add_argument('--lr_f', type=float, default=0.05, help='learning rate (default: 0.05)')   
 parser.add_argument('--lr_b', nargs = '+', type=float, default=[0.05, 0.05], help='learning rates for the feedback weights (default: [0.05, 0.05])')
-parser.add_argument('--lamb', type=float, default=0.01, help='regularization parameter (default: 0.01)')   
 parser.add_argument('--beta', type=float, default=0.1, help='nudging parameter (default: 0.1)')   
 parser.add_argument('--sym', default=False, action='store_true',help='sets symmetric weight initialization (default: False)')
 parser.add_argument('--jacobian', default=False, action='store_true',help='compute jacobians (default: False)')
@@ -32,9 +28,9 @@ parser.add_argument('--alg', nargs = '+', type=int, default=[1, 2], help='algori
 parser.add_argument('--activation', type=str, default='elu', help='activation function in conv layers (default: elu)')
 parser.add_argument('--path', type=str, default= None, help='Path directory for the results (default: None)')
 parser.add_argument('--last-trial', default=False, action='store_true',help='specifies if the current trial is the last one (default: False)')
-parser.add_argument('--warmup', type=int, default=0, help='number of warmup steps (default: 0)')
 parser.add_argument('--seed', type=int, default=None, help='seed selected (default: None)')
-parser.add_argument('--jac', default=False, action='store_true',help='compute jacobian distance/angle instead of weight distance/angle (default: False)')   
+parser.add_argument('--jac', default=False, action='store_true',help='compute jacobian distance/angle instead of weight distance/angle (default: False)')
+parser.add_argument('--scheduler', default=False, action='store_true',help='use of a learning rate scheduler for the forward weights (default: False)')      
 parser.add_argument('--dataset', type=str, default= 'mnist', help='Dataset (default: mnist)')
 
 args = parser.parse_args()  
@@ -80,6 +76,14 @@ if __name__ == '__main__':
     if args.action[0] == 'train': 
         criterion = torch.nn.CrossEntropyLoss(reduction='none')
         optimizers = createOptimizers(net, args, forward = True)
+
+        #************************************************************************************************#
+        if args.scheduler:
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizers[0], milestones=[30,60], gamma=0.1)
+            print('We are using a learning rate scheduler!')
+        #************************************************************************************************#
+
+
         net.train()
                 
         train_acc = []
@@ -101,7 +105,7 @@ if __name__ == '__main__':
                 total += targets.size(0)
                 correct += predicted.eq(targets).sum().item()
 
-                #progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+                progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
               
             train_acc.append(100.*correct/total)
             test_acc_temp = test(net, test_loader, device)
@@ -112,6 +116,12 @@ if __name__ == '__main__':
                 outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
                 pickle.dump(results, outfile)
                 outfile.close()
+
+            #*******************#
+            if args.scheduler:
+                scheduler.step()
+            #*******************#
+
 
             if (args.dataset == 'mnist') and (train_acc[-1] < 80): exit()
             elif (args.dataset == 'cifar10') and (train_acc[-1] < 30): exit()                 

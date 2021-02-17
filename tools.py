@@ -12,7 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
-'''
+
 _, term_width = os.popen('stty size', 'r').read().split()
 term_width = int(term_width)
 
@@ -94,7 +94,7 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
-'''
+
 
 def createPath(args):
 
@@ -207,6 +207,8 @@ def train_batch(args, net, data, optimizers, target = None, criterion = None, **
 
     if args.action[0] == 'train':
         optimizer_f, optimizer_b = optimizers
+
+
         #****FEEDBACK WEIGHTS****#          
         y = net.layers[0](data).detach() 
         for id_layer in range(len(net.layers) - 1):                     
@@ -237,6 +239,7 @@ def train_batch(args, net, data, optimizers, target = None, criterion = None, **
             
             if id_layer == 0:
                 loss = loss_f
+        
         
         return pred, loss
 
@@ -357,9 +360,17 @@ def createDataset(args):
         batch_size = args.batch_size, shuffle=True)
 
     elif args.dataset == 'cifar10':
+        '''
         transform_train = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), 
                                                         torchvision.transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), 
-                                                                                               std=(3*0.2023, 3*0.1994, 3*0.2010)) ])   
+                                                                                               std=(3*0.2023, 3*0.1994, 3*0.2010)) ])
+        '''
+
+        transform_train = torchvision.transforms.Compose([torchvision.transforms.RandomHorizontalFlip(0.5),
+                                                          torchvision.transforms.RandomCrop(size=[32,32], padding=4, padding_mode='edge'),
+                                                          torchvision.transforms.ToTensor(), 
+                                                          torchvision.transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), 
+                                                                                           std=(3*0.2023, 3*0.1994, 3*0.2010)) ])    
 
         transform_test = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), 
                                                          torchvision.transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), 
