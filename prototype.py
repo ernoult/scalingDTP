@@ -32,6 +32,7 @@ parser.add_argument('--seed', type=int, default=None, help='seed selected (defau
 parser.add_argument('--jac', default=False, action='store_true',help='compute jacobian distance/angle instead of weight distance/angle (default: False)')
 parser.add_argument('--scheduler', default=False, action='store_true',help='use of a learning rate scheduler for the forward weights (default: False)')      
 parser.add_argument('--dataset', type=str, default= 'mnist', help='Dataset (default: mnist)')
+parser.add_argument('--wdecay', type=float, default=None, help='Weight decay (default: None)')   
 
 args = parser.parse_args()  
 
@@ -79,18 +80,18 @@ if __name__ == '__main__':
 
         #************************************************************************************************#
         if args.scheduler:
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizers[0], milestones=[30,60], gamma=0.1)
+            #scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizers[0], milestones=[30,60], gamma=0.1)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizers[0], 85, eta_min=1e-5)
             print('We are using a learning rate scheduler!')
         #************************************************************************************************#
 
-
-        net.train()
                 
         train_acc = []
         test_acc = []
 
         #**STANDARD GENERAL TRAINING WITH FORWARD AND FEEDBACK WEIGHTS**#
-        for epoch in range(args.epochs): 
+        for epoch in range(args.epochs):
+            net.train()
             train_loss = 0
             correct = 0
             total = 0

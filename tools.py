@@ -283,8 +283,20 @@ def createOptimizers(net, args, forward = False):
 
     if forward: 
         optim_params_f = []
-        for i in range(len(net.layers)):
-            optim_params_f.append({'params': net.layers[i].f.parameters(), 'lr': args.lr_f})
+
+        #*********************************************************************#
+        if args.wdecay is None:
+            for i in range(len(net.layers)):
+                optim_params_f.append({'params': net.layers[i].f.parameters(), 
+                                        'lr': args.lr_f})
+        else:
+            for i in range(len(net.layers)):
+                optim_params_f.append({'params': net.layers[i].f.parameters(), 
+                                        'lr': args.lr_f, 
+                                        'weight_decay': args.wdecay})
+            print('We are using weight decay!')
+        #*********************************************************************#           
+
         optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9)
         return (optimizer_f, optimizer_b) 
     
@@ -295,7 +307,7 @@ def createOptimizers(net, args, forward = False):
 
 
 def test(net, test_loader, device):
-
+    net.eval()
     correct = 0
     total = 0
 
