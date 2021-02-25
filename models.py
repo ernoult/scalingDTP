@@ -870,6 +870,132 @@ class layer_convpool(nn.Module):
 
         return delta
 
+class layer_sigmapi_convpool(nn.Module):
+    def __init__(self, args, in_channels, out_channels, activation, iter=None, noise=None):
+        super(layer_sigmapi_convpool, self).__init__()
+        self.f = nn.Conv2d(in_channels, out_channels, 3, stride = 1, padding = 1)
+        self.pool = nn.MaxPool2d(2, stride = 2, return_indices = True)            
+        
+        if iter is not None:
+            b = nn.ModuleList([nn.ConvTranspose2d(out_channels, in_channels, 3, stride = 1, padding = 1), 
+                                nn.ConvTranspose2d(out_channels, in_channels, 3, stride = 1, padding = 1)])
+            self.b = b
+            self.unpool = nn.MaxUnpool2d(2, stride = 2)  
+      
+        #******************************# 
+        if activation == 'elu':
+            self.rho = nn.ELU()
+        elif activation == 'relu':
+            self.rho = nn.ReLU()
+        #******************************#
+
+        #******************#
+        self.iter = iter
+        self.noise = noise
+        #******************#
+    
+    def ff(self, x, ret_ind = False):
+        y, ind = self.pool(self.rho(self.f(x)))
+        
+        if ret_ind:
+            return y, ind
+        else:
+            return y
+
+    def bb(self, x, y, ind):
+        if hasattr(self, 'b'):
+            r = self.unpool(y, ind, output_size = x.size())
+            r = self.b[0](self.rho(r), output_size = x.size())*self.b[1](self.rho(r), output_size = x.size())
+            return r 
+        else:
+            return None
+
+    def forward(self, x, back = False):
+        
+        if back:
+            y, ind = self.ff(x, ret_ind = True)
+            r = self.bb(x, y, ind)
+            return y, (r, ind)
+        else:
+            y = self.ff(x)
+            return y
+       
+    def weight_b_sym(self):
+        with torch.no_grad():
+            self.b.weight.data = self.f.weight.data        
+
+    def compute_dist_angle(self, *args):
+
+        x = args[0]        
+        F = torch.autograd.functional.jacobian(self.ff, x) 
+        F = torch.diagonal(F, dim1=0, dim2=4)
+        y, ind = self.ff(x, ret_ind = True)
+        G = torch.autograd.functional.jacobian(lambda y: self.bb(x, y, ind), y) 
+        G = torch.diagonal(G, dim1=0, dim2=4)
+        G = torch.transpose(G, 0, 3)
+        G = torch.transpose(G, 1, 4)
+        G = torch.transpose(G, 2, 5) 
+        
+        F = torch.reshape(F, (F.size(-1), -1))
+        G = torch.reshape(G, (G.size(-1), -1))
+        dist = torch.sqrt(((F - G)**2).sum(1).mean()/(F**2).sum(1).mean())
+
+        
+        F_flat = torch.reshape(F, (F.size(0), -1))
+        G_flat = torch.reshape(G, (G.size(0), -1))
+        cos_angle = ((F_flat*G_flat).sum(1))/torch.sqrt(((F_flat**2).sum(1))*((G_flat**2).sum(1)))     
+        angle = (180.0/np.pi)*(torch.acos(cos_angle).mean().item())
+        
+        return dist, angle
+
+    def weight_b_train(self, y, optimizer, arg_return = False):
+        
+        nb_iter = self.iter
+        sigma = self.noise
+            
+        for iter in range(1, nb_iter + 1):
+            y_temp, (r_temp, ind) = self(y, back = True)
+            noise = sigma*torch.randn_like(y)
+            y_noise, (r_noise, ind_noise) = self(y + noise, back = True)
+            dy = (y_noise - y_temp)
+            dr = (r_noise - r_temp)
+          
+            noise_y = sigma*torch.randn_like(y_temp)
+            r_noise_y = self.bb(y, y_temp + noise_y, ind)
+            dr_y = (r_noise_y - r_temp)
+            loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+            
+            optimizer.zero_grad()
+            loss_b.backward()
+            optimizer.step()
+     
+        if arg_return:
+            return loss_b
+
+    def weight_f_train(self, y, t, optimizer):
+        loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+        loss_f = loss_f.mean()
+        optimizer.zero_grad()
+        loss_f.backward(retain_graph = True)
+        optimizer.step()
+        
+        #DEBUG
+        '''
+        for name, p in net.named_parameters():
+            if p.grad is not None:
+                print(name + ' has mean gradient {}'.format(p.grad.mean()))
+        '''
+        
+        return loss_f
+
+    def propagateError(self, r_tab, t):
+        r = r_tab[0]
+        ind = r_tab[1]
+        delta = self.bb(r_tab[0], t, r_tab[1]) - r_tab[0]
+
+        return delta
+
+
 class smallNet(nn.Module):
     def __init__(self, args):
         super(smallNet, self).__init__()
@@ -973,11 +1099,19 @@ class VGG(nn.Module):
         layers.append(layer_convpool(args, args.C[0], args.C[1], args.activation))
         size = int(np.floor(size/2))
 
-        for i in range(len(args.C) - 2):
-            layers.append(layer_convpool(args, args.C[i + 1], args.C[i + 2], 
-                                    args.activation, args.iter[i], args.noise[i]))
-            
-            size = int(np.floor(size/2))
+        if args.sigmapi:
+            for i in range(len(args.C) - 2):
+                layers.append(layer_sigmapi_convpool(args, args.C[i + 1], args.C[i + 2], 
+                                        args.activation, args.iter[i], args.noise[i]))
+                
+                size = int(np.floor(size/2))
+        
+        else:
+            for i in range(len(args.C) - 2):
+                layers.append(layer_convpool(args, args.C[i + 1], args.C[i + 2], 
+                                        args.activation, args.iter[i], args.noise[i]))
+                
+                size = int(np.floor(size/2))
  
         layers.append(layer_fc((size**2)*args.C[-1], 10, 
                                 args.alg[-1], args.iter[-1],
