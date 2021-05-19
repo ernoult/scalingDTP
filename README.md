@@ -1,5 +1,7 @@
 ## Revisiting Difference Target Propagation
 
+The following code runs on Python > 3.6 with Pytorch 1.7.0.
+
 To check training on CIFAR-10, type the following command in the terminal:
 
 ```
