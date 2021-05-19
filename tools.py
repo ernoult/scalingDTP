@@ -13,6 +13,145 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 
+
+def train_batch(args, net, data, optimizers, target = None, criterion = None, **kwargs):
+    '''
+    Function which computes the parameter gradients given by DTP on a given batch
+    NOTE: it is the central function of this whole code!
+    '''
+
+
+    optimizer_f, optimizer_b = optimizers
+
+
+    #****FEEDBACK WEIGHTS TRAINING****# 
+
+    #1- Compute the first hidden layer and detach the resulting node     
+    y = net.layers[0](data).detach()
+    
+    #2- Layer-wise autoencoder training begins:
+    for id_layer in range(len(net.layers) - 1):
+        #3- Train the current autoencoder (NOTE: there is no feedback operator paired to the first layer net.layers[0])
+        net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
+
+        #4- Compute the next hidden layer 
+        y = net.layers[id_layer + 1](y).detach()
+
+    pred = torch.exp(net.logsoft(y)) 
+
+
+
+    #*********FORWARD WEIGHTS TRAINING********#
+    
+    #1- Compute the output layer (y) and the reconstruction of the penultimate layer (r = G(y))
+    '''
+    NOTE 1: the flag ind_layer specifies where the forward pass stops (default: None)
+    NOTE 2: if ind_layer=n, layer n-1 is detached from the computational graph
+    '''
+
+    y, r = net(data, ind_layer = len(net.layers))
+
+    #2- Compute the loss
+    L = criterion(y.float(), target).squeeze()
+
+    #3- Compute the first target 
+    init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=y.device, requires_grad=True) 
+    grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
+    delta = -args.beta*grads[0]
+    t = y + delta
+
+    #4- Layer-wise feedforward training begins
+    for id_layer in range(len(net.layers)):
+        #5- Train current forward weights so that current layer matches its target   
+        loss_f = net.layers[-1 - id_layer].weight_f_train(y, t, optimizer_f)
+
+        #6- Compute the previous target (except if we already have reached the first hidden layer)    
+        if (id_layer < len(net.layers) - 1):
+            #7- Compute delta^n = G(s^{n+1} + t^{n+1}) - G(s^{n+1})
+            delta = net.layers[-1 - id_layer].propagateError(r, t)
+            
+            #8- Compute the feedforward prediction s^n and r=G(s^n)
+            y, r = net(data, ind_layer = len(net.layers) - 1 - id_layer)
+    
+            #9- Compute the target t^n= s^n + delta^n
+            t = (y + delta).detach()
+        
+        if id_layer == 0:
+            loss = loss_f
+    
+    return pred, loss
+
+
+def createOptimizers(net, args, forward = False):
+    
+    '''
+    Function which initializes the optimizers of 
+    the feedforward and of the feedback weights
+    '''
+
+    optim_params_b = []     
+    for i in range(len(net.layers) - 1):
+        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b[i]})
+     
+    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
+
+    if forward: 
+        optim_params_f = []
+
+        if args.wdecay is None:
+            for i in range(len(net.layers)):
+                optim_params_f.append({'params': net.layers[i].f.parameters(), 
+                                        'lr': args.lr_f})
+        else:
+            for i in range(len(net.layers)):
+                optim_params_f.append({'params': net.layers[i].f.parameters(), 
+                                        'lr': args.lr_f, 
+                                        'weight_decay': args.wdecay})
+            print('We are using weight decay!')         
+
+        optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9)
+        return (optimizer_f, optimizer_b) 
+    
+    else:
+        return optimizer_b
+
+
+def test(net, test_loader, device):
+
+    '''
+    Function to evaluate the neural network on the test set
+    '''
+
+    net.eval()
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for batch_idx, (data, target) in enumerate(test_loader):
+            data, target = data.to(device), target.to(device)
+            y = net(data)
+            pred = torch.exp(net.logsoft(y)) 
+            target = F.one_hot(target, num_classes=10).float()
+            _, predicted = pred.max(1)
+            _, targets = target.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+    test_acc = 100.*correct/total
+
+    return test_acc
+
+def copy(y, ind_y):
+    y_copy = []
+    
+    for i in range(len(y)):
+        y_copy.append(y[i].clone())
+
+    #WATCH OUT: detach previous node!
+    y_copy[ind_y - 1] = y_copy[ind_y - 1].detach()    
+
+    return y_copy
+
 _, term_width = os.popen('stty size', 'r').read().split()
 term_width = int(term_width)
 
@@ -21,6 +160,10 @@ last_time = time.time()
 begin_time = last_time
 
 def progress_bar(current, total, msg=None):
+    '''
+    Function for the progression bar taken from another repo) 
+    '''
+
     global last_time, begin_time
     if current == 0:
         begin_time = time.time()  # Reset for new bar.
@@ -96,17 +239,16 @@ def format_time(seconds):
     return f
 
 
+
 def createPath(args):
+    '''
+    Function which creates the folder of results
+    '''
 
     if args.path is None:
-        if args.action == 'train':
-            BASE_PATH = os.getcwd() + '/train_forward' 
-        elif args.action == 'test':
-            BASE_PATH = os.getcwd() + '/train_feedback' 
-        
+        BASE_PATH = os.getcwd() + '/train' 
         if not os.path.exists(BASE_PATH):
             os.mkdir(BASE_PATH)
-
         BASE_PATH = BASE_PATH + '/' + datetime.datetime.now().strftime("%Y-%m-%d")
     
     else:
@@ -134,16 +276,17 @@ def createPath(args):
     os.mkdir(BASE_PATH) 
     filename = 'results'   
     
-    #************************************#
     copyfile('plotFunctions.py', BASE_PATH + '/plotFunctions.py')
     
     if args.last_trial:
         copyfile('compute_stats.py', BASE_PATH_glob + '/compute_stats.py')    
-    #************************************#
 
     return BASE_PATH
 
-def createHyperparameterfile(BASE_PATH, command_line, seed, args):    
+def createHyperparameterfile(BASE_PATH, command_line, seed, args):
+    '''
+    Function which creates the .txt file containing hyperparameters
+    ''' 
     
     command = 'python '+ command_line
 
@@ -178,110 +321,7 @@ def createHyperparameterfile(BASE_PATH, command_line, seed, args):
     os.chmod(script_name, st.st_mode | stat.S_IEXEC)    
  
 
-def train_batch(args, net, data, optimizers, target = None, criterion = None, **kwargs):
 
-    optimizer_f, optimizer_b = optimizers
-
-
-    #****FEEDBACK WEIGHTS TRAINING****#          
-    y = net.layers[0](data).detach() 
-    for id_layer in range(len(net.layers) - 1):                     
-        net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
-        y = net.layers[id_layer + 1](y).detach()
-
-    pred = torch.exp(net.logsoft(y)) 
-
-
-
-    #*********FORWARD WEIGHTS TRAINING********#
-    y, r = net(data, ind_layer = len(net.layers))
-
-    L = criterion(y.float(), target).squeeze()
-    init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=y.device, requires_grad=True) 
-    grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
-    delta = -args.beta*grads[0]
-
-    t = y + delta
-
-    for id_layer in range(len(net.layers)):        
-        
-        loss_f = net.layers[-1 - id_layer].weight_f_train(y, t, optimizer_f)
-
-        #compute previous targets         
-        if (id_layer < len(net.layers) - 1):
-            delta = net.layers[-1 - id_layer].propagateError(r, t)
-            y, r = net(data, ind_layer = len(net.layers) - 1 - id_layer)
-            t = (y + delta).detach()
-        
-        if id_layer == 0:
-            loss = loss_f
-    
-    return pred, loss
-
-
-
-
-def createOptimizers(net, args, forward = False):
-
-    optim_params_b = []     
-    for i in range(len(net.layers) - 1):
-        optim_params_b.append({'params': net.layers[i + 1].b.parameters(), 'lr': args.lr_b[i]})
-     
-    optimizer_b = torch.optim.SGD(optim_params_b, momentum = 0.9)
-
-    if forward: 
-        optim_params_f = []
-
-        #*********************************************************************#
-        if args.wdecay is None:
-            for i in range(len(net.layers)):
-                optim_params_f.append({'params': net.layers[i].f.parameters(), 
-                                        'lr': args.lr_f})
-        else:
-            for i in range(len(net.layers)):
-                optim_params_f.append({'params': net.layers[i].f.parameters(), 
-                                        'lr': args.lr_f, 
-                                        'weight_decay': args.wdecay})
-            print('We are using weight decay!')
-        #*********************************************************************#           
-
-        optimizer_f = torch.optim.SGD(optim_params_f, momentum = 0.9)
-        return (optimizer_f, optimizer_b) 
-    
-    else:
-        return optimizer_b
-
-
-def test(net, test_loader, device):
-    net.eval()
-    correct = 0
-    total = 0
-
-    with torch.no_grad():
-        for batch_idx, (data, target) in enumerate(test_loader):
-            data, target = data.to(device), target.to(device)
-            y = net(data)
-            pred = torch.exp(net.logsoft(y)) 
-            target = F.one_hot(target, num_classes=10).float()
-            _, predicted = pred.max(1)
-            _, targets = target.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-
-    test_acc = 100.*correct/total
-
-    return test_acc
-
-def copy(y, ind_y):
-    y_copy = []
-    
-    for i in range(len(y)):
-        y_copy.append(y[i].clone())
-
-    #WATCH OUT: detach previous node!
-    y_copy[ind_y - 1] = y_copy[ind_y - 1].detach()    
-
-    return y_copy
 
 def createDataset(args):
 
