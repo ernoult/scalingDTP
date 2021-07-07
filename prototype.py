@@ -381,11 +381,13 @@ if __name__ == '__main__':
 
             #****FEEDBACK WEIGHTS****#
             y = net.layers[0](data).detach()
-            for id_layer in range(len(net.layers) - 1):
+            # TODO: Would it also work to change the order of this for loop, so that we
+            # scale better w.r.t. number of layers?
+            for id_layer in range(1, len(net.layers)):
                 for iter in range(1, args.iter + 1):
-                    y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
-                    noise = args.noise[id_layer]*torch.randn_like(y)
-                    y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
+                    y_temp, r_temp = net.layers[id_layer](y, back = True)
+                    noise = args.noise[id_layer-1]*torch.randn_like(y)
+                    y_noise, r_noise = net.layers[id_layer](y + noise, back = True)
                     dy = (y_noise - y_temp)
                     dr = (r_noise - r_temp)
 

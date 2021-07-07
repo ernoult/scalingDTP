@@ -75,8 +75,10 @@ class Prototype(LightningModule):
         jacobian: bool = False  # compute jacobians
         conv: bool = False  # select the conv architecture.
         C: List[int] = list_field(128, 512)  # tab of channels
+
+        # NOTE: Using a single value rather than one value per layer.
+        noise: float = 0.01  # tab of noise amplitude
         # noise: List[float] = list_field(0.05, 0.5)  # tab of noise amplitude
-        noise: float = 0.05  # tab of noise amplitude
 
     def __init__(self, datamodule: VisionDataModule, hparams: HParams):
         super().__init__()
@@ -209,14 +211,18 @@ class Prototype(LightningModule):
         """ Main step, used by `training_step` and `validation_step`.
         """
         x, y = batch
-        print(f"Batch id {batch_idx}, optimizer: {optimizer_idx}")
+
         dtype: Optional[torch.dtype] = self.dtype if isinstance(
             self.dtype, torch.dtype
         ) else None
+        # The total loss to be returned.
         loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
 
         # kwargs to the `self.log()` calls, just to make things a bit more tidy
         log_kwargs: Dict = dict(on_step=True, prog_bar=True, on_epoch=False)
+
+        # FIXME: Remove, only used to debug atm:
+        # print(f"Batch id {batch_idx}, optimizer: {optimizer_idx}, phase: {phase}")
 
         if optimizer_idx in [None, 0]:
             # Optimize the forward weights
@@ -245,18 +251,24 @@ class Prototype(LightningModule):
             y_onehot = F.one_hot(y, num_classes=self.n_classes).float()
 
             # compute target of the last layer:
-            t = y_pred + self.hp.beta * (y_onehot - pred)
+            s_n = y_pred + self.hp.beta * (y_onehot - pred)
 
             # Get the outputs of the backward networks
-            net_b_outputs = self.model.backward_all(t, allow_grads_between_layers=False)
+            # TODO: If we wanted to be really picky, there's one extra forward-pass
+            # happening here in last layer of the backward network (which outputs the
+            # 'x' equivalent.
+            net_b_outputs = self.model.backward_all(
+                s_n, allow_grads_between_layers=False
+            )
             targets: List[Tensor] = list(reversed(net_b_outputs))
             targets.pop(0)  # Don't consider the 'target' for the first layer (x)
-            targets.append(t)  # add the target for the last layer
+            targets.append(s_n)  # add the target for the last layer
             # Detach all the targets:
             targets = [target.detach() for target in targets]
 
             forward_losses: List[Tensor] = [
                 0.5 * F.mse_loss(y_i, t_i, reduction="mean")
+                # NOTE: equivalent to:
                 # 0.5 * ((y_i - t_i) ** 2).view(y_i.size(0), -1).sum(1).mean()
                 for y_i, t_i in zip(ys, targets)
             ]
@@ -265,48 +277,67 @@ class Prototype(LightningModule):
             loss += forward_loss
 
         if optimizer_idx in [None, 1]:
-            # Optimize the feedback weights
-            # Get the 'reconstruction' of all layers.
-            ys = [y_i.detach() for y_i in ys]
+            # ----------- Optimize the feedback weights -------------
 
-            x_rs = self.model.backward_each(ys, forward_ordering=True)
+            # TODO: Do we want to use the `weight_b_normalize` function? If so, when?
 
-            noisy_xs = [x_i + self.hp.noise * torch.randn_like(x_i) for x_i in xs]
-            # TODO: Should we actually use no_grad to prevent modifying the forward
-            # layers here?
+            # Get the outputs for all layers.
+            # NOTE: no need for gradients w.r.t. forward parameters.
             with torch.no_grad():
-                noisy_ys = self.model.forward_each(noisy_xs)
-            noisy_rs = self.model.backward_each(noisy_ys)
+                ys = self.model.forward_all(x)
 
-            delta_rs = [noisy_xs_r - r_i for noisy_xs_r, r_i in zip(noisy_rs, x_rs)]
-            delta_ys = [noisy_xs_y - y_i for noisy_xs_y, y_i in zip(noisy_ys, ys)]
-            # TODO: Check that the sign is correct here:
-            delta_r_loss = sum(
-                -self.hp.noise * delta_r.view(delta_r.shape[0], -1).sum(1).mean()
-                for delta_r in delta_rs
+            # TODO: If we wanted to be a bit picky, we don't need the last `r`, (the r
+            # for the first x)
+            # rs = self.model.backward_each(ys, forward_ordering=True)
+            # rs.pop(0)
+            # NOTE: This saves one forward-pass, but makes the code uglier:
+            rs = self.model.backward_each(ys[1:], start_layer_index=1)
+
+            # NOTE: This purposefully doesn't include 'x' and the last output.
+
+            # Create a noise vector to be added to the input of each intermediate layer:
+            # (NOTE: xs is still a list of detached tensors).
+            xs = ys[:-1]
+            dxs = [self.hp.noise * torch.randn_like(x_i) for x_i in xs]
+
+            noisy_xs = [x_i + dx_i for x_i, dx_i in zip(xs, dxs)]
+            # NOTE: we save one forward-pass (as above) by ignoring the first layer.
+            with torch.no_grad():
+                noisy_ys = self.model.forward_each(noisy_xs, start_layer_index=1)
+            noisy_xrs = self.model.backward_each(noisy_ys, start_layer_index=1)
+
+            dys = [y_noise - y_temp for y_noise, y_temp in zip(noisy_ys, ys[1:])]
+            drs = [
+                x_noise - x_noise_r for x_noise, x_noise_r in zip(noisy_xs, noisy_xrs)
+            ]
+
+            dr_loss = sum(
+                -self.hp.noise * dr.view(dr.shape[0], -1).sum(1).mean()
+                for dr in drs
             )
-            loss += delta_r_loss
+            loss += dr_loss
             self.log(
-                "dr_loss", delta_r_loss, on_step=True, prog_bar=True, on_epoch=False
+                "dr_loss", dr_loss, **log_kwargs
             )
-            assert False, delta_r_loss
-            # delta_y_loss = sum(
-            #     -self.hp.noise * delta_y.view(delta_y.shape[0], -1).sum(1).mean()
-            #     for delta_y in delta_ys
-            # )
-            # loss += delta_y_loss
-            # self.log(
-            #     "dy_loss", delta_y_loss, on_step=True, prog_bar=True, on_epoch=False
-            # )
+            
+            # for id_layer in range(len(self.model.ba.layers) - 1):
+            #     y_temp, r_temp = net.layers[id_layer + 1](y, back = True)
+            #     noise = args.noise[id_layer]*torch.randn_like(y)
+            #     y_noise, r_noise = net.layers[id_layer + 1](y + noise, back = True)
+            #     dy = (y_noise - y_temp)
+            #     dr = (r_noise - r_temp)
 
-            # backward_loss = delta_r_loss + delta_y_loss
-            # self.log(
-            #     "BLoss", backward_loss, on_step=True, prog_bar=True, on_epoch=False
-            # )
-            # loss += backward_loss
-        if batch_idx == 1:
-            # FIXME: Debugging
-            exit()
+            #     loss_b = -(noise*dr).view(dr.size(0), -1).sum(1).mean()
+
+            #     optimizer_b.zero_grad()
+
+            #     if iter < args.iter:
+            #         loss_b.backward(retain_graph = True)
+            #     else:
+            #         loss_b.backward()
+
+            #     optimizer_b.step()
+
         return loss
 
 
@@ -355,7 +386,7 @@ def main():
     # datamodule = make_cifar10_dm(config=config)
     model = Prototype(datamodule=datamodule, hparams=hparams)
     trainer = Trainer(
-        max_epochs=150, gpus=torch.cuda.device_count(), overfit_batches=1.0
+        max_epochs=150, gpus=torch.cuda.device_count(), overfit_batches=1
     )
     trainer.fit(model, datamodule=datamodule)
 
