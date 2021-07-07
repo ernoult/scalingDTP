@@ -1,7 +1,7 @@
 from functools import singledispatch
 from torch import nn
 import torch
-from .layers import Reshape, AdaptiveAvgPool2d
+from .layers import Reshape, AdaptiveAvgPool2d, Conv2dReLU, ConvTranspose2dReLU, BatchUnNormalize
 import copy
 from typing import TypeVar
 
@@ -69,7 +69,11 @@ def backward_conv(
     assert p_h == p_w, "only support square padding for now"
     assert d_h == d_w, "only support square padding for now"
     assert op_h == op_w, "only support square output_padding for now"
-    backward = nn.ConvTranspose2d(
+
+    out_type = nn.ConvTranspose2d
+    if isinstance(layer, Conv2dReLU):
+        out_type = ConvTranspose2dReLU
+    backward = out_type(
         in_channels=layer.out_channels,
         out_channels=layer.in_channels,
         kernel_size=(k_h, k_w),
@@ -78,9 +82,9 @@ def backward_conv(
         dilation=d_h,
         padding=(p_h, p_w),
         # TODO: Get this value programmatically.
-        # output_padding=(1, 1),
-        output_padding=(op_h+1, op_w+1),  # Not sure this will always hold
-    ) 
+        output_padding=(s_h-1, s_w-1),
+        # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
+    )
     if init_symetric_weights:
         # TODO: Not sure the `torch.no_grad` is necessary here:
         with torch.no_grad():
@@ -113,4 +117,14 @@ Activation = TypeVar("Activation", bound=nn.Module)
 def backward_activation(
     activation_layer: Activation, init_symetric_weights: bool = False
 ) -> Activation:
-    return copy.deepcopy(activation_layer)
+    # TODO: Return an identity function?
+    return nn.Identity()
+    # return copy.deepcopy(activation_layer)
+
+
+@get_backward_equivalent.register
+def backward_batchnorm(
+    layer: nn.BatchNorm2d, init_symetric_weights: bool = False
+) -> nn.BatchNorm2d:
+    # TODO: No idea if this makes sense.
+    return BatchUnNormalize(layer.num_features)
