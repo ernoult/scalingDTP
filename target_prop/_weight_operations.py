@@ -1,4 +1,6 @@
-""" TODO: Not 100% sure I understand what this does
+""" NOTE: This is currently unused.
+
+TODO: Not 100% sure I understand what this does
 """
 from functools import singledispatch
 from torch import nn, Tensor

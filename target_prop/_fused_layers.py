@@ -1,3 +1,6 @@
+""" NOTE: This is currently unused. It was implemented as a first step after
+`prototype.py`.
+"""
 from functools import singledispatch
 import torch
 from torch import nn, Tensor
