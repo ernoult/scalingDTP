@@ -340,16 +340,14 @@ class Model(LightningModule):
         # compute target of the last layer:
         s_n = y_pred + self.hp.beta * (y_onehot - pred)
 
-        # Get the outputs of the backward networks
-        # TODO: If we wanted to be really picky, there's one extra forward-pass
-        # happening here in last layer of the backward network (which outputs the
-        # 'x' equivalent.
-        net_b_outputs = self.model.backward_all(s_n, allow_grads_between_layers=False)
-        targets: List[Tensor] = list(reversed(net_b_outputs))
-        targets.pop(0)  # Don't consider the 'target' for the first layer (x)
-        targets.append(s_n)  # add the target for the last layer
-        # Detach all the targets:
-        targets = [target.detach() for target in targets]
+        # Get the outputs of the backward networks (the targets for all the previous
+        # layers)
+        with torch.no_grad():
+            # NOTE: Use `end_offset` so we don't compute the 'target' for the first
+            # layer (x)
+            net_b_outputs = self.model.backward_all(s_n, end_offset=1)
+            targets: List[Tensor] = list(reversed(net_b_outputs))
+            targets.append(s_n.detach())  # add the target for the last layer
 
         forward_losses = 0.5 * torch.stack(
             [
