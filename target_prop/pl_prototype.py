@@ -21,7 +21,7 @@ from typing import (
     Type,
     Union,
 )
-from torch.distributions import Normal
+
 import pytorch_lightning
 import torch
 import torchvision.transforms as T
@@ -32,6 +32,7 @@ from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers.wandb import WandbLogger
+from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers import choice, list_field, mutable_field
 from simple_parsing.helpers.hparams import (
@@ -42,14 +43,15 @@ from simple_parsing.helpers.hparams import (
 )
 from simple_parsing.helpers.serialization import Serializable
 from torch import Tensor, nn
+from torch.distributions import Normal
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
 
 from .backward_layers import get_backward_equivalent
+from .config import Config
 from .layers import AdaptiveAvgPool2d, Conv2dReLU, ConvTranspose2dReLU, Reshape
 from .sequential import TargetPropSequential
-from .config import Config
 
 
 @dataclass
@@ -58,8 +60,12 @@ class OptimizerHParams(HyperParameters):
         "sgd": torch.optim.SGD,
         "adam": torch.optim.Adam,
     }
-    type: str = categorical(available_optimizers.keys(), default="adam")
+    # BUG: Little bug here, fixing this to 'adam' during sweeps for now.
+    # type: str = categorical("sgd", "adam"], default="adam", strict=True)
+    type: str = choice(available_optimizers.keys(), default="adam")
+    # Learning rate of the optimizer.
     lr: float = log_uniform(1e-4, 1e-1, default=5e-3)
+    # Weight decay coefficient.
     weight_decay: Optional[float] = log_uniform(1e-12, 1e-5, default=1e-7)
 
     def make_optimizer(self, params: Iterable[nn.Parameter]) -> Optimizer:
@@ -220,6 +226,8 @@ class Prototype(LightningModule):
         # a bit more tidy
         self.log_kwargs: Dict = dict()  # dict(prog_bar=True)
         self.phase: str = ""
+        if self.config.seed is not None:
+            seed_everything(seed=self.config.seed, workers=True)
         # self.automatic_optimization = False
 
     def configure_optimizers(self):
@@ -247,7 +255,7 @@ class Prototype(LightningModule):
         # )
 
     def configure_callbacks(self) -> List[Callback]:
-        return [EarlyStopping("Accuracy", patience=self.hp.early_stopping_patience)]
+        return [EarlyStopping("val/Accuracy", patience=self.hp.early_stopping_patience)]
 
     def forward(self, input: Tensor) -> Tensor:  # type: ignore
         return self.model.forward_net(input)
