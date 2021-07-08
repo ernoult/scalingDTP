@@ -15,7 +15,6 @@ from typing import (
 from abc import ABC, abstractmethod
 from torchvision.models import resnet18
 from torch.nn import Sequential
-from .fused_layers import TargetPropModule
 
 
 class Conv2dReLU(nn.Conv2d):
@@ -24,7 +23,7 @@ class Conv2dReLU(nn.Conv2d):
 
 
 class ConvTranspose2dReLU(nn.ConvTranspose2d):
-    def forward(self, input: Tensor, output_size: torch.Size=None) -> Tensor:
+    def forward(self, input: Tensor, output_size: Optional[List[int]]=None) -> Tensor:
         return F.relu(super().forward(input, output_size=output_size))
 
 

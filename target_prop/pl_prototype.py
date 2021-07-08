@@ -1,117 +1,158 @@
+""" Pytorch Lightning version of the model from `prototype.py` with additional
+optimizations.
+
+TODO: Add callbacks that compute the jacobians and log images / stuff to wandb.
+"""
+import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from functools import singledispatch
 from pathlib import Path
 from typing import (
     Callable,
-    Iterable,
+    ClassVar,
     Dict,
+    Iterable,
     List,
     NamedTuple,
     Optional,
     Sequence,
     Tuple,
+    Type,
     Union,
 )
-
-from target_prop.utils.normal import Normal
-
+from torch.distributions import Normal
 import pytorch_lightning
 import torch
+import torchvision.transforms as T
 import tqdm
+import wandb
+from pl_bolts.datamodules import CIFAR10DataModule, MNISTDataModule
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
+from pytorch_lightning.callbacks import Callback, EarlyStopping
+from pytorch_lightning.loggers.wandb import WandbLogger
 from simple_parsing import ArgumentParser
-from simple_parsing.helpers import list_field, mutable_field
-from simple_parsing.helpers.hparams import HyperParameters
+from simple_parsing.helpers import choice, list_field, mutable_field
+from simple_parsing.helpers.hparams import (
+    HyperParameters,
+    categorical,
+    log_uniform,
+    uniform,
+)
+from simple_parsing.helpers.serialization import Serializable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
+from torchmetrics.classification import Accuracy
 
-from target_prop.backward_layers import get_backward_equivalent
-from target_prop.layers import (
-    AdaptiveAvgPool2d,
-    Reshape,
-    Conv2dReLU,
-    ConvTranspose2dReLU,
-)
-from target_prop.sequential import TargetPropSequential
+from .backward_layers import get_backward_equivalent
+from .layers import AdaptiveAvgPool2d, Conv2dReLU, ConvTranspose2dReLU, Reshape
+from .sequential import TargetPropSequential
+from .config import Config
 
 
 @dataclass
-class OptimizerHParams:
-    lr: float = 1e-3
-    weight_decay: Optional[float] = 0.0
+class OptimizerHParams(HyperParameters):
+    available_optimizers: ClassVar[Dict[str, Type[Optimizer]]] = {
+        "sgd": torch.optim.SGD,
+        "adam": torch.optim.Adam,
+    }
+    type: str = categorical(available_optimizers.keys(), default="adam")
+    lr: float = log_uniform(1e-4, 1e-1, default=5e-3)
+    weight_decay: Optional[float] = log_uniform(1e-12, 1e-5, default=1e-7)
 
-
-@dataclass
-class Config:
-    """ Configuration options for the experiment (not hyper-parameters). """
-
-    data_dir: Path = Path("data")
-    num_workers: int = 4
-
-    epochs: int = 15  # number of epochs to train feedback weights
-    batch_size: int = 128  # batch dimension
-    # device to use
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def make_optimizer(self, params: Iterable[nn.Parameter]) -> Optimizer:
+        optimizer_class = self.available_optimizers[self.type]
+        return optimizer_class(  # type: ignore
+            params, lr=self.lr, weight_decay=self.weight_decay,
+        )
 
 
 class Prototype(LightningModule):
+    """ Pytorch Lightning version of the prototype from `prototype.py`.
+    """
+
     @dataclass
     class HParams(HyperParameters):
-        learning_rate_f: float = 0.05
-        learning_rate_b: float = 0.5
+        """ Hyper-Parameters of the model.
+        
+        TODO: Ask @ernoult what he thinks of these priors for the hyper-parameters.
+        """
+
         # Hyper-parameters for the forward optimizer
         forward_optim: OptimizerHParams = mutable_field(OptimizerHParams, lr=1e-3)
         # Hyper-parameters for the "backward" optimizer
-        backward_optim: OptimizerHParams = mutable_field(OptimizerHParams, lr=1e-3)
+        backward_optim: OptimizerHParams = mutable_field(OptimizerHParams, lr=1e-2)
 
-        beta: float = 0.1  # nudging parameter
+        # nudging parameter: Used when calculating the first target.
+        beta: float = uniform(0.01, 0.5, default=0.1)
 
-        # number of iterations on feedback weights per batch samples
-        feedback_training_iterations: int = 10
+        batch_size: int = log_uniform(
+            16, 512, default=256, base=2, discrete=True
+        )  # batch size
 
-        seed: Optional[int] = None  # Random seed to use.
-        sym: bool = False  # sets symmetric weight initialization
-        jacobian: bool = False  # compute jacobians
-        conv: bool = False  # select the conv architecture.
-        C: List[int] = list_field(128, 512)  # tab of channels
+        # Max number of training epochs in total.
+        max_epochs: int = 1  # TODO: Fixing this while debugging.
+        # max_epochs: int = uniform(3, 50, default=10, discrete=True)
+
+        # Max number of epochs to train for without an improvement to the validation
+        # accuracy before the training is stopped.
+        early_stopping_patience: int = 3
+
+        # number of iterations on feedback weights per batch samples.
+        # NOTE: At the moment, we're only performing a single iteration, and this is the
+        # number of noise samples to use instead.
+        feedback_training_iterations: int = uniform(1, 20, default=10)
+
+        # seed: Optional[int] = None  # Random seed to use.
+        # sym: bool = False  # sets symmetric weight initialization
+        # jacobian: bool = False  # compute jacobians
+
+        channels: List[int] = list_field(128, 512)  # tab of channels
+        # channels: List[int] = uniform(32, 256, default=128, shape=2)  # tab of channels
 
         # NOTE: Using a single value rather than one value per layer.
-        noise: float = 0.01  # tab of noise amplitude
-        # noise: List[float] = list_field(0.05, 0.5)  # tab of noise amplitude
+        noise: float = uniform(0.001, 0.5, default=0.01)
+        # noise: List[float] = list_field(0.05, 0.5)
 
-    def __init__(self, datamodule: VisionDataModule, hparams: HParams):
+    def __init__(self, datamodule: VisionDataModule, hparams: HParams, config: Config):
         super().__init__()
         self.hp: Prototype.HParams = hparams
         self.datamodule = datamodule
+        self.config = config
         # self.model = Net(args=self.hparams)
-        self.channels, self.img_h, self.img_w = datamodule.dims
+        self.in_channels, self.img_h, self.img_w = datamodule.dims
         self.n_classes = datamodule.num_classes
-        self.example_input_array = torch.rand(
-            [32, self.channels, self.img_h, self.img_w], device=self.device
+        self.example_input_array = torch.rand(  # type: ignore
+            [32, self.in_channels, self.img_h, self.img_w], device=self.device
         )
         ## Create the forward achitecture:
-        # Same architecture as in the original prototype (I think)
+        # Same architecture as in the original prototype:
         # forward_net = nn.Sequential(
-        #     nn.Conv2d(self.channels, 128, kernel_size=(5, 5), stride=(2, 2)),
-        #     nn.ReLU(inplace=False),
-        #     nn.Conv2d(128, 512, kernel_size=(5, 5), stride=(2, 2)),
-        #     nn.ReLU(inplace=False),
-        #     nn.Linear(in_features=8192, out_features=10, bias=True)
+        #     Conv2dReLU(self.in_channels, 128, kernel_size=(5, 5), stride=(2, 2)),
+        #     Conv2dReLU(128, 512, kernel_size=(5, 5), stride=(2, 2)),
+        #     Reshape(target_shape=(-1)),
+        #     nn.Linear(in_features=8192, out_features=10, bias=True),
         # )
-
-        # kwargs that will get passed to all calls to `self.log()`, just to make things
-        # a bit more tidy
-        self.log_kwargs: Dict = dict(prog_bar=True)
-
         forward_net = nn.Sequential(
-            Conv2dReLU(self.channels, 128, kernel_size=(5, 5), stride=(2, 2)),
-            Conv2dReLU(128, 512, kernel_size=(5, 5), stride=(2, 2)),
+            Conv2dReLU(
+                self.in_channels, self.hp.channels[0], kernel_size=(5, 5), stride=(2, 2)
+            ),
+            *(
+                Conv2dReLU(
+                    self.hp.channels[i - 1],
+                    self.hp.channels[i],
+                    kernel_size=(5, 5),
+                    stride=(2, 2),
+                )
+                for i in range(1, len(self.hp.channels))
+            ),
+            # IDEA: Trying to limit the number of hidden features a bit:
+            # AdaptiveAvgPool2d(output_size=(8, 8)),
             Reshape(target_shape=(-1,)),
-            # nn.LazyLinear(out_features=10, bias=True)
-            nn.Linear(in_features=8192, out_features=10, bias=True),
+            nn.LazyLinear(out_features=self.n_classes, bias=True)
+            # nn.Linear(in_features=8192, out_features=10, bias=True),
         )
 
         # Model using the 'fused' layers (closer to the original 'prototype'.)
@@ -125,9 +166,10 @@ class Prototype(LightningModule):
         #     TargetPropLinear(8192, n_classes),
         # )
 
+        # Larger structure, with batch norm layers:
         # forward_net = nn.Sequential(
         #     # NOTE: Using this 'fused' conv + relu layer just to replicate the prototype
-        #     Conv2dReLU(self.channels, 6, kernel_size=5, stride=1, padding=1, bias=False),
+        #     Conv2dReLU(self.in_channels, 6, kernel_size=5, stride=1, padding=1, bias=False),
         #     # nn.BatchNorm2d(6),
         #     Conv2dReLU(6, 16, kernel_size=5, stride=1, padding=1, bias=False),
         #     # nn.BatchNorm2d(16),
@@ -161,48 +203,67 @@ class Prototype(LightningModule):
         example_in_hat: Tensor = backward_net(example_out)
         assert example_in_hat.requires_grad
         assert example_in_hat.shape == self.example_input_array.shape
-
         self.model = TargetPropSequential(
             forward_layers=forward_net, backward_layers=backward_net,
         )
+        # Metrics:
+        self.accuracy = Accuracy()
+
+        self.save_hyperparameters(
+            {
+                "hp": self.hp.to_dict(),
+                "datamodule": datamodule,
+                "config": self.config.to_dict(),
+            }
+        )
+        # kwargs that will get passed to all calls to `self.log()`, just to make things
+        # a bit more tidy
+        self.log_kwargs: Dict = dict()  # dict(prog_bar=True)
+        self.phase: str = ""
         # self.automatic_optimization = False
 
     def configure_optimizers(self):
-        forward_optimizer = torch.optim.Adam(
+        forward_optimizer = self.hp.forward_optim.make_optimizer(
             self.model.forward_parameters(),
-            **asdict(self.hp.forward_optim),
-            # momentum=0.9,
-            # weight_decay=self.hp.lamb,
         )
-        backward_optimizer = torch.optim.Adam(
+        backward_optimizer = self.hp.backward_optim.make_optimizer(
             self.model.backward_parameters(),
-            **asdict(self.hp.backward_optim),
-            # momentum=0.9,
-            # weight_decay=self.hp.lamb,
         )
-        # TODO: Figure out a clean way to use one optimizers repeatedly on the same
-        # batch in pytorch-lightning.
-        # TODO: How about we use this frequency instead of the for loop in training_step?
-        # return [forward_optimizer] + [backward_optimizer] * 20
         return [forward_optimizer, backward_optimizer]
-        return (
-            {"optimizer": forward_optimizer, "frequency": 1},
-            {"optimizer": backward_optimizer, "frequency": 1},
-        )
 
-    def forward(self, input: Tensor) -> Tensor:
+        # IDEA: Use a learning rate scheduler?
+        # from torch.optim.lr_scheduler import ExponentialLR
+        # forward_scheduler = {
+        #     "scheduler": ExponentialLR(forward_optimizer, 0.99),
+        #     "interval": "step",  # called after each training step
+        # }
+        # return [forward_optimizer, backward_optimizer], [forward_scheduler]
+
+        # NOTE: When using the 'frequency' version below, it trains once every `n`
+        # batches, rather than `n` times on the same batch.
+        # return (
+        #     {"optimizer": forward_optimizer, "frequency": 1},
+        #     {"optimizer": backward_optimizer, "frequency": 1},
+        # )
+
+    def configure_callbacks(self) -> List[Callback]:
+        return [EarlyStopping("Accuracy", patience=self.hp.early_stopping_patience)]
+
+    def forward(self, input: Tensor) -> Tensor:  # type: ignore
         return self.model.forward_net(input)
 
-    def training_step(
+    def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
-    ):
+    ) -> Tensor:
         loss = self.shared_step(
             batch=batch, batch_idx=batch_idx, optimizer_idx=optimizer_idx, phase="train"
         )
         assert loss.requires_grad, (loss, optimizer_idx)
         return loss
 
-    def validation_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int):
+    def validation_step(  # type: ignore
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int
+    ) -> Tensor:
         return self.shared_step(
             batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val"
         )
@@ -217,6 +278,9 @@ class Prototype(LightningModule):
         """ Main step, used by `training_step` and `validation_step`.
         """
         x, y = batch
+        # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
+        # and `feedback_loss` below.
+        self.phase = phase
 
         dtype: Optional[torch.dtype] = self.dtype if isinstance(
             self.dtype, torch.dtype
@@ -226,18 +290,19 @@ class Prototype(LightningModule):
 
         # FIXME: Remove, only used to debug atm:
         # print(f"Batch id {batch_idx}, optimizer: {optimizer_idx}, phase: {phase}")
+        # TODO: Do we want to use the `weight_b_normalize` function? If so, when?
 
         if optimizer_idx in [None, 0]:
             # Optimize the forward weights
             forward_loss = self.forward_loss(x, y)
-            self.log("Forward loss", forward_loss)
+            self.log(f"{phase}/forward loss", forward_loss, **self.log_kwargs)
             loss += forward_loss
 
         if optimizer_idx in [None, 1]:
             # ----------- Optimize the feedback weights -------------
             feedback_loss = self.feedback_loss(x, y)
             loss += feedback_loss
-            self.log("Feedback loss", feedback_loss)
+            self.log(f"{phase}/feedback loss", feedback_loss, **self.log_kwargs)
 
         return loss
 
@@ -254,10 +319,11 @@ class Prototype(LightningModule):
         with torch.no_grad():
             # Log the cross-entropy loss (not used for training).
             cross_entropy_loss = F.cross_entropy(y_pred, y)
-            self.log("CE Loss", cross_entropy_loss, **self.log_kwargs)
+            self.log(f"{self.phase}/CE Loss", cross_entropy_loss, **self.log_kwargs)
 
-            accuracy = y_pred.argmax(-1).eq(y).sum().float().div(len(y_pred))
-            self.log("Accuracy", accuracy, **self.log_kwargs)
+            accuracy = self.accuracy(torch.softmax(y_pred, -1), y)
+            # accuracy = y_pred.argmax(-1).eq(y).sum().float().div(len(y_pred))
+            self.log(f"{self.phase}/Accuracy", accuracy, **self.log_kwargs)
 
         # "Normalize" the prediction, which we use to calculate the first target.
         pred = torch.exp(F.log_softmax(y_pred, dim=-1))
@@ -288,9 +354,20 @@ class Prototype(LightningModule):
         forward_loss = forward_losses.mean()
         return forward_loss
 
-    def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
-        # TODO: Do we want to use the `weight_b_normalize` function? If so, when?
+    def test_step(  # type: ignore
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int
+    ) -> Tensor:
+        return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
+    def current_noise_coefficient(self) -> Union[float, Tensor]:
+        return self.hp.noise
+        # IDEA: Gradually lower the value of `self.hp.noise` over the course of
+        # training?
+        coefficient = 1 - (self.current_epoch / self.trainer.max_epochs)
+        coefficient = torch.clamp(coefficient, 1e-8, 1)
+        return coefficient * self.hp.noise
+
+    def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
         # Get the outputs for all layers.
         # NOTE: no need for gradients w.r.t. forward parameters.
         with torch.no_grad():
@@ -304,7 +381,9 @@ class Prototype(LightningModule):
         rs = self.model.backward_each(ys[1:], start_layer_index=1)
 
         x_noise_distributions: List[Normal] = [
-            Normal(loc=torch.zeros_like(x_i), scale=self.hp.noise) for x_i in xs
+            Normal(loc=torch.zeros_like(x_i), scale=self.current_noise_coefficient())
+            for x_i in xs
+            # Normal(loc=torch.zeros_like(x_i), scale=self.hp.noise) for x_i in xs
         ]
 
         # List of losses, one per iteration.
@@ -340,7 +419,8 @@ class Prototype(LightningModule):
             #     for dr in drs
             # )
 
-            # Option 2:
+            # Option 2: Using an 'unsigned' loss, in the sense that one direction isn't
+            # favored compared to another.
             # NOTE: The `reduction` argument to `mse_loss` is already 'mean' by default.
             iteration_dr_loss_per_sample = torch.stack(
                 [
@@ -369,61 +449,7 @@ class Prototype(LightningModule):
             #     optimizer_b.step()
 
         dr_losses = torch.stack(dr_losses_list)
-        dr_loss: Tensor = dr_losses.mean()
+        # TODO: Take the average, or the sum here?
+        dr_loss: Tensor = dr_losses.sum()
         return dr_loss
 
-
-def main():
-    from simple_parsing import ArgumentParser
-
-    parser = ArgumentParser(description="Pytorch lightning version of the prototype")
-    parser.add_arguments(Config, dest="config")
-    parser.add_arguments(Prototype.HParams, dest="hparams")
-
-    args = parser.parse_args()
-
-    config: Config = args.config
-    hparams: Prototype.HParams = args.hparams
-    import torchvision.transforms as T
-    from pl_bolts.datamodules import CIFAR10DataModule, MNISTDataModule
-    from pl_bolts.transforms.dataset_normalizations import cifar10_normalization
-
-    def make_mnist_dm(config: Config) -> MNISTDataModule:
-        return MNISTDataModule(
-            data_dir=config.data_dir,
-            batch_size=config.batch_size,
-            num_workers=config.num_workers,
-        )
-
-    def make_cifar10_dm(config: Config) -> CIFAR10DataModule:
-        train_transforms = T.Compose(
-            [
-                T.RandomCrop(28, padding=4),
-                T.RandomHorizontalFlip(),
-                T.ToTensor(),
-                cifar10_normalization(),
-            ]
-        )
-        test_transforms = T.Compose([T.ToTensor(), cifar10_normalization()])
-        return CIFAR10DataModule(
-            data_dir=config.data_dir,
-            batch_size=config.batch_size,
-            num_workers=config.num_workers,
-            train_transforms=train_transforms,
-            test_transforms=test_transforms,
-            val_transforms=test_transforms,
-        )
-
-    datamodule = make_mnist_dm(config=config)
-    # datamodule = make_cifar10_dm(config=config)
-
-    model = Prototype(datamodule=datamodule, hparams=hparams)
-    trainer = Trainer(max_epochs=50, gpus=torch.cuda.device_count(), overfit_batches=1)
-    trainer.fit(model, datamodule=datamodule)
-
-    # results = trainer.test(model, datamodule=datamodule)
-    # print(results)
-
-
-if __name__ == "__main__":
-    main()

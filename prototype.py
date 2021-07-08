@@ -423,8 +423,10 @@ if __name__ == '__main__':
                 layer = net.layers[i]
 
                 #update forward weights
-                loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
-                loss_f = loss_f.mean()
+                loss_f = 0.5 * F.mse_loss(y, t)
+                # NOTE: Equivalent to previous:
+                # loss_f = 0.5*((y - t)**2).view(y.size(0), -1).sum(1)
+                # loss_f = loss_f.mean()
 
                 if i == 0:
                     loss = loss_f
