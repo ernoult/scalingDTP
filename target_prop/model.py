@@ -75,7 +75,7 @@ class OptimizerHParams(HyperParameters):
         )
 
 
-class Prototype(LightningModule):
+class Model(LightningModule):
     """ Pytorch Lightning version of the prototype from `prototype.py`.
     """
 
@@ -124,7 +124,7 @@ class Prototype(LightningModule):
 
     def __init__(self, datamodule: VisionDataModule, hparams: HParams, config: Config):
         super().__init__()
-        self.hp: Prototype.HParams = hparams
+        self.hp: Model.HParams = hparams
         self.datamodule = datamodule
         self.config = config
         # self.model = Net(args=self.hparams)
@@ -399,7 +399,7 @@ class Prototype(LightningModule):
         for backward_iteration in range(self.hp.feedback_training_iterations):
             # TODO: Could we get away with sampling a bunch of noise vectors, rather
             # than performing multiple update steps?
-
+            
             # Create a noise vector to be added to the input of each intermediate
             # layer:
             # (NOTE: xs is still a list of detached tensors).

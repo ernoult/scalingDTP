@@ -3,9 +3,9 @@
 Use `python main.py --help` for a list of all available arguments,
     
     or (even better), take a look at the [`Config`](target_prop/config.py) and the
-    [`Prototype.HParams`](target_prop/pl_prototype.py) classes to see their definition.
+    [`Model.HParams`](target_prop/model.py) classes to see their definition.
 """
-from target_prop.pl_prototype import Prototype
+from target_prop.model import Model
 from target_prop.config import Config
 from simple_parsing import ArgumentParser
 import json
@@ -23,7 +23,7 @@ def main(sample_hparams: bool = True):
 
     parser = ArgumentParser(description=__doc__)
     parser.add_arguments(Config, dest="config")
-    parser.add_arguments(Prototype.HParams, dest="hparams")
+    parser.add_arguments(Model.HParams, dest="hparams")
 
     # TODO: we unfortunately can't do this directly atm:
     # trainer_parser = Trainer.add_argparse_args(parser)
@@ -31,12 +31,12 @@ def main(sample_hparams: bool = True):
     args = parser.parse_args()
 
     config: Config = args.config
-    hparams: Prototype.HParams
+    hparams: Model.HParams
     if sample_hparams:
-        hparams = Prototype.HParams.sample()
+        hparams = Model.HParams.sample()
         # TODO: overwrite any sampled values with those set from the command-line
-        default_hparams_dict = Prototype.HParams().to_dict()
-        cmd_hparams: Prototype.HParams = args.hparams
+        default_hparams_dict = Model.HParams().to_dict()
+        cmd_hparams: Model.HParams = args.hparams
         custom_hparams = {
             k: v
             for k, v in cmd_hparams.to_dict().items()
@@ -46,7 +46,7 @@ def main(sample_hparams: bool = True):
             print(f"Overwriting sampled values for entries {custom_hparams}")
             hparams_dict = hparams.to_dict()
             hparams_dict.update(custom_hparams)
-            hparams = Prototype.HParams.from_dict(hparams_dict)
+            hparams = Model.HParams.from_dict(hparams_dict)
     else:
         hparams = args.hparams
 
@@ -56,7 +56,7 @@ def main(sample_hparams: bool = True):
     print("HParams:", json.dumps(hparams.to_dict(), indent="\t"))
     # Create the datamodule:
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-    model = Prototype(datamodule=datamodule, hparams=hparams, config=config)
+    model = Model(datamodule=datamodule, hparams=hparams, config=config)
     trainer = Trainer(
         max_epochs=hparams.max_epochs,
         gpus=torch.cuda.device_count(),
