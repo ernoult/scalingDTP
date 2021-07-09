@@ -110,13 +110,10 @@ def backward_adaptive_pooling(
     return nn.Upsample(size=layer.input_shape[-2:], mode="nearest")
 
 
-Activation = TypeVar("Activation", bound=nn.Module)
-
-
 @get_backward_equivalent.register(nn.ReLU)
 def backward_activation(
-    activation_layer: Activation, init_symetric_weights: bool = False
-) -> Activation:
+    activation_layer: nn.Module, init_symetric_weights: bool = False
+) -> nn.Module:
     # TODO: Return an identity function?
     return nn.Identity()
     # return copy.deepcopy(activation_layer)
@@ -125,6 +122,6 @@ def backward_activation(
 @get_backward_equivalent.register
 def backward_batchnorm(
     layer: nn.BatchNorm2d, init_symetric_weights: bool = False
-) -> nn.BatchNorm2d:
+) -> BatchUnNormalize:
     # TODO: No idea if this makes sense.
     return BatchUnNormalize(layer.num_features)

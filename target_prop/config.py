@@ -27,6 +27,9 @@ class Config(Serializable):
     val_split: float = 0.2
     shuffle: bool = True
 
+    # Debug mode: turns off wandb, enables more verbose logging.
+    debug: bool = False
+
     def make_datamodule(self, batch_size: int) -> VisionDataModule:
         datamodule_class = self.available_datasets[self.dataset]
         return datamodule_class(

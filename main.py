@@ -15,7 +15,7 @@ import wandb
 import torch
 
 
-def main(sample_hparams: bool = True):
+def main(sample_hparams: bool = False):
     """ Main script. If `sample_hparams` is True, then the hyper-parameters are sampled
     from their corresponding priors, else they take their default value (or the value
     passed from the command-line, if present).
@@ -64,7 +64,7 @@ def main(sample_hparams: bool = True):
         accelerator="ddp",
         # profiler="simple",
         # callbacks=[],
-        logger=WandbLogger(),
+        logger=WandbLogger() if not config.debug else None,
     )
     b = trainer.fit(model, datamodule=datamodule)
     print(f"fit returned {b}")

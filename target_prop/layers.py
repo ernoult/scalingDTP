@@ -84,10 +84,11 @@ class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d):
 
 class BatchUnNormalize(nn.Module):
     """ TODO: Implement the 'opposite' of batchnorm2d """
-    def __init__(self, num_features: int):
+    def __init__(self, num_features: int, dtype=torch.float32):
         super().__init__()
-        self.mean = nn.Parameter(torch.zeros(num_features), requires_grad=True)
-        self.offset = nn.Parameter(torch.zeros(num_features), requires_grad=True)
+        self.mean = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
+        torch.nn.init.xavier_uniform_(self.mean)
+        self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
 
     def forward(self, input: Tensor) -> Tensor:
         return input * self.mean + self.offset
