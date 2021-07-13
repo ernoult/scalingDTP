@@ -10,60 +10,27 @@ linewidth = 5
 
 def plot_results(results):
     
-    #Loss stuff    
-    epochs = len(results['loss'])
-    fig1 = plt.figure(figsize=(5, 4))
+    epochs = len(results['train_acc'])
+    fig1 = plt.figure(figsize=(6, 4))
     plt.rcParams.update({'font.size': fontsize}) 
-    plt.plot(np.linspace(1, epochs, epochs), results['loss'], linewidth=2.5, alpha=0.8)
-    plt.xlabel('Batch iterations')
-    plt.ylabel('Loss of feedback weights')
+    plt.plot(np.linspace(1, epochs, epochs), results['train_acc'], linewidth=2.5, alpha=0.8)
+    plt.plot(np.linspace(1, epochs, epochs), results['test_acc'], linewidth=2.5, alpha=0.8)
+    plt.xlabel('Epochs')
+    plt.ylabel('Train accuracy (%)')
     plt.grid()
-    plt.subplots_adjust(hspace = 0.5)
-    fig1.tight_layout()    
     fig1.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-    
-    #Jacobian stuff
-    if 'angle_jac' in results:
-        fig2 = plt.figure(figsize=(8, 4))
-        plt.rcParams.update({'font.size': fontsize}) 
-        plt.subplot(121)
-        plt.plot(np.linspace(1, epochs, epochs), results['angle_jac'], linewidth=2.5, alpha=0.8)
-        plt.xlabel('Batch iterations')
-        plt.ylabel('Angle between ' + r'$ dF/ds^\top$'+ ' and ' + r'$dG/ds$' + r' $ (\circ)$')
-        plt.grid()
-        fig2.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-        plt.subplot(122)
-        plt.plot(np.linspace(1, epochs, epochs), results['dist_jac'], linewidth=2.5, alpha=0.8)
-        plt.xlabel('Batch iterations')
-        plt.ylabel('Distance between ' + r'$ dF/ds^\top$'+ ' and ' + r'$dG/ds$')
-        plt.grid()
-        plt.subplots_adjust(hspace = 0.5)
-        fig2.tight_layout() 
-        fig2.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+    fig1.tight_layout()
 
-    #Weight stuff
-    fig3 = plt.figure(figsize=(8, 4))
-    plt.rcParams.update({'font.size': fontsize}) 
-    plt.subplot(121)
-    plt.plot(np.linspace(1, epochs, epochs), results['angle_weight'], linewidth=2.5, alpha=0.8)
-    plt.xlabel('Batch iterations')
-    plt.ylabel('Angle between ' + r'$w_f^\top$'+ ' and ' + r'$w_b$' + r' $ (\circ)$')
-    plt.grid()
-    fig3.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.subplot(122)
-    plt.plot(np.linspace(1, epochs, epochs), results['dist_weight'], linewidth=2.5, alpha=0.8)
-    plt.xlabel('Batch iterations')
-    plt.ylabel('Distance between ' + r'$w_f^\top$'+ ' and ' + r'$w_b$')
-    plt.grid()
-    plt.subplots_adjust(hspace = 0.5)
-    fig3.tight_layout() 
-    fig3.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+
 
 if __name__ == '__main__':
     BASE_PATH = os.getcwd() + '/results' 
     infile = open(BASE_PATH,'rb')
-    results_dict = pickle.load(infile)
+    results = pickle.load(infile)
     infile.close()
-
-    plot_results(results_dict)
+    if 'train_acc' in results:
+        print('Epoch {}:'.format(len(results['train_acc'])))
+        print('Final train accuracy: {}'.format(results['train_acc'][-1]))
+        print('Final test accuracy: {}'.format(results['test_acc'][-1]))
+    plot_results(results)
     plt.show()
