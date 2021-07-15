@@ -1,80 +1,114 @@
-""" Script that runs Pytorch lightning version of the prototype DTP model.
+# coding=utf-8
+import argparse
 
-Use `python main.py --help` for a list of all available arguments,
-    
-    or (even better), take a look at the [`Config`](target_prop/config.py) and the
-    [`Model.HParams`](target_prop/model.py) classes to see their definition.
-"""
-from target_prop.model import Model
-from target_prop.config import Config
-from simple_parsing import ArgumentParser
-import json
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers.wandb import WandbLogger
-import wandb
-import torch
+from plotFunctions import *
+from tools import *
+from models import *
 
+parser = argparse.ArgumentParser(description='Testing idea of Yoshua')
 
-def main(sample_hparams: bool = False):
-    """ Main script. If `sample_hparams` is True, then the hyper-parameters are sampled
-    from their corresponding priors, else they take their default value (or the value
-    passed from the command-line, if present).
-    """
+parser.add_argument('--epochs', type=int, default=15, help='number of epochs to train feedback weights(default: 15)') 
+parser.add_argument('--iter', nargs = '+', type=int, default=[5, 10], help='number of learning iterating of feedback weights layer-wise per batch (default: [5, 10])')
+parser.add_argument('--batch-size', type=int, default=128, help='batch dimension (default: 128)')   
+parser.add_argument('--device-label', type=int, default=0, help='device (default: 1)')   
+parser.add_argument('--lr_f', type=float, default=0.05, help='learning rate (default: 0.05)')   
+parser.add_argument('--lr_b', nargs = '+', type=float, default=[0.05, 0.05], help='learning rates for the feedback weights (default: [0.05, 0.05])')
+parser.add_argument('--beta', type=float, default=0.1, help='nudging parameter (default: 0.1)')   
+parser.add_argument('--C', nargs = '+', type=int, default=[32, 64], help='tab of channels (default: [32, 64])')
+parser.add_argument('--noise', nargs = '+', type=float, default=[0.05, 0.5], help='tab of noise amplitude (default: [0.05, 0.5])')
+parser.add_argument('--activation', type=str, default='elu', help='activation function in conv layers (default: elu)')
+parser.add_argument('--path', type=str, default= None, help='Path directory for the results (default: None)')
+parser.add_argument('--last-trial', default=False, action='store_true',help='specifies if the current trial is the last one (default: False)')
+parser.add_argument('--seed', type=int, default=None, help='seed selected (default: None)')
+parser.add_argument('--scheduler', default=False, action='store_true',help='use of a learning rate scheduler for the forward weights (default: False)')      
+parser.add_argument('--wdecay', type=float, default=None, help='Weight decay (default: None)')   
 
-    parser = ArgumentParser(description=__doc__)
-    parser.add_arguments(Config, dest="config")
-    parser.add_arguments(Model.HParams, dest="hparams")
-
-    # TODO: we unfortunately can't do this directly atm:
-    # trainer_parser = Trainer.add_argparse_args(parser)
-
-    args = parser.parse_args()
-
-    config: Config = args.config
-    hparams: Model.HParams
-    if sample_hparams:
-        hparams = Model.HParams.sample()
-        # TODO: overwrite any sampled values with those set from the command-line
-        default_hparams_dict = Model.HParams().to_dict()
-        cmd_hparams: Model.HParams = args.hparams
-        custom_hparams = {
-            k: v
-            for k, v in cmd_hparams.to_dict().items()
-            if v != default_hparams_dict[k]
-        }
-        if custom_hparams:
-            print(f"Overwriting sampled values for entries {custom_hparams}")
-            hparams_dict = hparams.to_dict()
-            hparams_dict.update(custom_hparams)
-            hparams = Model.HParams.from_dict(hparams_dict)
-    else:
-        hparams = args.hparams
-
-    print(f"Config:", config.dumps_json(indent="\t"))
-    # print(f"HParams:", hparams)
-
-    print("HParams:", json.dumps(hparams.to_dict(), indent="\t"))
-    # Create the datamodule:
-    datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-    model = Model(datamodule=datamodule, hparams=hparams, config=config)
-    trainer = Trainer(
-        max_epochs=hparams.max_epochs,
-        gpus=torch.cuda.device_count(),
-        track_grad_norm=False,
-        accelerator="ddp",
-        # profiler="simple",
-        # callbacks=[],
-        logger=WandbLogger() if not config.debug else None,
-    )
-    b = trainer.fit(model, datamodule=datamodule)
-    print(f"fit returned {b}")
-
-    test_results = trainer.test(model, datamodule=datamodule)
-    wandb.finish()
-    print(test_results)
-    test_accuracy: float = test_results[0]["test/Accuracy"]
-    return test_accuracy
+args = parser.parse_args()  
 
 
-if __name__ == "__main__":
-    main()
+train_loader, test_loader = createDataset(args)
+
+
+if args.device_label >= 0:    
+    device = torch.device("cuda:"+str(args.device_label))
+else:
+    device = torch.device("cpu")
+
+
+if args.seed is not None:
+    seed = args.seed
+    torch.manual_seed(seed)
+else:
+    g = torch.Generator(device = device)
+    seed = g.seed()
+    torch.manual_seed(seed)
+
+print('Selected seed: {}'.format(seed))
+
+
+if __name__ == '__main__':
+
+    #Create a directory to save results and hyperparameters
+    if args.path is not None:  
+        BASE_PATH = createPath(args)
+        command_line = ' '.join(sys.argv) 
+        createHyperparameterfile(BASE_PATH, command_line, seed, args)
+
+
+    #Create neural network
+    net = VGG(args)
+    net = net.to(device)
+    print(net)    
+
+
+    #Create optimizers for forward and feedback weights
+    criterion = torch.nn.CrossEntropyLoss(reduction='none')
+    optimizers = createOptimizers(net, args, forward = True)
+
+    if args.scheduler:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizers[0], 85, eta_min=1e-5)
+        print('We are using a learning rate scheduler!')
+
+            
+    train_acc = []
+    test_acc = []
+
+    #train the neural network by DTP
+    for epoch in range(args.epochs):
+        train_loss = 0
+        correct = 0
+        total = 0
+        for batch_idx, (data, target) in enumerate(train_loader):
+            net.train()
+            data, target = data.to(device), target.to(device)
+
+            #compute DTP gradient on the current batch
+            pred, loss = train_batch(args, net, data, optimizers, target, criterion)
+
+            train_loss += loss.item()
+            _, predicted = pred.max(1)
+            targets = target
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+          
+        train_acc.append(100.*correct/total)
+        test_acc_temp = test(net, test_loader, device)
+        test_acc.append(test_acc_temp)
+
+        #save accuracies in the results directory
+        if args.path is not None:
+            results = {'train_acc' : train_acc, 'test_acc' : test_acc}
+            outfile = open(os.path.join(BASE_PATH, 'results'), 'wb')
+            pickle.dump(results, outfile)
+            outfile.close()
+
+        if args.scheduler:
+            scheduler.step()
+
+        #if the train accuracy is less than 30%, kill training
+        if (train_acc[-1] < 30): exit()                 
+
+ 
+
