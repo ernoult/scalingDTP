@@ -16,12 +16,49 @@ from typing import (
 from abc import ABC, abstractmethod
 from torchvision.models import resnet18
 from torch.nn import Sequential
+from torch.nn.modules.conv import _size_2_t
+from functools import wraps
 
 
 class Conv2dActivation(nn.Conv2d):
-    activation: ClassVar[Callable[[Tensor], Tensor]]
+    activation: Callable[[Tensor], Tensor]
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: _size_2_t,
+        stride: _size_2_t = 1,
+        padding: _size_2_t = 0,
+        dilation: _size_2_t = 1,
+        groups: int = 1,
+        bias: bool = True,
+        padding_mode: str = "zeros",
+        activation: Callable[[Tensor], Tensor] = None,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+        )
+        if activation is None:
+            if not hasattr(type(self), "activation"):
+                raise RuntimeError(
+                    "Need to either pass an activation as an argument to the "
+                    "constructor, or have a callable `activation` class attribute."
+                )
+            activation = type(self).activation
+        self._activation = activation
+        assert callable(self._activation)
+
     def forward(self, input: Tensor) -> Tensor:
-        return self.activation(super().forward(input))
+        return self._activation(super().forward(input))
 
 
 class Conv2dReLU(Conv2dActivation):
@@ -34,16 +71,53 @@ class Conv2dELU(Conv2dActivation):
 
 class ConvTranspose2dActivation(nn.ConvTranspose2d):
     activation: ClassVar[Callable[[Tensor], Tensor]]
-    
-    def forward(self, input: Tensor, output_size: Optional[List[int]]=None) -> Tensor:
-        return self.activation(super().forward(input, output_size=output_size))
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: _size_2_t,
+        stride: _size_2_t = 1,
+        padding: _size_2_t = 0,
+        output_padding: _size_2_t = 0,
+        groups: int = 1,
+        bias: bool = True,
+        dilation: int = 1,
+        padding_mode: str = "zeros",
+        activation: Callable[[Tensor], Tensor] = None,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            output_padding=output_padding,
+            groups=groups,
+            bias=bias,
+            dilation=dilation,
+            padding_mode=padding_mode,
+        )
+        if activation is None:
+            if not hasattr(type(self), "activation"):
+                raise RuntimeError(
+                    "Need to either pass an activation as an argument to the "
+                    "constructor, or have a callable `activation` class attribute."
+                )
+            activation = type(self).activation
+        self._activation = activation
+        assert callable(self._activation)
+
+    def forward(self, input: Tensor, output_size: Optional[List[int]] = None) -> Tensor:
+        out: Tensor = super().forward(input, output_size=output_size)
+        return self._activation(out)
 
 
-class ConvTranspose2dReLU(nn.ConvTranspose2d):
+class ConvTranspose2dReLU(ConvTranspose2dActivation):
     activation = F.relu
 
 
-class ConvTranspose2dELU(nn.ConvTranspose2d):
+class ConvTranspose2dELU(ConvTranspose2dActivation):
     activation = F.elu
 
 
@@ -104,11 +178,16 @@ class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d):
 
 class BatchUnNormalize(nn.Module):
     """ TODO: Implement the 'opposite' of batchnorm2d """
+
     def __init__(self, num_features: int, dtype=torch.float32):
         super().__init__()
-        self.mean = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
-        torch.nn.init.xavier_uniform_(self.mean)
-        self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
+        self.scale = nn.Parameter(
+            torch.ones(num_features, dtype=dtype), requires_grad=True
+        )
+        torch.nn.init.xavier_uniform_(self.scale)
+        self.offset = nn.Parameter(
+            torch.zeros(num_features, dtype=dtype), requires_grad=True
+        )
 
     def forward(self, input: Tensor) -> Tensor:
-        return input * self.mean + self.offset
+        return input * self.scale + self.offset
