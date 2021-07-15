@@ -1,5 +1,6 @@
 # coding=utf-8
 import argparse
+from tqdm import tqdm
 
 from plotFunctions import *
 from tools import *
@@ -78,7 +79,9 @@ if __name__ == '__main__':
         train_loss = 0
         correct = 0
         total = 0
-        for batch_idx, (data, target) in enumerate(train_loader):
+        pbar = tqdm(train_loader, desc=f"Training Epoch {epoch}")
+
+        for batch_idx, (data, target) in enumerate(pbar):
             net.train()
             data, target = data.to(device), target.to(device)
 
@@ -90,9 +93,13 @@ if __name__ == '__main__':
             targets = target
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
+            train_accuracy = correct / total
+            pbar.set_postfix({
+                "Loss": f"{loss.item():.3f}",
+                "Train Acc": f"{train_accuracy:.2%}",
+            })
+            # progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
-            progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-          
         train_acc.append(100.*correct/total)
         test_acc_temp = test(net, test_loader, device)
         test_acc.append(test_acc_temp)
@@ -108,7 +115,6 @@ if __name__ == '__main__':
             scheduler.step()
 
         #if the train accuracy is less than 30%, kill training
-        if (train_acc[-1] < 30): exit()                 
-
- 
-
+        if (train_accuracy < 0.30):
+            print(f"Accuracy is terrible ({train_accuracy:.2%}), exiting early")
+            break
