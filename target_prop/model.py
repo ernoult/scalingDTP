@@ -52,7 +52,7 @@ from torchmetrics.classification import Accuracy
 
 from .backward_layers import get_backward_equivalent
 from .config import Config
-from .layers import AdaptiveAvgPool2d, Conv2dReLU, ConvTranspose2dReLU, Reshape
+from .layers import AdaptiveAvgPool2d, Conv2dELU, ConvTranspose2dELU, Reshape
 from .sequential import Sequential
 
 
@@ -187,11 +187,11 @@ class Model(LightningModule):
         #     nn.Linear(in_features=8192, out_features=10, bias=True),
         # )
         self.forward_net = Sequential(
-            Conv2dReLU(
+            Conv2dELU(
                 self.in_channels, self.hp.channels[0], kernel_size=(5, 5), stride=(2, 2)
             ),
             *(
-                Conv2dReLU(
+                Conv2dELU(
                     self.hp.channels[i - 1],
                     self.hp.channels[i],
                     kernel_size=(5, 5),
@@ -300,17 +300,17 @@ class Model(LightningModule):
         # print(f"Batch id {batch_idx}, optimizer: {optimizer_idx}, phase: {phase}")
         # TODO: Do we want to use the `weight_b_normalize` function? If so, when?
 
-        if optimizer_idx in [None, self._forward_optim_index]:
-            # Optimize the forward weights
-            forward_loss = self.forward_loss(x, y)
-            self.log(f"{phase}/forward loss", forward_loss, **self.log_kwargs)
-            loss += forward_loss
-
         if optimizer_idx in [None, self._feedback_optim_index]:
             # ----------- Optimize the feedback weights -------------
             feedback_loss = self.feedback_loss(x, y)
             loss += feedback_loss
             self.log(f"{phase}/feedback loss", feedback_loss, **self.log_kwargs)
+
+        if optimizer_idx in [None, self._forward_optim_index]:
+            # Optimize the forward weights
+            forward_loss = self.forward_loss(x, y)
+            self.log(f"{phase}/forward loss", forward_loss, **self.log_kwargs)
+            loss += forward_loss
 
         return loss
 
@@ -391,20 +391,22 @@ class Model(LightningModule):
 
         rs = reversed_backward_net[1:].forward_each(ys[1:])
 
-        noise_vector = self.get_noise_scale_per_layer(reversed_backward_net[1:])
+        noise_scale_vector = self.get_noise_scale_per_layer(reversed_backward_net[1:])
         x_noise_distributions: List[Normal] = [
             Normal(loc=torch.zeros_like(x_i), scale=noise_i)
-            for x_i, noise_i in zip(xs, noise_vector)
+            for x_i, noise_i in zip(xs, noise_scale_vector)
         ]
 
         # NOTE: Notation for the tensor shapes below:
         # I: number of training iterations
         # S: number of noise samples
-        # L: number of layers
+        # N: number of layers
         # B: batch dimension
         # X_i: shape of the inputs to layer `i`
 
-        # List of (detached) losses, one per iteration.
+        # List of losses, one per iteration.
+        # If this is called during training, and there is more than one iteration, then
+        # the losses in this list will be detached.
         dr_losses_list: List[Tensor] = []  # [I]
 
         # Only do one iteration when evaluating or testing.
@@ -421,25 +423,25 @@ class Model(LightningModule):
                 dxs = [x_noise_dist.rsample() for x_noise_dist in x_noise_distributions]
                 # dxs = [self.hp.noise * torch.randn_like(x_i) for x_i in xs]
 
-                noisy_xs = [x_i + dx_i for x_i, dx_i in zip(xs, dxs)]  # [L, B, *X_i]
+                noisy_xs = [x_i + dx_i for x_i, dx_i in zip(xs, dxs)]  # [N, B, *X_i]
 
                 # NOTE: we save one forward-pass (as above) by ignoring the first layer.
                 with torch.no_grad():
-                    # [L, B, *X_{i+1}]
+                    # [N, B, *X_{i+1}]
                     noisy_ys = self.forward_net[1:].forward_each(noisy_xs)
-                # [L, B, *X_i]
+                # [N, B, *X_i]
                 noisy_xrs = reversed_backward_net[1:].forward_each(noisy_ys)
 
                 # NOTE: dys aren't currently used, but they could be used by
                 # `weight_b_normalize` if we decide to add it back, or passed as an
                 # input to the loss function.
-                # # [L, B, *X_{i+1}]
+                # # [N, B, *X_{i+1}]
                 # dys = [
                 #     y_noise - y_temp  # [B, *X_{i+1}]
                 #     for y_noise, y_temp in zip(noisy_ys, ys[1:])
                 # ]
 
-                assert len(noise_vector) == len(noisy_xs) == len(noisy_xrs)
+                assert len(noise_scale_vector) == len(noisy_xs) == len(noisy_xrs)
                 # Use the chosen loss function to get a loss for each backward layer:
                 sample_dr_loss_per_layer = torch.stack(
                     [
@@ -449,7 +451,7 @@ class Model(LightningModule):
                             x=x_noise, xr=x_noise_r, noise_scale=noise_scale
                         )
                         for noise_scale, x_noise, x_noise_r in zip(
-                            noise_vector, noisy_xs, noisy_xrs
+                            noise_scale_vector, noisy_xs, noisy_xrs
                         )
                     ]
                 )
@@ -457,7 +459,7 @@ class Model(LightningModule):
                 dr_losses_per_sample.append(sample_dr_loss_per_layer)
 
             # Stack along a new first dimension, and then average
-            iteration_dr_losses = torch.stack(dr_losses_per_sample)  # [S, L]
+            iteration_dr_losses = torch.stack(dr_losses_per_sample)  # [S, N]
             iteration_dr_loss = iteration_dr_losses.sum(1).mean()  # [1]
 
             # TODO: Could perhaps do some sort of 'early stopping' here if the dr

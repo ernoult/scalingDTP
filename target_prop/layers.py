@@ -11,20 +11,40 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    ClassVar,
 )
 from abc import ABC, abstractmethod
 from torchvision.models import resnet18
 from torch.nn import Sequential
 
 
-class Conv2dReLU(nn.Conv2d):
+class Conv2dActivation(nn.Conv2d):
+    activation: ClassVar[Callable[[Tensor], Tensor]]
     def forward(self, input: Tensor) -> Tensor:
-        return F.relu(super().forward(input))
+        return self.activation(super().forward(input))
+
+
+class Conv2dReLU(Conv2dActivation):
+    activation = F.relu
+
+
+class Conv2dELU(Conv2dActivation):
+    activation = F.elu
+
+
+class ConvTranspose2dActivation(nn.ConvTranspose2d):
+    activation: ClassVar[Callable[[Tensor], Tensor]]
+    
+    def forward(self, input: Tensor, output_size: Optional[List[int]]=None) -> Tensor:
+        return self.activation(super().forward(input, output_size=output_size))
 
 
 class ConvTranspose2dReLU(nn.ConvTranspose2d):
-    def forward(self, input: Tensor, output_size: Optional[List[int]]=None) -> Tensor:
-        return F.relu(super().forward(input, output_size=output_size))
+    activation = F.relu
+
+
+class ConvTranspose2dELU(nn.ConvTranspose2d):
+    activation = F.elu
 
 
 class Reshape(nn.Module):
