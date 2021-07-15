@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from functools import singledispatch
 from pathlib import Path
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 import warnings
 from typing import (
     Callable,
@@ -23,7 +25,7 @@ from typing import (
     Type,
     Union,
 )
-
+from target_prop.layers import ConvPoolBlock
 import pytorch_lightning
 import torch
 import torchvision.transforms as T
@@ -52,8 +54,8 @@ from torchmetrics.classification import Accuracy
 
 from .backward_layers import get_backward_equivalent
 from .config import Config
-from .layers import AdaptiveAvgPool2d, Conv2dELU, ConvTranspose2dELU, Reshape
-from .sequential import Sequential
+from .layers import AdaptiveAvgPool2d, Conv2dELU, ConvTranspose2dELU, Reshape, Sequential
+from .utils import flag
 
 
 @dataclass
@@ -73,6 +75,8 @@ class OptimizerHParams(HyperParameters):
     # Weight decay coefficient.
     weight_decay: Optional[float] = log_uniform(1e-9, 1e-2, default=1e-4)
 
+    use_lr_scheduler: bool = False
+
     def make_optimizer(self, network: nn.Sequential) -> Optimizer:
         optimizer_class = self.available_optimizers[self.type]
         # List of learning rates for each layer.
@@ -82,7 +86,6 @@ class OptimizerHParams(HyperParameters):
         params: List[Dict] = []
         for layer, lr in zip(network, lrs):
             params.append({"params": layer.parameters(), "lr": lr})
-
         return optimizer_class(  # type: ignore
             params, weight_decay=self.weight_decay,
         )
@@ -115,13 +118,42 @@ class Model(LightningModule):
     @dataclass
     class HParams(HyperParameters):
         """ Hyper-Parameters of the model.
-        
-        TODO: Ask @ernoult what he thinks of these priors for the hyper-parameters.
+
+        TODO: Set these values as default (cifar10)
+        ```console
+        python main.py --batch-size 128 \
+        --C 128 128 256 256 512 \
+        --iter 20 30 35 55 20 \
+        --epochs 90 \
+        --lr_b 1e-4 3.5e-4 8e-3 8e-3 0.18 \
+        --noise 0.4 0.4 0.2 0.2 0.08 \
+        --lr_f 0.08 \
+        --beta 0.7 \
+        --path CIFAR-10 \
+        --scheduler \
+        --wdecay 1e-4 \
+        ```
         """
 
+        # Channels per conv layer.
+        channels: List[int] = list_field(128, 128, 256, 256, 512)
+
+        # Number of training steps for the feedback weights per batch. Can be a list of
+        # integers, where each value represents the number of iterations for that layer.
+        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
+
+        # Number of noise samples to use to get the feedback loss in a single iteration.
+        # NOTE: The loss used for each update is the average of these losses.
+        feedback_samples_per_iteration: int = uniform(1, 20, default=1)
+
+        # Max number of training epochs in total.
+        max_epochs: int = 1  # TODO: Fixing this while debugging.
+        
         # Hyper-parameters for the forward optimizer
         # TODO: Usign 0.1 0.2 0.3 seems to be gettign much better results (75% after 1 epoch on MNIST)
-        f_optim: OptimizerHParams = mutable_field(OptimizerHParams, type="sgd", lr=0.08)
+        f_optim: OptimizerHParams = mutable_field(
+            OptimizerHParams, type="sgd", lr=0.08, use_lr_scheduler=True
+        )
         # Hyper-parameters for the "backward" optimizer
         b_optim: OptimizerHParams = mutable_field(
             OptimizerHParams, type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18]
@@ -131,26 +163,16 @@ class Model(LightningModule):
         beta: float = uniform(0.01, 1.0, default=0.7)
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
-        # Max number of training epochs in total.
-        max_epochs: int = 1  # TODO: Fixing this while debugging.
+       
         # max_epochs: int = uniform(3, 50, default=10, discrete=True)
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped.
         early_stopping_patience: int = 3
 
-        # number of training steps for the feedback weights per batch
-        feedback_training_iterations: int = uniform(1, 20, default=1)
-        # Number of noise samples to use to get the feedback loss in a single iteration.
-        # NOTE: The loss used for each update is the average of these losses.
-        feedback_samples_per_iteration: int = uniform(1, 20, default=10)
-
         # seed: Optional[int] = None  # Random seed to use.
         # sym: bool = False  # sets symmetric weight initialization
         # jacobian: bool = False  # compute jacobians
-
-        channels: List[int] = list_field(128, 512)  # tab of channels
-        # channels: List[int] = uniform(32, 256, default=128, shape=2)  # tab of channels
 
         # NOTE: Using a single value rather than one value per layer.
         noise: List[float] = uniform(
@@ -160,7 +182,12 @@ class Model(LightningModule):
 
         # Wether to update the feedback weights before the forward weights.
         # TODO: This is different from in `prototype.py`
-        feedback_before_forward: bool = False
+        feedback_before_forward: bool = flag(True)
+
+        activation: Type[nn.Module] = choice({
+            "relu": nn.ReLU,
+            "elu": nn.ELU,
+        }, default="elu")
 
         dr_loss_function: FeedbackLoss = choice(
             {"default": default_feedback_loss_fn, "mse": mse_feedback_loss,},
@@ -187,16 +214,26 @@ class Model(LightningModule):
         #     nn.Linear(in_features=8192, out_features=10, bias=True),
         # )
         self.forward_net = Sequential(
-            Conv2dELU(
-                self.in_channels, self.hp.channels[0], kernel_size=(5, 5), stride=(2, 2)
+            ConvPoolBlock(
+                in_channels=self.in_channels,
+                out_channels=self.hp.channels[0],
+                activation_type=self.hp.activation,
             ),
+            # Conv2dELU(
+            #     self.in_channels, self.hp.channels[0], kernel_size=(5, 5), stride=(2, 2)
+            # ),
             *(
-                Conv2dELU(
-                    self.hp.channels[i - 1],
-                    self.hp.channels[i],
-                    kernel_size=(5, 5),
-                    stride=(2, 2),
+                ConvPoolBlock(
+                    in_channels=self.hp.channels[i - 1],
+                    out_channels=self.hp.channels[i],
+                    activation_type=self.hp.activation,
                 )
+                # Conv2dELU(
+                #     self.hp.channels[i - 1],
+                #     self.hp.channels[i],
+                #     kernel_size=(3, 3),
+                #     stride=(2, 2),
+                # )
                 for i in range(1, len(self.hp.channels))
             ),
             Reshape(target_shape=(-1,)),
@@ -209,6 +246,11 @@ class Model(LightningModule):
         # (e.g. Reshape) need to know what the input shape is.
         example_out: Tensor = self.forward_net(self.example_input_array)
         out_shape = example_out.shape
+
+        if self.config.debug:
+            print(f"Forward net: ")
+            print(self.forward_net)
+        
         assert example_out.requires_grad
         # Construct the feedback/"backward" network, one layer at a time, using the
         # generic `get_backward_equivalent` function.
@@ -218,6 +260,10 @@ class Model(LightningModule):
                 for forward_layer in reversed(self.forward_net)
             ]
         )
+        
+        if self.config.debug:
+            print(f"Backward net: ")
+            print(self.backward_net)
         # Pass the output of the forward net for the `example_input_array` through the
         # backward net, to check that the backward net is indeed able to recover the
         # inputs (at least in terms of their shape for now).
@@ -409,8 +455,17 @@ class Model(LightningModule):
         # the losses in this list will be detached.
         dr_losses_list: List[Tensor] = []  # [I]
 
+        n_layers = len(self.backward_net)
+        
+        iterations: List[int] = get_list_of_values(
+            self.hp.feedback_training_iterations, out_length=n_layers, name="iterations"
+        )
+        
+        raise NotImplementedError(F"WIP")
+        
         # Only do one iteration when evaluating or testing.
-        iterations = self.hp.feedback_training_iterations if self.phase == "train" else 1
+        if self.phase == "train":
+            iterations = [1 for _ in iterations]
         for iteration in range(iterations):
             # List of losses, one per noise sample.
             dr_losses_per_sample: List[Tensor] = []  # [S]
@@ -486,7 +541,7 @@ class Model(LightningModule):
         dr_loss: Tensor = dr_losses.sum()
         return dr_loss
 
-    def get_noise_scale_per_layer(self, network: nn.Sequential) -> List[float]:
+    def get_noise_scale_per_layer(self, network: nn.Sequential) -> Tensor:
         n_layers = len(network)
         noise: List[float] = get_list_of_values(
             self.hp.noise, out_length=n_layers, name="noise"
@@ -500,20 +555,46 @@ class Model(LightningModule):
         return coefficient * noise
 
     def configure_optimizers(self):
-        forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
         backward_optimizer = self.hp.b_optim.make_optimizer(self.backward_net)
-        if self.hp.feedback_before_forward:
-            return [backward_optimizer, forward_optimizer]
-        else:
-            return [forward_optimizer, backward_optimizer]
-        # IDEA: Use a learning rate scheduler?
-        # from torch.optim.lr_scheduler import ExponentialLR
-        # forward_scheduler = {
-        #     "scheduler": ExponentialLR(forward_optimizer, 0.99),
-        #     "interval": "step",  # called after each training step
-        # }
-        # return [forward_optimizer, backward_optimizer], [forward_scheduler]
+        forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
 
+        forward_optim_config = {"optimizer": forward_optimizer}
+        backward_optim_config = {"optimizer": backward_optimizer}
+
+        if self.hp.f_optim.use_lr_scheduler:
+            # `main.py` seems to be using a weight scheduler only for the forward weight
+            # training.
+            forward_scheduler_config = {
+                "scheduler": CosineAnnealingLR(
+                    forward_optimizer, T_max=85, eta_min=1e-5
+                ),
+                "interval": "epoch",  # called after each training epoch
+                "frequency": 1,
+            }
+            forward_optim_config["lr_scheduler"] = forward_scheduler_config
+
+        if self.hp.b_optim.use_lr_scheduler:
+            # `main.py` seems to be using a weight scheduler only for the forward weight
+            # training.
+            backward_scheduler_config = {
+                "scheduler": CosineAnnealingLR(
+                    backward_optimizer, T_max=85, eta_min=1e-5
+                ),
+                "interval": "epoch",  # called after each training epoch
+                "frequency": 1,
+            }
+            backward_optim_config["lr_scheduler"] = backward_scheduler_config
+
+        if self.hp.feedback_before_forward:
+            return [
+                backward_optim_config,
+                forward_optim_config,
+            ]
+        else:
+            return [
+                forward_optim_config,
+                backward_optim_config,
+            ]
         # NOTE: When using the 'frequency' version below, it trains once every `n`
         # batches, rather than `n` times on the same batch.
         # return (

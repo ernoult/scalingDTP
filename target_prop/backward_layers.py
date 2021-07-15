@@ -1,9 +1,17 @@
 from functools import singledispatch
 from torch import nn
 import torch
-from .layers import Reshape, AdaptiveAvgPool2d, Conv2dReLU, ConvTranspose2dReLU, BatchUnNormalize
+from .layers import (
+    Reshape,
+    AdaptiveAvgPool2d,
+    Conv2dActivation,
+    ConvTranspose2dActivation,
+    BatchUnNormalize,
+    ConvPoolBlock,
+    ConvTransposePoolBlock,
+)
 import copy
-from typing import TypeVar
+from typing import TypeVar, Tuple
 
 
 @singledispatch
@@ -71,9 +79,8 @@ def backward_conv(
     assert op_h == op_w, "only support square output_padding for now"
 
     out_type = nn.ConvTranspose2d
-    if isinstance(layer, Conv2dReLU):
-        out_type = ConvTranspose2dReLU
-    backward = out_type(
+    
+    kwargs = dict(
         in_channels=layer.out_channels,
         out_channels=layer.in_channels,
         kernel_size=(k_h, k_w),
@@ -82,8 +89,16 @@ def backward_conv(
         dilation=d_h,
         padding=(p_h, p_w),
         # TODO: Get this value programmatically.
-        output_padding=(s_h-1, s_w-1),
+        output_padding=(s_h - 1, s_w - 1),   
         # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
+    )
+    
+    if isinstance(layer, Conv2dActivation):
+        out_type = ConvTranspose2dActivation
+        kwargs["activation"] = layer._activation
+
+    backward = out_type(
+        **kwargs
     )
     if init_symetric_weights:
         # TODO: Not sure the `torch.no_grad` is necessary here:
@@ -108,6 +123,29 @@ def backward_adaptive_pooling(
     ), "Set input_shape in constructor or pass an input to the layer"
     assert layer.output_shape
     return nn.Upsample(size=layer.input_shape[-2:], mode="nearest")
+
+
+@get_backward_equivalent.register
+def backward_conv_pool_block(
+    layer: ConvPoolBlock, init_symetric_weights: bool = False
+) -> ConvTransposePoolBlock:
+    assert layer.input_shape, "Pass an input to the net before getting the backward net"
+    assert len(layer.input_shape) == 3
+    return ConvTransposePoolBlock(
+        in_channels=layer.out_channels,
+        out_channels=layer.in_channels,
+        activation_type=layer.activation_type,
+        input_shape=layer.output_shape,
+        output_shape=layer.input_shape,
+    )
+    raise NotImplementedError("TODO")
+
+
+@get_backward_equivalent.register
+def backward_maxpool(
+    layer: nn.MaxPool2d, init_symetric_weights: bool = False
+) -> nn.MaxUnpool2d:
+    raise NotImplementedError("TODO")
 
 
 @get_backward_equivalent.register(nn.ReLU)

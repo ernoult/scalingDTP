@@ -31,7 +31,7 @@ def main(sample_hparams: bool = False):
     args = parser.parse_args()
 
     config: Config = args.config
-    hparams: Model.HParams
+    hparams: Model.HParams = args.hparams
     if sample_hparams:
         hparams = Model.HParams.sample()
         # TODO: overwrite any sampled values with those set from the command-line
@@ -49,9 +49,13 @@ def main(sample_hparams: bool = False):
             hparams = Model.HParams.from_dict(hparams_dict)
     else:
         hparams = args.hparams
-
+    hparams: Model.HParams
     print(f"Config:", config.dumps_json(indent="\t"))
     # print(f"HParams:", hparams)
+
+    if config.debug:
+        print(f"Setting the max_epochs to 1, since '--debug' was passed.")
+        hparams.max_epochs = 1
 
     print("HParams:", json.dumps(hparams.to_dict(), indent="\t"))
     # Create the datamodule:

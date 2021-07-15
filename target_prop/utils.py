@@ -1,6 +1,11 @@
 from torch.distributions import Normal as Normal_
 from torch import Tensor
 from typing import Union, Any
+from simple_parsing.helpers import field
+
+
+def flag(v: Any, *args, **kwargs):
+    return field(default=v, *args, nargs=1, **kwargs)
 
 
 class Normal(Normal_):
