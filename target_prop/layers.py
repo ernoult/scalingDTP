@@ -1,20 +1,19 @@
+from __future__ import annotations
 from functools import singledispatch
 import torch
 from inspect import isclass
 from torch import nn, Tensor
 from torch.nn import functional as F
 from typing import (
-    Optional,
+    Any,
     NamedTuple,
     Iterable,
     Type,
     Callable,
-    List,
     Sequence,
-    Tuple,
-    Union,
     ClassVar,
 )
+from collections import OrderedDict
 from abc import ABC, abstractmethod
 from torchvision.models.resnet import BasicBlock
 from torch.nn.modules.conv import _size_2_t
@@ -22,10 +21,84 @@ from functools import wraps
 import torch
 from torch import Tensor, nn
 from typing import Union, List, Iterable, Sequence, Tuple
+from .backward_layers import get_backward_equivalent
 
 
-class Sequential(nn.Sequential, Sequence[nn.Module]):
-    def forward_each(self, xs: List[Tensor]) -> List[Tensor]:
+class Invertible(nn.Module, ABC):
+    """ ABC for a Module that is invertible, i.e. which can return a Module which can
+    produce the backward equivalent of its forward pass.
+    
+    Modules that inherit from this are also made aware of their input and output shapes
+    provided they are applied at least once with some dummy input.
+    This is done in order to make it easier to produce the backward pass network.
+    """
+
+    def __init__(
+        self,
+        *args,
+        input_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.input_shape = input_shape
+        self.output_shape = output_shape
+        self.enforce_shapes = enforce_shapes
+        if self.input_shape is None or self.enforce_shapes:
+            # Register a forward hook to set/check the output shape.
+            self.register_forward_pre_hook(type(self).forward_pre_hook)
+        if self.output_shape is None or self.enforce_shapes:
+            # Register a forward hook to set/check the output shape.
+            self.register_forward_hook(type(self).forward_hook)
+
+    @abstractmethod
+    def __invert__(self) -> nn.Module:
+        """ Returns a Module that can be used to compute or approximate the inverse
+        operation of `self`.
+        """
+        raise NotImplementedError
+
+    @staticmethod
+    def forward_pre_hook(module: Invertible, inputs: tuple[Tensor, ...]) -> None:
+        assert len(inputs) == 1
+        module._check_input_shape(inputs[0])
+
+    @staticmethod
+    def forward_hook(module: Invertible, _: Any, output: tuple[Tensor, ...]) -> None:
+        module._check_output_shape(output)
+
+    def _check_input_shape(self, x: Tensor) -> None:
+        input_shape = tuple(x.shape[1:])
+        if self.input_shape is None:
+            self.input_shape = input_shape
+        elif self.enforce_shapes and input_shape != self.input_shape:
+            raise RuntimeError(
+                f"Inputs to {self._get_name()} have unexpected shape {input_shape}, expected "
+                f"{self.input_shape}."
+            )
+
+    def _check_output_shape(self, output: Tensor) -> None:
+        output_shape = tuple(output.shape[1:])
+        if self.output_shape is None:
+            self.output_shape = output_shape  # type: ignore
+        elif self.enforce_shapes and output_shape != self.output_shape:
+            raise RuntimeError(
+                f"Outputs of layer {self} have unexpected shape {output_shape} "
+                f"(expected {self.output_shape})!"
+            )
+
+
+@get_backward_equivalent.register(Invertible)
+def _(network: Invertible):
+    # Use the module's __invert__ method if defined, otherwise fallback to the
+    # `get_backward_equivalent` generic function for built-in modules like `nn.Conv2d`,
+    # `nn.ConvTranspose2d`, etc.
+    return ~network
+
+
+class Sequential(Invertible, nn.Sequential):
+    def forward_each(self, xs: list[Tensor]) -> list[Tensor]:
         """Gets the outputs of every layer, given inputs for each layer `xs`.
 
         Parameters
@@ -40,12 +113,12 @@ class Sequential(nn.Sequential, Sequence[nn.Module]):
             The outputs of each forward layer.
         """
         xs = list(xs) if not isinstance(xs, (list, tuple)) else xs
-        assert len(xs) == len(self), (len(xs), len(self))
+        assert len(xs) == len(self)
         return [layer(x_i) for layer, x_i in zip(self, xs)]
 
     def forward_all(
         self, x: Tensor, allow_grads_between_layers: bool = False,
-    ) -> List[Tensor]:
+    ) -> list[Tensor]:
         """Gets the outputs of all forward layers for the given input. 
         
         Parameters
@@ -63,181 +136,107 @@ class Sequential(nn.Sequential, Sequence[nn.Module]):
         List[Tensor]
             The outputs of each forward layer.
         """
-        return forward_accumulate(
-            self, x, allow_grads_between_layers=allow_grads_between_layers,
+        activations: list[Tensor] = []
+        for layer in self:
+            x = layer(x if allow_grads_between_layers else x.detach())
+            activations.append(x)
+        return activations
+
+    def __invert__(self) -> Sequential:
+        """ Returns a Module that can be used to compute or approximate the inverse
+        operation of `self`.
+
+        NOTE: In the case of Sequential, the order of the layers in the returned network
+        is reversed compared to the input.
+        """
+        assert self.input_shape and self.output_shape, "Use the net before inverting."
+        return type(self)(
+            OrderedDict(
+                (name, get_backward_equivalent(module))
+                for name, module in list(self._modules.items())[::-1]
+            ),
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
         )
 
-
-# @torch.jit.script
-def forward_accumulate(
-    model: nn.Sequential, x: Tensor, allow_grads_between_layers: bool = False,
-) -> List[Tensor]:
-    """ IDEA: Gather all the forward activations into a list. """
-    activations: List[Tensor] = []
-    for layer in model:
-        x = layer(x if allow_grads_between_layers else x.detach())
-        activations.append(x)
-    return activations
+    # NOTE: Not sure if we should instead use the 'reversed' function, because it might
+    # be confused with the reverse-iterator.
+    def __reversed__(self) -> Sequential:
+        return self[::-1]
 
 
-class Conv2dActivation(nn.Conv2d):
-    activation: Callable[[Tensor], Tensor]
-
+class Reshape(Invertible):
     def __init__(
         self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: _size_2_t,
-        stride: _size_2_t = 1,
-        padding: _size_2_t = 0,
-        dilation: _size_2_t = 1,
-        groups: int = 1,
-        bias: bool = True,
-        padding_mode: str = "zeros",
-        activation: Callable[[Tensor], Tensor] = None,
+        target_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        input_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
     ):
+        if target_shape is None:
+            assert output_shape, "need one of target_shape or output_shape."
+            target_shape = output_shape
         super().__init__(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=padding,
-            dilation=dilation,
-            groups=groups,
-            bias=bias,
-            padding_mode=padding_mode,
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
         )
-        if activation is None:
-            if not hasattr(type(self), "activation"):
-                raise RuntimeError(
-                    "Need to either pass an activation as an argument to the "
-                    "constructor, or have a callable `activation` class attribute."
-                )
-            activation = type(self).activation
-        self._activation = activation
-        assert callable(self._activation)
-
-    def forward(self, input: Tensor) -> Tensor:
-        return self._activation(super().forward(input))
-
-
-class Conv2dReLU(Conv2dActivation):
-    activation = F.relu
-
-
-class Conv2dELU(Conv2dActivation):
-    activation = F.elu
-
-
-class ConvTranspose2dActivation(nn.ConvTranspose2d):
-    activation: ClassVar[Callable[[Tensor], Tensor]]
-
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: _size_2_t,
-        stride: _size_2_t = 1,
-        padding: _size_2_t = 0,
-        output_padding: _size_2_t = 0,
-        groups: int = 1,
-        bias: bool = True,
-        dilation: int = 1,
-        padding_mode: str = "zeros",
-        activation: Callable[[Tensor], Tensor] = None,
-    ):
-        super().__init__(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=padding,
-            output_padding=output_padding,
-            groups=groups,
-            bias=bias,
-            dilation=dilation,
-            padding_mode=padding_mode,
-        )
-        if activation is None:
-            if not hasattr(type(self), "activation"):
-                raise RuntimeError(
-                    "Need to either pass an activation as an argument to the "
-                    "constructor, or have a callable `activation` class attribute."
-                )
-            activation = type(self).activation
-        self._activation = activation
-        assert callable(self._activation)
-
-    def forward(self, input: Tensor, output_size: Optional[List[int]] = None) -> Tensor:
-        out: Tensor = super().forward(input, output_size=output_size)
-        return self._activation(out)
-
-
-class ConvTranspose2dReLU(ConvTranspose2dActivation):
-    activation = F.relu
-
-
-class ConvTranspose2dELU(ConvTranspose2dActivation):
-    activation = F.elu
-
-
-class Reshape(nn.Module):
-    def __init__(
-        self, target_shape: Tuple[int, ...], source_shape: Tuple[int, ...] = None
-    ):
         self.target_shape = tuple(target_shape)
-        self.source_shape = tuple(source_shape) if source_shape else ()
-        super().__init__()
 
     def forward(self, inputs):
-        if self.source_shape:
-            if inputs.shape[1:] != self.source_shape:
-                raise RuntimeError(
-                    f"Inputs have unexpected shape {inputs.shape[1:]}, expected "
-                    f"{self.source_shape}."
-                )
-        else:
-            self.source_shape = inputs.shape[1:]
         outputs = inputs.reshape([inputs.shape[0], *self.target_shape])
         if self.target_shape == (-1,):
             self.target_shape = outputs.shape[1:]
         return outputs
 
     def __repr__(self):
-        return f"{type(self).__name__}({self.source_shape} -> {self.target_shape})"
+        return f"{type(self).__name__}({self.input_shape} -> {self.target_shape})"
+
+    def __invert__(self) -> Reshape:
+        assert self.input_shape and self.output_shape, "Use the net before inverting."
+        return type(self)(
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
+        )
 
 
-class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d):
+class AdaptiveAvgPool2d(Invertible, nn.AdaptiveAvgPool2d):
     def __init__(
-        self, output_size: Tuple[int, ...], input_shape: Tuple[int, ...] = None
+        self,
+        output_size: Tuple[int, int] = None,
+        input_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
     ):
-        super().__init__(output_size=output_size)
-        self.input_shape: Tuple[int, ...] = input_shape or ()
-        self.output_shape: Tuple[int, ...] = ()
+        assert output_size or output_shape, "Need one of those"
+        if not output_size and output_shape:
+            output_size = output_shape[-2:]
+        super().__init__(
+            output_size=output_size,
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
+        )
 
-    def forward(self, input):
-        if self.input_shape == ():
-            assert len(input.shape[1:]) == 3
-            input_shape = input.shape[1:]
-            self.input_shape = (input_shape[0], input_shape[1], input_shape[2])
-        elif input.shape[1:] != self.input_shape:
-            raise RuntimeError(
-                f"Inputs have unexpected shape {input.shape[1:]}, expected "
-                f"{self.input_shape}."
-            )
-        out = super().forward(input)
-        if not self.output_shape:
-            self.output_shape = out.shape[1:]
-        elif out.shape[1:] != self.output_shape:
-            raise RuntimeError(
-                f"Outputs have unexpected shape {out.shape[1:]}, expected "
-                f"{self.output_shape}."
-            )
-        return out
+    def __invert__(self) -> AdaptiveAvgPool2d:
+        """ Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input! """
+        assert self.input_shape and self.output_shape, "Use the net before inverting."
+        return type(self)(
+            output_size=self.input_shape[-2:],
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
+        )
 
 
 class BatchUnNormalize(nn.Module):
-    """ TODO: Implement the 'opposite' of batchnorm2d """
+    """ TODO: Meant to be something like the 'inverse' of a batchnorm2d
+
+    NOTE: No need to make this 'Invertible', because we don't really care about
+    inverting this, we moreso would like to obtain this from 'inverting' batchnorm2d.
+    """
 
     def __init__(self, num_features: int, dtype=torch.float32):
         super().__init__()
@@ -253,73 +252,80 @@ class BatchUnNormalize(nn.Module):
         return input * self.scale + self.offset
 
 
-from typing import overload
-from collections import OrderedDict
+@get_backward_equivalent.register(nn.BatchNorm2d)
+def _(layer: nn.BatchNorm2d) -> BatchUnNormalize:
+    return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
 
 
-class ConvPoolBlock(nn.Module):
+class ConvPoolBlock(Sequential):
     """Convolutional block with max-pooling and an activation.
     """
 
     def __init__(
-        self, in_channels: int, out_channels: int, activation_type: Type[nn.Module],
+        self,
+        in_channels: int = None,
+        out_channels: int = None,
+        activation_type: Type[nn.Module] = nn.ELU,
+        input_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
     ):
-        super().__init__()
+        assert in_channels or input_shape
+        assert out_channels or output_shape
+        if in_channels is None:
+            assert input_shape
+            assert len(input_shape) == 3
+            in_channels = input_shape[0]
+        if out_channels is None:
+            assert output_shape
+            assert len(output_shape) == 3
+            out_channels = output_shape[0]
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.activation_type = activation_type
-        # NOTE: Could also subclass Sequential and do this?
-        # super().__init__(OrderedDict(
-        #     conv = nn.Conv2d(in_channels, out_channels, 3, stride=1, padding=1),
-        #     pool = nn.MaxPool2d(2, stride=2, return_indices=True),
-        #     rho = activation_type(),
-        # ))
+        super().__init__(
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
+        )
         self.conv = nn.Conv2d(
             in_channels, out_channels, kernel_size=3, stride=1, padding=1
         )
+        self.pool: nn.Module
         # self.pool = nn.MaxPool2d(2, stride=2, return_indices=False)
-        self.pool = nn.AvgPool2d(2)
+        if self.output_shape is not None:
+            # If we already know the output shape we want, then we can use this!
+            self.pool = AdaptiveAvgPool2d(
+                output_shape=self.output_shape,
+                # input_shape=self.input_shape,  # NOTE: Can't pass this, since its the input of the conv we'll get.
+                enforce_shapes=self.enforce_shapes,
+            )
+        else:
+            self.pool = nn.AvgPool2d(2)
         self.rho = activation_type()
-        self.input_shape: Optional[Tuple[int, int, int]] = None
-        self.output_shape: Optional[Tuple[int, int, int]] = None
 
     def forward(self, x: Tensor) -> Tensor:
         """
         Feedforward operator (x --> y = F(x))
         """
-        input_shape = tuple(x.shape[1:])
-        if self.input_shape is None:
-            assert len(input_shape) == 3
-            self.input_shape = input_shape  # type: ignore
-        elif input_shape != self.input_shape:
-            # NOTE: This doesn't usually make sense for conv layers, which can be
-            # applied to differently-shaped images, however here it might be useful
-            # because we want the backward nets to produce a fixed output size.
-            raise RuntimeError(
-                f"Inputs have unexpected shape {input_shape}, expected "
-                f"{self.input_shape}."
-            )
         y = self.conv(x)
         y = self.rho(y)
         y = self.pool(y)
-        output_shape = tuple(y.shape[1:])
-        if self.output_shape is None:
-            assert len(output_shape) == 3
-            self.output_shape = output_shape  # type: ignore
-        elif output_shape != self.output_shape:
-            raise RuntimeError(
-                f"Outputs have unexpected shape {output_shape}, expected "
-                f"{self.output_shape}."
-            )
         return y
 
-    def extra_repr(self) -> str:
-        return super().extra_repr() + (
-            f"(input_shape={self.input_shape}, output_shape={self.output_shape})"
+    def __invert__(self) -> ConvTransposePoolBlock:
+        assert self.input_shape and self.output_shape, "Use the net before inverting."
+        return ConvTransposePoolBlock(
+            in_channels=self.out_channels,
+            out_channels=self.in_channels,
+            activation_type=self.activation_type,
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
         )
 
 
-class ConvTransposePoolBlock(nn.Module):
+class ConvTransposePoolBlock(Invertible):
     """Convolutional transpose block with max-pooling and an activation.
     """
 
@@ -328,62 +334,79 @@ class ConvTransposePoolBlock(nn.Module):
         in_channels: int,
         out_channels: int,
         activation_type: Type[nn.Module],
-        input_shape: Tuple[int, int, int] = None,
-        output_shape: Tuple[int, int, int] = None,
+        input_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
     ):
-        super().__init__()
+        assert in_channels or input_shape
+        assert out_channels or output_shape
+        if in_channels is None:
+            assert input_shape
+            assert len(input_shape) == 3
+            in_channels = input_shape[0]
+        if out_channels is None:
+            assert output_shape
+            assert len(output_shape) == 3
+            out_channels = output_shape[0]
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.activation_type = activation_type
-        self.output_shape = output_shape
-        self.input_shape = input_shape
-        
+        super().__init__(
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
+        )
+        # TODO: If using MaxUnpool, we'd have to add some kind of 'magic_get_indices'
+        # function that gets passed as an constructor argument to this 'backward' block
+        # by the forward block, and which would just retrieve the current max_indices
+        # from the MaxPool2d layer.
         # self.unpool = nn.MaxUnpool2d(2, )
-        # NOTE: Need to pass the `scale_factor` kwargs to Upsample, passing a positional
-        # arg of `2` doesn't work.
+        self.unpool: nn.Module
+        # if self.output_shape is not None:
+            # NOTE: Can't really
+            # This is way cooler, but we can't use it, because we'd need to know the
+            # input size of this convolution (which we don't!)
+            # self.unpool = AdaptiveAvgPool2d(
+            #     output_size=
+            #     # output_shape=self.output_shape,  # Can't pass this
+            #     input_shape=self.input_shape,
+            #     enforce_shapes=self.enforce_shapes,
+            # )
+        # else:
+
+        # NOTE: Need to pass the `scale_factor` kwargs to Upsample, passing a
+        # positional value of `2` doesn't work.
         self.unpool = nn.Upsample(scale_factor=2, mode="nearest")
         self.rho = activation_type()
         self.conv = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size=3, stride=1, padding=1
         )
 
-    def forward(self, y: Tensor) -> Tensor:
+    def forward(self, y: Tensor, output_size: list[int] = None) -> Tensor:
         """
         Feedback operator (y --> r = G(y))
         """
-        input_shape = tuple(y.shape[1:])
-        if self.input_shape is None:
-            assert len(input_shape) == 3
-            self.input_shape = input_shape  # type: ignore
-        elif input_shape != self.input_shape:
-            # NOTE: This doesn't usually make sense for conv layers, which can be
-            # applied to differently-shaped images, however here it might be useful
-            # because we want the backward nets to produce a fixed output size.
-            raise RuntimeError(
-                f"Inputs have unexpected shape {input_shape}, expected "
-                f"{self.input_shape}."
-            )
-        assert self.output_shape, "need to know output size in advance for now."
-        output_size = self.output_shape[-2:]
+        # NOTE: Could also let this 'float', but for now it's easier this way.
+        if output_size is None:
+            assert self.output_shape, "need either `output_size` or `self.output_shape`"
+            assert len(self.output_shape) == 3
+            output_size = self.output_shape[-2:]
         # Don't pass the output size when using nn.Upsample:
         # r = self.unpool(y, output_size=output_size)
         r = self.unpool(y)
         r = self.rho(r)
         r = self.conv(r, output_size=output_size)
-
-        output_shape = tuple(r.shape[1:])
-        if self.output_shape is None:
-            assert len(output_shape) == 3
-            self.output_shape = output_shape  # type: ignore
-        elif output_shape != self.output_shape:
-            raise RuntimeError(
-                f"Outputs have unexpected shape {output_shape}, expected "
-                f"{self.output_shape}."
-            )
-
         return r
 
-    def extra_repr(self) -> str:
-        return super().extra_repr() + (
-            f"(input_shape={self.input_shape}, output_shape={self.output_shape})"
+    def __invert__(self) -> ConvPoolBlock:
+        assert self.input_shape, "Use the net before inverting."
+        assert self.output_shape, "Use the net before inverting."
+        assert len(self.input_shape) == 3
+        return ConvPoolBlock(
+            in_channels=self.out_channels,
+            out_channels=self.in_channels,
+            activation_type=self.activation_type,
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
         )

@@ -1,15 +1,6 @@
 from functools import singledispatch
 from torch import nn
 import torch
-from .layers import (
-    Reshape,
-    AdaptiveAvgPool2d,
-    Conv2dActivation,
-    ConvTranspose2dActivation,
-    BatchUnNormalize,
-    ConvPoolBlock,
-    ConvTransposePoolBlock,
-)
 import copy
 from typing import TypeVar, Tuple
 
@@ -78,9 +69,7 @@ def backward_conv(
     assert d_h == d_w, "only support square padding for now"
     assert op_h == op_w, "only support square output_padding for now"
 
-    out_type = nn.ConvTranspose2d
-    
-    kwargs = dict(
+    backward = nn.ConvTranspose2d(
         in_channels=layer.out_channels,
         out_channels=layer.in_channels,
         kernel_size=(k_h, k_w),
@@ -92,14 +81,7 @@ def backward_conv(
         output_padding=(s_h - 1, s_w - 1),   
         # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
     )
-    
-    if isinstance(layer, Conv2dActivation):
-        out_type = ConvTranspose2dActivation
-        kwargs["activation"] = layer._activation
 
-    backward = out_type(
-        **kwargs
-    )
     if init_symetric_weights:
         # TODO: Not sure the `torch.no_grad` is necessary here:
         with torch.no_grad():
@@ -108,58 +90,15 @@ def backward_conv(
     return backward
 
 
-@get_backward_equivalent.register
-def backward_reshape(layer: Reshape, init_symetric_weights: bool = False) -> Reshape:
-    assert layer.source_shape, "Please pass `source_shape` to the Reshape constructor"
-    return Reshape(source_shape=layer.target_shape, target_shape=layer.source_shape)
-
-
-@get_backward_equivalent.register
-def backward_adaptive_pooling(
-    layer: AdaptiveAvgPool2d, init_symetric_weights: bool = False
-) -> nn.Upsample:
-    assert (
-        layer.input_shape
-    ), "Set input_shape in constructor or pass an input to the layer"
-    assert layer.output_shape
-    return nn.Upsample(size=layer.input_shape[-2:], mode="nearest")
-
-
-@get_backward_equivalent.register
-def backward_conv_pool_block(
-    layer: ConvPoolBlock, init_symetric_weights: bool = False
-) -> ConvTransposePoolBlock:
-    assert layer.input_shape, "Pass an input to the net before getting the backward net"
-    assert len(layer.input_shape) == 3
-    return ConvTransposePoolBlock(
-        in_channels=layer.out_channels,
-        out_channels=layer.in_channels,
-        activation_type=layer.activation_type,
-        input_shape=layer.output_shape,
-        output_shape=layer.input_shape,
-    )
-    raise NotImplementedError("TODO")
-
-
-@get_backward_equivalent.register
-def backward_maxpool(
-    layer: nn.MaxPool2d, init_symetric_weights: bool = False
-) -> nn.MaxUnpool2d:
-    raise NotImplementedError("TODO")
-
-
 @get_backward_equivalent.register(nn.ReLU)
 def backward_activation(
     activation_layer: nn.Module, init_symetric_weights: bool = False
 ) -> nn.Module:
     # TODO: Return an identity function?
+    raise NotImplementedError(
+        f"Activations aren't invertible by default!"
+    )
+    # NOTE: It may also be the case that this activation is misplaced (leading to the
+    # mis-alignment of layers in contiguous blocks of a network)
     return nn.Identity()
     # return copy.deepcopy(activation_layer)
-
-
-@get_backward_equivalent.register
-def backward_batchnorm(
-    layer: nn.BatchNorm2d, init_symetric_weights: bool = False
-) -> BatchUnNormalize:
-    # TODO: No idea if this makes sense.
-    return BatchUnNormalize(layer.num_features)
