@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Dict, Optional, Type
-
 from pl_bolts.datamodules import CIFAR10DataModule, ImagenetDataModule, MNISTDataModule
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import choice
@@ -22,7 +21,7 @@ class Config(Serializable):
     }
     # Which dataset to use.
     dataset: str = choice(available_datasets.keys(), default="cifar10")
-    
+
     # Directory where the dataset is to be downloaded. Uses the "DATA_DIR" environment
     # variable, if present, else a local "data" directory.
     data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))
@@ -38,7 +37,7 @@ class Config(Serializable):
     shuffle: bool = True
 
     # Debug mode: enables more verbose logging, and turns off logging to wandb.
-    # NOTE: Currently also limits the max epochs to 1. 
+    # NOTE: Currently also limits the max epochs to 1.
     debug: bool = False
 
     def make_datamodule(self, batch_size: int) -> VisionDataModule:

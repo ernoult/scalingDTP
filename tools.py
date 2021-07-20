@@ -334,9 +334,10 @@ def createDataset(args):
     transform_test = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), 
                                                      torchvision.transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), 
                                                                                       std=(3*0.2023, 3*0.1994, 3*0.2010)) ]) 
-
-    cifar10_train_dset = torchvision.datasets.CIFAR10('./cifar10_pytorch', train=True, transform=transform_train, download=True)
-    cifar10_test_dset = torchvision.datasets.CIFAR10('./cifar10_pytorch', train=False, transform=transform_test, download=True)
+    from pathlib import Path
+    DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+    cifar10_train_dset = torchvision.datasets.CIFAR10(DATA_DIR / 'cifar10_pytorch', train=True, transform=transform_train, download=True)
+    cifar10_test_dset = torchvision.datasets.CIFAR10(DATA_DIR / 'cifar10_pytorch', train=False, transform=transform_test, download=True)
    
     val_index = np.random.randint(10)
     val_samples = list(range( 5000 * val_index, 5000 * (val_index + 1) ))

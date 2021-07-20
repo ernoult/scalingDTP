@@ -5,7 +5,7 @@ Use `python main.py --help` for a list of all available arguments,
     or (even better), take a look at the [`Config`](target_prop/config.py) and the
     [`Model.HParams`](target_prop/model.py) classes to see their definition.
 """
-from target_prop.model import Model
+from target_prop.models import Model, SequentialModel, ParallelModel
 from target_prop.config import Config
 from simple_parsing import ArgumentParser
 import json
@@ -20,16 +20,32 @@ def main(sample_hparams: bool = False):
     from their corresponding priors, else they take their default value (or the value
     passed from the command-line, if present).
     """
-
     parser = ArgumentParser(description=__doc__)
-    parser.add_arguments(Config, dest="config")
-    parser.add_arguments(Model.HParams, dest="hparams")
+    # parser.set_defaults(model=SequentialModel)
+    # parser.add_arguments(SequentialModel.HParams, "hparams")
+    # parser.add_arguments(Config, "config")
+
+    subparsers = parser.add_subparsers(title="model", description="Type of model to use.")
+
+    parallel_parser = subparsers.add_parser("parallel")
+    parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
+    parallel_parser.add_arguments(Config, dest="config")
+    parallel_parser.set_defaults(model=ParallelModel)
+
+    sequential_parser = subparsers.add_parser("sequential")
+    sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
+    sequential_parser.add_arguments(Config, dest="config")
+    sequential_parser.set_defaults(model=SequentialModel)
+
+    # Fixing this for now, but should use a subparser instead.    
+    # parser.add_arguments(Model.HParams, dest="hparams")
 
     # TODO: we unfortunately can't do this directly atm:
     # trainer_parser = Trainer.add_argparse_args(parser)
 
     args = parser.parse_args()
-
+    # assert False, args.model
+    
     config: Config = args.config
     hparams: Model.HParams = args.hparams
     if sample_hparams:
@@ -60,12 +76,15 @@ def main(sample_hparams: bool = False):
     print("HParams:", json.dumps(hparams.to_dict(), indent="\t"))
     # Create the datamodule:
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-    model = Model(datamodule=datamodule, hparams=hparams, config=config)
+    
+    model_class: Type[Model] = args.model
+    model = model_class(datamodule=datamodule, hparams=hparams, config=config)
     trainer = Trainer(
         max_epochs=hparams.max_epochs,
         gpus=torch.cuda.device_count(),
         track_grad_norm=False,
-        accelerator="ddp",
+        accelerator=None,
+        # accelerator="ddp",
         # profiler="simple",
         # callbacks=[],
         logger=WandbLogger() if not config.debug else None,
@@ -76,7 +95,7 @@ def main(sample_hparams: bool = False):
     test_results = trainer.test(model, datamodule=datamodule)
     wandb.finish()
     print(test_results)
-    test_accuracy: float = test_results[0]["test/Accuracy"]
+    test_accuracy: float = test_results[0]["test/accuracy"]
     return test_accuracy
 
 

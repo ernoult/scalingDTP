@@ -22,15 +22,22 @@ import torch
 from torch import Tensor, nn
 from typing import Union, List, Iterable, Sequence, Tuple
 from .backward_layers import get_backward_equivalent
+from typing import Generic
+from typing import TypeVar
+
+ModuleType = TypeVar("ModuleType", bound=nn.Module)
 
 
-class Invertible(nn.Module, ABC):
-    """ ABC for a Module that is invertible, i.e. which can return a Module which can
-    produce the backward equivalent of its forward pass.
-    
-    Modules that inherit from this are also made aware of their input and output shapes
-    provided they are applied at least once with some dummy input.
+class Invertible(nn.Module, Generic[ModuleType], ABC):
+    """ ABC for a Module that is invertible, i.e. whose `invert` method will return
+    another Module which can produce the "backward equivalent" of its forward pass.
+
+    Modules that inherit from this are also made aware of their input and output shapes,
+    provided they are used at least once with some example input.
     This is done in order to make it easier to produce the backward pass network.
+    
+    This type is Generic, and the type argument indicates the type of network returned
+    by the `invert` method.
     """
 
     def __init__(
@@ -41,7 +48,7 @@ class Invertible(nn.Module, ABC):
         enforce_shapes: bool = True,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)  # type: ignore
         self.input_shape = input_shape
         self.output_shape = output_shape
         self.enforce_shapes = enforce_shapes
@@ -53,9 +60,21 @@ class Invertible(nn.Module, ABC):
             self.register_forward_hook(type(self).forward_hook)
 
     @abstractmethod
-    def __invert__(self) -> nn.Module:
+    def invert(self) -> ModuleType:
         """ Returns a Module that can be used to compute or approximate the inverse
         operation of `self`.
+        """
+        raise NotImplementedError
+
+    def __invert__(self) -> ModuleType:
+        """ Overrides the bitwise invert operator `~`, so that you can do something
+        cute like:
+        
+        ```
+        backward_net = forward_net.invert()
+        # also equivalent to this:
+        backward_net = ~forward_net
+        ```
         """
         raise NotImplementedError
 
@@ -65,7 +84,7 @@ class Invertible(nn.Module, ABC):
         module._check_input_shape(inputs[0])
 
     @staticmethod
-    def forward_hook(module: Invertible, _: Any, output: tuple[Tensor, ...]) -> None:
+    def forward_hook(module: Invertible, _: Any, output: Tensor) -> None:
         module._check_output_shape(output)
 
     def _check_input_shape(self, x: Tensor) -> None:
@@ -74,8 +93,8 @@ class Invertible(nn.Module, ABC):
             self.input_shape = input_shape
         elif self.enforce_shapes and input_shape != self.input_shape:
             raise RuntimeError(
-                f"Inputs to {self._get_name()} have unexpected shape {input_shape}, expected "
-                f"{self.input_shape}."
+                f"Layer {self} expected inputs to have shape {self.input_shape}, but "
+                f"got {input_shape} "
             )
 
     def _check_output_shape(self, output: Tensor) -> None:
@@ -91,13 +110,15 @@ class Invertible(nn.Module, ABC):
 
 @get_backward_equivalent.register(Invertible)
 def _(network: Invertible):
-    # Use the module's __invert__ method if defined, otherwise fallback to the
-    # `get_backward_equivalent` generic function for built-in modules like `nn.Conv2d`,
-    # `nn.ConvTranspose2d`, etc.
-    return ~network
+    # Register this, so that calling `get_backward_equivalent` will use the `invert`
+    # method if its input is an `Invertible` subclass.
+    
+    # Otherwise, `get_backward_equivalent` will fallback to its handlers for built-in
+    # modules like `nn.Conv2d`, `nn.ConvTranspose2d`, etc.
+    return network.invert()
 
 
-class Sequential(Invertible, nn.Sequential):
+class Sequential(Invertible["Sequential"], nn.Sequential):
     def forward_each(self, xs: list[Tensor]) -> list[Tensor]:
         """Gets the outputs of every layer, given inputs for each layer `xs`.
 
@@ -142,7 +163,7 @@ class Sequential(Invertible, nn.Sequential):
             activations.append(x)
         return activations
 
-    def __invert__(self) -> Sequential:
+    def invert(self) -> Sequential:
         """ Returns a Module that can be used to compute or approximate the inverse
         operation of `self`.
 
@@ -166,7 +187,7 @@ class Sequential(Invertible, nn.Sequential):
         return self[::-1]
 
 
-class Reshape(Invertible):
+class Reshape(Invertible["Reshape"]):
     def __init__(
         self,
         target_shape: Tuple[int, ...] = None,
@@ -193,9 +214,10 @@ class Reshape(Invertible):
     def __repr__(self):
         return f"{type(self).__name__}({self.input_shape} -> {self.target_shape})"
 
-    def __invert__(self) -> Reshape:
+    def invert(self) -> Reshape:
         assert self.input_shape and self.output_shape, "Use the net before inverting."
         return type(self)(
+            # target_shape=self.target_shape,
             input_shape=self.output_shape,
             output_shape=self.input_shape,
             enforce_shapes=self.enforce_shapes,
@@ -220,7 +242,7 @@ class AdaptiveAvgPool2d(Invertible, nn.AdaptiveAvgPool2d):
             enforce_shapes=enforce_shapes,
         )
 
-    def __invert__(self) -> AdaptiveAvgPool2d:
+    def invert(self) -> AdaptiveAvgPool2d:
         """ Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input! """
         assert self.input_shape and self.output_shape, "Use the net before inverting."
         return type(self)(
@@ -313,7 +335,7 @@ class ConvPoolBlock(Sequential):
         y = self.pool(y)
         return y
 
-    def __invert__(self) -> ConvTransposePoolBlock:
+    def invert(self) -> ConvTransposePoolBlock:
         assert self.input_shape and self.output_shape, "Use the net before inverting."
         return ConvTransposePoolBlock(
             in_channels=self.out_channels,
@@ -398,7 +420,7 @@ class ConvTransposePoolBlock(Invertible):
         r = self.conv(r, output_size=output_size)
         return r
 
-    def __invert__(self) -> ConvPoolBlock:
+    def invert(self) -> ConvPoolBlock:
         assert self.input_shape, "Use the net before inverting."
         assert self.output_shape, "Use the net before inverting."
         assert len(self.input_shape) == 3
