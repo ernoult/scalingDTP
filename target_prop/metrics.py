@@ -16,7 +16,7 @@ def compute_dist_angle(
     raise NotImplementedError((forward_module, backward_module))
 
 
-@compute_dist_angle.register
+@compute_dist_angle.register(nn.Linear)
 def _compute_dist_angle_linear(
     forward_module: nn.Linear, backward_module: nn.Linear
 ) -> tuple[Tensor, Tensor]:
@@ -39,7 +39,7 @@ def _compute_dist_angle_linear(
     return dist, angle
 
 
-@compute_dist_angle.register
+@compute_dist_angle.register(nn.Conv2d)
 def _compute_dist_angle_conv(
     forward_module: nn.Conv2d, backward_module: nn.ConvTranspose2d
 ) -> tuple[Tensor, Tensor]:
@@ -58,3 +58,16 @@ def _compute_dist_angle_conv(
     angle = (180.0 / np.pi) * (torch.acos(cos_angle).mean())  # Note: Removed '.item()'
 
     return dist, angle
+
+
+from target_prop.layers import ConvPoolBlock, ConvTransposePoolBlock, Sequential
+
+
+@compute_dist_angle.register(ConvPoolBlock)
+@compute_dist_angle.register(Sequential)
+def _(
+    forward_module: ConvPoolBlock, backward_module: ConvTransposePoolBlock
+) -> tuple[Tensor, Tensor]:
+    conv2d = forward_module.conv
+    convtranspose2d = backward_module.conv
+    return compute_dist_angle(conv2d, convtranspose2d)

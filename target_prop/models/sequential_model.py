@@ -3,7 +3,7 @@ import torch
 from typing import List, Optional
 from torch import nn
 
-from target_prop.feedback_loss import feedback_loss
+from target_prop.feedback_loss import get_feedback_loss
 from target_prop.models.model import Model
 from dataclasses import dataclass
 from simple_parsing.helpers import list_field
@@ -11,6 +11,8 @@ from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from target_prop.config import Config
 from target_prop.utils import get_list_of_values, is_trainable
 from torch.nn import functional as F
+from target_prop.metrics import compute_dist_angle
+
 
 
 class SequentialModel(Model):
@@ -85,6 +87,7 @@ class SequentialModel(Model):
         )
 
         # 2- Layer-wise autoencoder training begins:
+        # NOTE: Skipping the first layer.
         for layer_index in range(1, n_layers):
             # Forward layer
             F_i = self.forward_net[layer_index]
@@ -92,11 +95,6 @@ class SequentialModel(Model):
             G_i = reversed_backward_net[layer_index]
             iterations = iterations_per_layer[layer_index]
             noise_scale = noise_scale_per_layer[layer_index]
-
-            s = ys[layer_index]
-
-            t_n = y
-            # t^n = s^n + G(t^{n+1}; B) - G(s^{n+1} ; B)
 
             if iterations == 0:
                 # Skip this layer, since it's not trainable, but still compute the `y`
@@ -106,20 +104,29 @@ class SequentialModel(Model):
                 continue
 
             losses_per_iteration: List[Tensor] = []
+            angles = []
+            distances = []
             for iteration in range(iterations):
                 # 3- Train the current autoencoder:
-                loss = feedback_loss(
+                loss = get_feedback_loss(
                     G_i,
                     F_i,
                     input=y,
                     noise_scale=noise_scale,
                     noise_samples=self.hp.feedback_samples_per_iteration,
                 )
+                
                 if isinstance(loss, Tensor) and loss.requires_grad:
                     feedback_optimizer.zero_grad()
                     self.manual_backward(loss)
                     feedback_optimizer.step()
                     losses_per_iteration.append(loss.detach())
+
+                    with torch.no_grad():
+                        angle, distance = compute_dist_angle(F_i, G_i)
+                        # print(f"Layer {layer_index}, Iteration {iteration}, angle={angle}, distance={distance}")
+                        angles.append(angle)
+                        distances.append(distance)
                 else:
                     if isinstance(loss, float):
                         loss = torch.as_tensor(loss, device=y.device)
@@ -129,11 +136,20 @@ class SequentialModel(Model):
             total_loss_for_layer = iteration_losses.sum()
             layer_losses.append(total_loss_for_layer)
             self.log(
-                f"{self.phase}/Feedback Loss [{layer_index}]", total_loss_for_layer
+                f"{self.phase}/B_loss[{layer_index}]", total_loss_for_layer
             )
             self.log(
-                f"{self.phase}/Feedback Loss iterations [{layer_index}]", iterations
+                f"{self.phase}/B_iterations[{layer_index}]", iterations
             )
+            if angles:
+                self.log(
+                    f"{self.phase}/B_angles[{layer_index}]", angles
+                )
+            if distances:
+                self.log(
+                    f"{self.phase}/B_distances[{layer_index}]", distances
+                )
+                
             # logger.debug(
             #     f"layer {layer_index}: losses per iteration: {losses_per_iteration}"
             # )
@@ -141,6 +157,7 @@ class SequentialModel(Model):
             with torch.no_grad():
                 y = F_i(y)
 
+        
         return torch.stack(layer_losses).sum()
 
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
@@ -157,7 +174,12 @@ class SequentialModel(Model):
         # target during validation / testing.
         with torch.set_grad_enabled(True):
             accuracy = self.accuracy(torch.softmax(logits, -1), labels)
-            self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True, logger=True)
+            if self.phase == "train":
+                log_kwargs = dict(on_step=True, prog_bar=True, logger=True)
+            else:
+                log_kwargs = dict(prog_bar=False, logger=True)
+
+            self.log(f"{self.phase}/accuracy", accuracy, **log_kwargs)
 
             # NOTE: detaching the logits before computing the first target, because we don't
             # want the cross-entropy loss to backpropagate itself into the last layer?
@@ -176,46 +198,48 @@ class SequentialModel(Model):
         y_n_grad = grads[0]
         delta = - self.hp.beta * y_n_grad
 
-        # NOTE: Initialize the list of targets with zeros, and we'll replace all the
+        # NOTE: Initialize the list of targets with Nones, and we'll replace all the
         # entries with tensors corresponding to the targets of each layer.
-
         targets: List[Optional[Tensor]] = [None for _ in ys]
+
+        # Compute the first target:
         t = y_n + delta
         targets[-1] = t
 
         n_layers = len(self.forward_net)
         
-        # Calculate the targets for each layer.
-        for i in reversed(range(2, n_layers)):
-            # Move backward through the forward net: N, N-1, ..., 2, 1
+        # Calculate the targets for each layer, moving backward through the forward net:
+        # N-1, N-2, ..., 2, 1
+        # NOTE: Starting from N-1 since we already have the target for the last layer).
+        for i in reversed(range(1, n_layers)):
             G = self.backward_net[-1 - i]
-
-            # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
-            # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
             with torch.no_grad():
-                assert targets[i-1] is None
+                assert targets[i-1] is None  # Make sure we're not overwriting anything.
+                # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
+                # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
                 targets[i-1] = ys[i-1] + G(targets[i]) - G(ys[i])
 
-        assert targets[0] is None
-
+        # NOTE: targets[0] is the targets for the output of the first layer, not of x.
         # Calculate the losses for each layer:
+        assert all(targets[i] is not None for i in range(0, n_layers))
         forward_loss_per_layer = torch.stack([
-            self.target_loss_fn(ys[i], targets[i]) for i in range(1, n_layers) 
+            F.mse_loss(ys[i], targets[i]) for i in range(0, n_layers) 
         ])
-        
+
         forward_loss = forward_loss_per_layer.sum()
-        
+
         if forward_loss.requires_grad and not self.automatic_optimization:
             optimizer = self.forward_optimizer
             optimizer.zero_grad()
             # forward_loss.backward()
             self.manual_backward(forward_loss)
             optimizer.step()
-            forward_loss = float(forward_loss.detach().item())
+            # Need to convert it to a float, because of an annoying bug with
+            # pytorch-lightning's DP accelerator with manual optimization.
+            forward_loss = forward_loss.detach()
+            # forward_loss = float(forward_loss.detach().item())
 
         return forward_loss
-        
-        
 
     def __unused_original(self):
         """ Keeping this here just for reference """

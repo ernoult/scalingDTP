@@ -27,7 +27,7 @@ from typing import (
     Union,
 )
 from target_prop.utils import get_list_of_values, is_trainable
-from target_prop.layers import ConvPoolBlock
+from target_prop.layers import ConvPoolBlock, MaxPool2d, MaxUnpool2d, AdaptiveMaxPool2d
 import pytorch_lightning
 import torch
 import torchvision.transforms as T
@@ -64,7 +64,7 @@ from target_prop.layers import (
     Reshape,
     Sequential,
 )
-from target_prop.feedback_loss import feedback_loss
+from target_prop.feedback_loss import get_feedback_loss
 from target_prop.utils import flag
 from logging import getLogger
 logger = getLogger(__file__)
@@ -176,21 +176,22 @@ class Model(LightningModule, ABC):
         self.example_input_array = torch.rand(  # type: ignore
             [datamodule.batch_size, *datamodule.dims], device=self.device
         )
+        from collections import OrderedDict
         ## Create the forward achitecture:
+        channels = [self.in_channels] + self.hp.channels
         self.forward_net = Sequential(
-            ConvPoolBlock(
-                in_channels=self.in_channels,
-                out_channels=self.hp.channels[0],
-                activation_type=self.hp.activation,
-                input_shape=datamodule.dims,
-            ),
             *(
-                ConvPoolBlock(
-                    in_channels=self.hp.channels[i - 1],
-                    out_channels=self.hp.channels[i],
-                    activation_type=self.hp.activation,
+                Sequential(
+                    OrderedDict(
+                    conv=nn.Conv2d(
+                        channels[i], channels[i+1], kernel_size=3, stride=1, padding=1,
+                    ),
+                    rho=nn.ELU(),
+                    pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
+                    # pool=nn.AvgPool2d(kernel_size=2),
+                    )
                 )
-                for i in range(1, len(self.hp.channels))
+                for i in range(0, len(channels)-1)
             ),
             Reshape(target_shape=(-1,)),
             # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
@@ -252,9 +253,9 @@ class Model(LightningModule, ABC):
 
     def forward(self, input: Tensor) -> Tensor:  # type: ignore
         y = self.forward_net(input)
+        r = self.backward_net(y)
+        return y, r
         return y
-        # r = self.backward_net(y)
-        # return y, r
 
     
     def shared_step(
@@ -308,7 +309,7 @@ class Model(LightningModule, ABC):
         NOTE: Only the 'full_parallel' version will work with DDP.
         """
         raise NotImplementedError
-    
+
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
     ) -> Union[Tensor, float]:

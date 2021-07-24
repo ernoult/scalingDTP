@@ -102,3 +102,15 @@ def backward_activation(
     # mis-alignment of layers in contiguous blocks of a network)
     return nn.Identity()
     # return copy.deepcopy(activation_layer)
+
+
+@get_backward_equivalent.register(nn.ELU)
+def _(activation_layer: nn.ELU) -> nn.Module:
+    return nn.ELU(alpha=activation_layer.alpha, inplace=False)
+
+
+@get_backward_equivalent.register(nn.AvgPool2d)
+def _(pooling_layer: nn.AvgPool2d) -> nn.Upsample:
+    assert pooling_layer.kernel_size == 2, pooling_layer
+    assert pooling_layer.stride == 2, pooling_layer
+    return nn.Upsample(scale_factor=2)

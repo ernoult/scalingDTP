@@ -4,6 +4,7 @@ import torch
 from inspect import isclass
 from torch import nn, Tensor
 from torch.nn import functional as F
+from collections import deque
 from typing import (
     Any,
     NamedTuple,
@@ -81,10 +82,15 @@ class Invertible(nn.Module, Generic[ModuleType], ABC):
     @staticmethod
     def forward_pre_hook(module: Invertible, inputs: tuple[Tensor, ...]) -> None:
         assert len(inputs) == 1
+        if isinstance(inputs[0], tuple):
+            # Inspect only the first tensor if needed.
+            inputs = inputs[0]
         module._check_input_shape(inputs[0])
 
     @staticmethod
-    def forward_hook(module: Invertible, _: Any, output: Tensor) -> None:
+    def forward_hook(module: Invertible, _: Any, output: Tensor | tuple[Tensor, ...]) -> None:
+        if isinstance(output, tuple):
+            output = output[0]
         module._check_output_shape(output)
 
     def _check_input_shape(self, x: Tensor) -> None:
@@ -112,7 +118,7 @@ class Invertible(nn.Module, Generic[ModuleType], ABC):
 def _(network: Invertible):
     # Register this, so that calling `get_backward_equivalent` will use the `invert`
     # method if its input is an `Invertible` subclass.
-    
+
     # Otherwise, `get_backward_equivalent` will fallback to its handlers for built-in
     # modules like `nn.Conv2d`, `nn.ConvTranspose2d`, etc.
     return network.invert()
@@ -253,6 +259,155 @@ class AdaptiveAvgPool2d(Invertible, nn.AdaptiveAvgPool2d):
         )
 
 
+class MaxUnpool2d(Invertible["AdaptiveMaxPool2d"], nn.MaxUnpool2d):
+    # TODO: use a magic_bridge deque that is shared from the forward to the backward
+    # net.
+
+    def __init__(
+        self,
+        kernel_size: _size_2_t,
+        stride: _size_2_t | None = None,
+        padding: _size_2_t = 0,
+        input_shape: tuple[int, ...] = None,
+        output_shape: tuple[int, ...] = None,
+        enforce_shapes: bool = True,
+        magic_bridge: deque[Tensor] = None,
+    ):
+        super().__init__(
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
+        )
+        self.magic_bridge: deque[Tensor] | None = magic_bridge
+
+    def forward(
+        self, input: Tensor, indices: Tensor = None, output_size: list[int] = None
+    ) -> Tensor:
+        if indices is None:
+            assert self.magic_bridge, "Need to pass indices or use a magic bridge!"
+            # Only inspect rather than pop the item out, because of how the feedback
+            # loss uses this backward layer twice.
+            indices = self.magic_bridge[0] 
+        return super().forward(input=input, indices=indices, output_size=output_size)
+
+    def invert(self) -> "AdaptiveMaxPool2d":
+        raise NotImplementedError("Never really need to invert a max Unpool layer.")
+        assert self.input_shape and self.output_shape
+        assert len(self.input_shape) > 2
+        return AdaptiveMaxPool2d(
+            output_size=self.input_shape[-2:],
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
+        )
+
+from torch.nn.modules.pooling import _size_any_t
+from typing import Optional
+
+
+class MaxPool2d(Invertible[MaxUnpool2d], nn.MaxPool2d):
+    def __init__(
+        self,
+        kernel_size: _size_any_t,
+        stride: Optional[_size_any_t] = None,
+        padding: _size_any_t = 0,
+        dilation: _size_any_t = 1,
+        return_indices: bool = False,
+        ceil_mode: bool = False,
+        input_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
+    ):
+        super().__init__(
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            return_indices=True,
+            ceil_mode=ceil_mode,
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
+        )
+        self._return_indices = return_indices
+        self.magic_bridge: deque[Tensor] = deque(maxlen=1)
+
+    def forward(self, input: Tensor) -> Tensor | tuple[Tensor, Tensor]:
+        out, indices = super().forward(input)
+        self.magic_bridge.append(indices)
+        if self._return_indices:
+            return out, indices
+        return out
+
+    def invert(self) -> MaxUnpool2d:
+        return MaxUnpool2d(
+            kernel_size=self.kernel_size,
+            stride=None,  # todo: Not sure waht to do with this value here.
+            padding=0,  # todo
+            magic_bridge=self.magic_bridge,
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
+        )
+
+
+class AdaptiveMaxPool2d(Invertible[MaxUnpool2d], nn.AdaptiveMaxPool2d):
+    # TODO: Adaptive max pool that shares the indices automagically with the backward
+    # network through a shared 'magic bridge' deque.
+    def __init__(
+        self,
+        output_size: Tuple[int, int] = None,
+        return_indices: bool = False,
+        magically_share_indices_with_inverse: bool = True,
+        input_shape: Tuple[int, ...] = None,
+        output_shape: Tuple[int, ...] = None,
+        enforce_shapes: bool = True,
+    ):
+        assert output_size or output_shape, "Need one of those"
+        if not output_size and output_shape:
+            assert len(output_shape) > 2
+            output_size = output_shape[-2:]  # type: ignore
+        super().__init__(
+            output_size=output_size,
+            return_indices=True,
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
+        )
+        self._return_indices = return_indices
+        self.magically_share_indices_with_inverse = magically_share_indices_with_inverse
+        self.magic_bridge: deque[Tensor] = deque(maxlen=2)
+
+    def forward(self, input: Tensor) -> Tensor | tuple[Tensor, Tensor]:
+        out, indices = super().forward(input)
+        if self.magically_share_indices_with_inverse:
+            assert (
+                len(self.magic_bridge) != 2
+            ), "Why didn't the backward net pull the indices out?"
+            self.magic_bridge.append(indices)
+        if self._return_indices:
+            return out, indices
+        return out
+
+    def invert(self) -> MaxUnpool2d:
+        assert False, (self.kernel_size, self.stride, self.padding)
+        return MaxUnpool2d(
+            kernel_size=self.kernel_size,
+            stride=self.stride,  # todo
+            padding=0,  # todo
+            magic_bridge=self.magic_bridge,
+            input_shape=self.output_shape,
+            output_shape=self.input_shape,
+            enforce_shapes=self.enforce_shapes,
+        )
+
+    # def forward(self, input, indices: Tensor, output_size=None):
+    #     return super().forward(input, indices, output_size=output_size)
+
+
 class BatchUnNormalize(nn.Module):
     """ TODO: Meant to be something like the 'inverse' of a batchnorm2d
 
@@ -279,8 +434,10 @@ def _(layer: nn.BatchNorm2d) -> BatchUnNormalize:
     return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
 
 
-class ConvPoolBlock(Sequential):
+class ConvPoolBlock(Sequential, Invertible["ConvTransposePoolBlock"]):
     """Convolutional block with max-pooling and an activation.
+
+    TODO: Morph this into a Sequential subclass.
     """
 
     def __init__(
@@ -305,31 +462,44 @@ class ConvPoolBlock(Sequential):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.activation_type = activation_type
+        self.conv: nn.Conv2d
+        self.rho: nn.Module
+        self.pool: nn.Module
+
+        conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        rho = activation_type()
+        pool: nn.Module
+        # pool = AdaptiveMaxPool2d()
+        # self.pool = nn.MaxPool2d(2, stride=2, return_indices=False)
+        if output_shape is not None:
+            # If we already know the output shape we want, then we can use this!
+            # TODO: Use this instead?
+            # self.pool = AdaptiveMaxPool2d(
+            #     output_shape=self.output_shape,
+            #     enforce_shapes=self.enforce_shapes,
+            #     return_indices=False,
+            #     magically_share_indices_with_inverse=True,
+            # )
+            pool = AdaptiveAvgPool2d(
+                output_shape=output_shape,
+                # input_shape=self.input_shape,  # NOTE: Can't pass this, since its the input of the conv we'll get.
+                enforce_shapes=enforce_shapes,
+            )
+        else:
+            pool = nn.AvgPool2d(2)
+
         super().__init__(
+            OrderedDict([("conv", conv), ("rho", rho), ("pool", pool),]),
             input_shape=input_shape,
             output_shape=output_shape,
             enforce_shapes=enforce_shapes,
         )
-        self.conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, stride=1, padding=1
-        )
-        self.pool: nn.Module
-        # self.pool = nn.MaxPool2d(2, stride=2, return_indices=False)
-        if self.output_shape is not None:
-            # If we already know the output shape we want, then we can use this!
-            self.pool = AdaptiveAvgPool2d(
-                output_shape=self.output_shape,
-                # input_shape=self.input_shape,  # NOTE: Can't pass this, since its the input of the conv we'll get.
-                enforce_shapes=self.enforce_shapes,
-            )
-        else:
-            self.pool = nn.AvgPool2d(2)
-        self.rho = activation_type()
 
     def forward(self, x: Tensor) -> Tensor:
         """
         Feedforward operator (x --> y = F(x))
         """
+        return super().forward(x)
         y = self.conv(x)
         y = self.rho(y)
         y = self.pool(y)
@@ -347,7 +517,7 @@ class ConvPoolBlock(Sequential):
         )
 
 
-class ConvTransposePoolBlock(Invertible):
+class ConvTransposePoolBlock(Sequential, Invertible[ConvPoolBlock]):
     """Convolutional transpose block with max-pooling and an activation.
     """
 
@@ -373,35 +543,43 @@ class ConvTransposePoolBlock(Invertible):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.activation_type = activation_type
-        super().__init__(
-            input_shape=input_shape,
-            output_shape=output_shape,
-            enforce_shapes=enforce_shapes,
-        )
+        # super().__init__(
+        #     input_shape=input_shape,
+        #     output_shape=output_shape,
+        #     enforce_shapes=enforce_shapes,
+        # )
         # TODO: If using MaxUnpool, we'd have to add some kind of 'magic_get_indices'
         # function that gets passed as an constructor argument to this 'backward' block
         # by the forward block, and which would just retrieve the current max_indices
         # from the MaxPool2d layer.
         # self.unpool = nn.MaxUnpool2d(2, )
         self.unpool: nn.Module
+        self.rho: nn.Module
+        self.conv: nn.ConvTranspose2d
         # if self.output_shape is not None:
-            # NOTE: Can't really
-            # This is way cooler, but we can't use it, because we'd need to know the
-            # input size of this convolution (which we don't!)
-            # self.unpool = AdaptiveAvgPool2d(
-            #     output_size=
-            #     # output_shape=self.output_shape,  # Can't pass this
-            #     input_shape=self.input_shape,
-            #     enforce_shapes=self.enforce_shapes,
-            # )
+        # NOTE: Can't really
+        # This is way cooler, but we can't use it, because we'd need to know the
+        # input size of this convolution (which we don't!)
+        # self.unpool = AdaptiveAvgPool2d(
+        #     output_size=
+        #     # output_shape=self.output_shape,  # Can't pass this
+        #     input_shape=self.input_shape,
+        #     enforce_shapes=self.enforce_shapes,
+        # )
         # else:
 
         # NOTE: Need to pass the `scale_factor` kwargs to Upsample, passing a
         # positional value of `2` doesn't work.
-        self.unpool = nn.Upsample(scale_factor=2, mode="nearest")
-        self.rho = activation_type()
-        self.conv = nn.ConvTranspose2d(
+        unpool = nn.Upsample(scale_factor=2, mode="nearest")
+        rho = activation_type()
+        conv = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
+        super().__init__(
+            OrderedDict([("unpool", unpool), ("rho", rho), ("conv", conv),]),
+            input_shape=input_shape,
+            output_shape=output_shape,
+            enforce_shapes=enforce_shapes,
         )
 
     def forward(self, y: Tensor, output_size: list[int] = None) -> Tensor:
