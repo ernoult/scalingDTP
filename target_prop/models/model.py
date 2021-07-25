@@ -2,17 +2,16 @@
 optimizations.
 
 TODO: Add callbacks that compute the jacobians and log images / stuff to wandb.
-TODO: Fix the target calculation, which doesn't currently use the `r` term!
 """
 # from __future__ import annotations
 import json
+import warnings
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from functools import singledispatch
+from logging import getLogger
 from pathlib import Path
-from torch.optim.lr_scheduler import CosineAnnealingLR
-
-import warnings
 from typing import (
     Callable,
     ClassVar,
@@ -24,13 +23,12 @@ from typing import (
     Sequence,
     Tuple,
     Type,
+    TypeVar,
     Union,
 )
-from target_prop.utils import get_list_of_values, is_trainable
-from target_prop.layers import ConvPoolBlock, MaxPool2d, MaxUnpool2d, AdaptiveMaxPool2d
+
 import pytorch_lightning
 import torch
-import torchvision.transforms as T
 import tqdm
 import wandb
 from pl_bolts.datamodules import CIFAR10DataModule, MNISTDataModule
@@ -48,27 +46,29 @@ from simple_parsing.helpers.hparams import (
     uniform,
 )
 from simple_parsing.helpers.serialization import Serializable
+from target_prop.config import Config
+from target_prop.feedback_loss import get_feedback_loss
+from target_prop.layers import (  # Conv2dELU,; ConvTranspose2dELU,
+    AdaptiveAvgPool2d,
+    AdaptiveMaxPool2d,
+    ConvPoolBlock,
+    MaxPool2d,
+    MaxUnpool2d,
+    Reshape,
+    Sequential,
+    get_backward_equivalent,
+)
+from target_prop.optimizer_config import OptimizerConfig as OptimizerHParams
+from target_prop.utils import flag, get_list_of_values, is_trainable
 from torch import Tensor, nn
 from torch.distributions import Normal
 from torch.nn import functional as F
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
 
-from target_prop.layers import get_backward_equivalent
-from target_prop.optimizer_config import OptimizerConfig as OptimizerHParams
-from target_prop.config import Config
-from target_prop.layers import (
-    AdaptiveAvgPool2d,
-    # Conv2dELU,
-    # ConvTranspose2dELU,
-    Reshape,
-    Sequential,
-)
-from target_prop.feedback_loss import get_feedback_loss
-from target_prop.utils import flag
-from logging import getLogger
+T = TypeVar("T")
 logger = getLogger(__file__)
-
 
 
 class Model(LightningModule, ABC):
@@ -110,13 +110,20 @@ class Model(LightningModule, ABC):
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        # TODO: Usign 0.1 0.2 0.3 seems to be gettign much better results (75% after 1 epoch on MNIST)
-        f_optim: OptimizerHParams = mutable_field(
-            OptimizerHParams, type="sgd", lr=0.08, use_lr_scheduler=True
+        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
+        f_optim: OptimizerHParams = OptimizerHParams(
+            type="sgd",
+            lr=0.08,
+            use_lr_scheduler=True,
+            weight_decay=1e-4,
         )
         # Hyper-parameters for the "backward" optimizer
-        b_optim: OptimizerHParams = mutable_field(
-            OptimizerHParams, type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18]
+        # BUG: The default values of the arguments don't reflect the values that are
+        # passed to `mutable_field`
+        b_optim: OptimizerHParams = OptimizerHParams(
+            type="sgd",
+            lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18],
+            use_lr_scheduler=False,
         )
 
         # nudging parameter: Used when calculating the first target.
@@ -176,22 +183,25 @@ class Model(LightningModule, ABC):
         self.example_input_array = torch.rand(  # type: ignore
             [datamodule.batch_size, *datamodule.dims], device=self.device
         )
-        from collections import OrderedDict
         ## Create the forward achitecture:
         channels = [self.in_channels] + self.hp.channels
         self.forward_net = Sequential(
             *(
                 Sequential(
                     OrderedDict(
-                    conv=nn.Conv2d(
-                        channels[i], channels[i+1], kernel_size=3, stride=1, padding=1,
-                    ),
-                    rho=nn.ELU(),
-                    pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
-                    # pool=nn.AvgPool2d(kernel_size=2),
+                        conv=nn.Conv2d(
+                            channels[i],
+                            channels[i + 1],
+                            kernel_size=3,
+                            stride=1,
+                            padding=1,
+                        ),
+                        rho=nn.ELU(),
+                        pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
+                        # pool=nn.AvgPool2d(kernel_size=2),
                     )
                 )
-                for i in range(0, len(channels)-1)
+                for i in range(0, len(channels) - 1)
             ),
             Reshape(target_shape=(-1,)),
             # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
@@ -215,6 +225,9 @@ class Model(LightningModule, ABC):
         if self.config.debug:
             print(f"Backward net: ")
             print(self.backward_net)
+
+        # TODO: Fix the feedback optimizer's learning rates not aligning with the backward_net.
+
         # Pass the output of the forward net for the `example_input_array` through the
         # backward net, to check that the backward net is indeed able to recover the
         # inputs (at least in terms of their shape for now).
@@ -224,16 +237,6 @@ class Model(LightningModule, ABC):
         assert example_in_hat.dtype == self.example_input_array.dtype
         # Metrics:
         self.accuracy = Accuracy()
-
-        if isinstance(self.hp.feedback_training_iterations, list):
-            # Reverse the list in-place, Since it will be passed as [G0, ... GN], while
-            # the backward net is defined as [GN, ..., G0].
-            self.hp.feedback_training_iterations.reverse()
-
-        if isinstance(self.hp.noise, list):
-            # Reverse the list in-place, Since it will be passed as [G0, ... GN], while
-            # the backward net is defined as [GN, ..., G0].
-            self.hp.noise.reverse()
 
         self.save_hyperparameters(
             {
@@ -251,13 +254,13 @@ class Model(LightningModule, ABC):
         self._feedback_optim_index: int = 0 if self.hp.feedback_before_forward else 1
         self._forward_optim_index: int = 1 if self.hp.feedback_before_forward else 0
 
-    def forward(self, input: Tensor) -> Tensor:  # type: ignore
+    def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
+        # Dummy forward pass, not used in practice. We just implement it so that PL can
+        # display the input/output shapes of our networks.
         y = self.forward_net(input)
         r = self.backward_net(y)
         return y, r
-        return y
 
-    
     def shared_step(
         self,
         batch: Tuple[Tensor, Tensor],
@@ -326,7 +329,6 @@ class Model(LightningModule, ABC):
             # BUG: Pytorch Lightning complains that we're returning a Tensor, even if
             # it's a float!
             return float(loss.item())
-            return None
         return loss
 
     def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
@@ -341,7 +343,9 @@ class Model(LightningModule, ABC):
         #     for k, v in step_results
         # }
         merged_step_result = (
-            step_results if isinstance(step_results, (Tensor, float)) else sum(step_results)
+            step_results
+            if isinstance(step_results, (Tensor, float))
+            else sum(step_results)
         )
 
         # TODO: If NOT in automatic differentiation, but still in a scenario where we
@@ -349,7 +353,11 @@ class Model(LightningModule, ABC):
         loss = merged_step_result
         self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
 
-        if not self.automatic_optimization and isinstance(loss, Tensor) and loss.requires_grad:
+        if (
+            not self.automatic_optimization
+            and isinstance(loss, Tensor)
+            and loss.requires_grad
+        ):
             forward_optimizer = self.forward_optimizer
             backward_optimizer = self.feedback_optimizer
             forward_optimizer.zero_grad()
@@ -379,25 +387,113 @@ class Model(LightningModule, ABC):
     ) -> Union[Tensor, float]:
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
-    def get_noise_scale_per_layer(self, network: nn.Sequential) -> List[float]:
-        n_layers = len(network)
-        noise: List[float] = get_list_of_values(
-            self.hp.noise, out_length=n_layers, name="noise"
+    def _align_values_with_backward_net(self, values: List[T], default: T) -> List[T]:
+        """ Aligns the values in `values` so that they are aligned with the trainable
+        layers in the backward net.
+        The last layer of the backward net (G_0) is also never trained.
+
+        Inut: values=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], default=0
+        Output: [0, 1e-4, 3.5e-4, 8e-3, 8e-3, 0, 0.18]
+
+        NOTE: Assumes that the input is given in the *backward* order Gn, Gn-1, ..., G0
+        NOTE: Returns the values in the *backward* order (same as the backward_net: [Gn, ..., G0])
+        """
+        n_layers_that_need_a_value = sum(map(is_trainable, self.backward_net))
+        # Don't count the last layer of the backward net (i.e. G_0), since we don't
+        # train it.
+        n_layers_that_need_a_value -= 1
+
+        assert len(values) == n_layers_that_need_a_value
+
+        values_left = values.copy()
+
+        values_per_layer: List[T] = []
+        for layer in self.backward_net:
+            if is_trainable(layer) and values_left:
+                values_per_layer.append(values_left.pop(0))
+            else:
+                values_per_layer.append(default)
+        assert values_per_layer[-1] == default
+        return values_per_layer
+
+    def _get_iterations_per_feedback_layer(self, forward_ordering: bool = True) -> List[int]:
+        """ Returns the number of iterations to perform for each of the layers in
+        `self.backward_net`.
+
+        NOTE: Returns it in the same order as the forward_net ([G0, ..., GN] if
+        `forward_ordering` is True (default), else returns it as [GN ... G0].
+        """
+        iterations_per_layer: List[int] = self.hp.feedback_training_iterations
+        assert isinstance(iterations_per_layer, list)
+        # Reverse it, since it's passed in 'forward' order and the `align_values...`
+        # function expects to receive 'reversed' values.
+        iterations_per_layer = list(reversed(iterations_per_layer))
+        iterations_per_layer = self._align_values_with_backward_net(
+            iterations_per_layer, default=0
         )
-        assert len(noise) == n_layers
-        return noise
-        # IDEA: Gradually lower the value of `self.hp.noise` over the course of
-        # training?
-        coefficient = 1 - (self.current_epoch / self.trainer.max_epochs)
-        coefficient = torch.clamp(coefficient, 1e-8, 1)
-        return coefficient * noise
+        if forward_ordering:
+            iterations_per_layer.reverse()
+        return iterations_per_layer
+
+    def _get_noise_scale_per_feedback_layer(
+        self, forward_ordering: bool = True
+    ) -> List[float]:
+        """ Returns the noise scale for each feedback layer.
+
+        If `forward_ordering` is False, returns it in the same order as the
+        backward_net: [GN ... G0], and the opposite if `forward_ordering` is True.  
+        """
+        noise_scale_per_layer = self.hp.noise
+        assert isinstance(noise_scale_per_layer, list)
+        # Reverse it, since it's passed in 'forward' order and the `align_values...`
+        # function expects to receive 'reversed' values.
+        noise_scale_per_layer = list(reversed(noise_scale_per_layer))
+        noise_scale_per_layer = self._align_values_with_backward_net(
+            noise_scale_per_layer, default=0.0
+        )
+        if forward_ordering:
+            noise_scale_per_layer.reverse()
+        return noise_scale_per_layer
+
+    def _get_learning_rate_per_feedback_layer(
+        self, forward_ordering: bool = False
+    ) -> List[float]:
+        """ Returns the learning rate for each feedback layer.
+
+        If `forward_ordering` is False, returns it in the same order as the
+        backward_net: [GN ... G0], and the opposite if `forward_ordering` is True.  
+        """
+        lr_per_layer = self.hp.b_optim.lr
+        assert isinstance(lr_per_layer, list), lr_per_layer
+        # Reverse it, since it's passed in 'forward' order and the `align_values...`
+        # function expects to receive 'reversed' values.
+        lr_per_layer = list(reversed(lr_per_layer))
+        lr_per_layer = self._align_values_with_backward_net(lr_per_layer, default=0.0)
+        if forward_ordering:
+            lr_per_layer.reverse()
+        return lr_per_layer
 
     def configure_optimizers(self):
-        feedback_optimizer = self.hp.b_optim.make_optimizer(self.backward_net)
+        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
+        feedback_optimizer = self.hp.b_optim.make_optimizer(
+            self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
+        )
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
 
         feedback_optim_config = {"optimizer": feedback_optimizer}
         forward_optim_config = {"optimizer": forward_optimizer}
+
+        if self.hp.b_optim.use_lr_scheduler:
+            # NOTE: By default we don't use a scheduler for the feedback optimizer.
+            feedback_optim_config["lr_scheduler"] = {
+                "scheduler": CosineAnnealingLR(
+                    feedback_optimizer, T_max=85, eta_min=1e-5
+                ),
+                "interval": "epoch",  # called after each training epoch
+                "frequency": 1,
+            }
 
         if self.hp.f_optim.use_lr_scheduler:
             # `main.py` seems to be using a weight scheduler only for the forward weight
@@ -410,18 +506,8 @@ class Model(LightningModule, ABC):
                 "frequency": 1,
             }
 
-        if self.hp.b_optim.use_lr_scheduler:
-            # `main.py` seems to be using a weight scheduler only for the forward weight
-            # training.
-            feedback_optim_config["lr_scheduler"] = {
-                "scheduler": CosineAnnealingLR(
-                    feedback_optimizer, T_max=85, eta_min=1e-5
-                ),
-                "interval": "epoch",  # called after each training epoch
-                "frequency": 1,
-            }
-
         if self.hp.feedback_before_forward:
+            # NOTE: This is the default behaviour (as expected).
             return [
                 feedback_optim_config,
                 forward_optim_config,
@@ -431,12 +517,6 @@ class Model(LightningModule, ABC):
                 forward_optim_config,
                 feedback_optim_config,
             ]
-        # NOTE: When using the 'frequency' version below, it trains once every `n`
-        # batches, rather than `n` times on the same batch.
-        # return (
-        #     {"optimizer": forward_optimizer, "frequency": 1},
-        #     {"optimizer": backward_optimizer, "frequency": 1},
-        # )
 
     @property
     def forward_optimizer(self) -> Optimizer:
@@ -458,26 +538,11 @@ class Model(LightningModule, ABC):
         callbacks: List[Callback] = []
         if self.hp.early_stopping_patience != 0:
             # If early stopping is enabled, add a PL Callback for it:
-            callbacks.append(EarlyStopping("val/accuracy", patience=self.hp.early_stopping_patience, verbose=True))
+            callbacks.append(
+                EarlyStopping(
+                    "val/accuracy",
+                    patience=self.hp.early_stopping_patience,
+                    verbose=True,
+                )
+            )
         return callbacks
-
-    def _get_noise_scale_per_layer(self) -> List[float]:
-        """ Returns the noise scale for each feedback layer.
-
-        NOTE: Returns it in the same order as the backward_net, i.e. [GN ... G0]
-        """
-        # TODO: Make the number of iterations align directly with the trainable layers.
-        # This is required because there may be some layers (e.g. Reshape), which are
-        # present in the architecture of the backward network, but aren't trainable.
-        n_trainable_layers = sum(map(is_trainable, self.backward_net))
-        trainable_layer_noise_scales: List[float] = get_list_of_values(
-            self.hp.noise, out_length=n_trainable_layers
-        ).copy()
-        offset = 0
-        noise_scale_per_layer: List[float] = []
-        for layer in self.backward_net:
-            if is_trainable(layer):
-                noise_scale_per_layer.append(trainable_layer_noise_scales.pop(0))
-            else:
-                noise_scale_per_layer.append(0.0)
-        return noise_scale_per_layer

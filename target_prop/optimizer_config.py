@@ -5,13 +5,14 @@ from target_prop.utils import get_list_of_values
 from typing import ClassVar, Dict, Type, List, Optional
 from dataclasses import dataclass
 from torch.optim.optimizer import Optimizer
-from torch import nn 
+from torch import nn
 
 
 @dataclass
 class OptimizerConfig(HyperParameters):
     """ Configuration options for an optimizer.
     """
+
     # Class variable that holds the types of optimizers that are available.
     available_optimizers: ClassVar[Dict[str, Type[Optimizer]]] = {
         "sgd": torch.optim.SGD,
@@ -26,20 +27,30 @@ class OptimizerConfig(HyperParameters):
     # Learning rate of the optimizer.
     lr: List[float] = log_uniform(1e-4, 1e-1, default=5e-3, shape=2)
     # Weight decay coefficient.
-    weight_decay: Optional[float] = log_uniform(1e-9, 1e-2, default=1e-4)
-
+    weight_decay: Optional[float] = None
+    # Wether or not to use a learning rate scheduler.
     use_lr_scheduler: bool = False
 
-    def make_optimizer(self, network: nn.Sequential) -> Optimizer:
+    def make_optimizer(
+        self, network: nn.Sequential, learning_rates_per_layer: List[float] = None
+    ) -> Optimizer:
         """ Create the optimizer, using the options set in this object """
         optimizer_class = self.available_optimizers[self.type]
         # List of learning rates for each layer.
         n_layers = len(network)
-        lrs: List[float] = get_list_of_values(self.lr, out_length=n_layers, name="lr")
+        if learning_rates_per_layer:
+            assert len(learning_rates_per_layer) == n_layers
+        lrs: List[float] = learning_rates_per_layer or get_list_of_values(
+            self.lr, out_length=n_layers, name="lr"
+        )
         assert len(lrs) == n_layers
         params: List[Dict] = []
         for layer, lr in zip(network, lrs):
             params.append({"params": layer.parameters(), "lr": lr})
+            
+        optimizer_kwargs = {}
+        if self.weight_decay is not None:
+            optimizer_kwargs["weight_decay"] = self.weight_decay
         return optimizer_class(  # type: ignore
-            params, weight_decay=self.weight_decay,
+            params, **optimizer_kwargs,
         )

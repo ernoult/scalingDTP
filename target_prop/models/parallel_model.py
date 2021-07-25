@@ -1,14 +1,32 @@
 from .model import Model
 from torch import Tensor
 from typing import List
+from torch import nn
+import torch
+from target_prop.utils import is_trainable
 
 
 class ParallelModel(Model):
-    
+    """ "Parallel" version of the sequential model, uses more noise samples but a single
+    iteration for the training of the feedback weights, which makes it possible to use
+    the automatic optimization and distributed training features of PyTorch-Lightning.
+    """
+
+    def __init__(self, datamodule, hparams, config):
+        super().__init__(datamodule, hparams, config)
+        # Here we can do automatic optimization, since we don't need to do multiple
+        # sequential optimization steps per batch ourselves.
+        self.automatic_optimization = True
+        self.criterion = nn.CrossEntropyLoss(reduction="none")
+
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
+        # NOTE: Could use the same exact forward loss as the sequential model, at the
+        # moment.
         pass
-    
+
     def feedback_loss(self, x, y):
+        raise NotImplementedError("Fix this, focusing on the SequentialModel for now.")
+
          # Get the outputs for all layers.
         # NOTE: no need for gradients w.r.t. forward parameters.
         with torch.no_grad():
@@ -60,7 +78,7 @@ class ParallelModel(Model):
             dr_losses_per_sample: List[Tensor] = []  # [S]
 
             feedback_losses = [
-                feedback_loss(
+                get_feedback_loss(
                     reversed_backward_net[i],
                     self.forward_net[i],
                     noise_scale=noise_scale_per_layer[i],

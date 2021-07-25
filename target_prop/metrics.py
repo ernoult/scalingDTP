@@ -7,6 +7,7 @@ from torch import nn, Tensor
 
 
 @singledispatch
+@torch.no_grad()
 def compute_dist_angle(
     forward_module: nn.Module, backward_module: nn.Module
 ) -> tuple[Tensor, Tensor]:

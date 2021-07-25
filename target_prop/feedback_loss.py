@@ -67,3 +67,19 @@ def get_feedback_loss(
     return feedback_losses.mean()
 
 
+from .layers import Reshape
+
+# Some layers don't have any feedback loss, so we just return 0 to save some compute.
+# (NOTE: The returned value from above would also be 0.)
+
+
+@get_feedback_loss.register(Reshape)
+def _(
+    backward_layer: Reshape,
+    forward_layer: Reshape,
+    input: Tensor,
+    noise_scale: float | Tensor,
+    noise_samples: int = 1,
+) -> float:
+    return 0.0
+
