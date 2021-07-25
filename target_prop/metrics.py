@@ -61,14 +61,27 @@ def _compute_dist_angle_conv(
     return dist, angle
 
 
-from target_prop.layers import ConvPoolBlock, ConvTransposePoolBlock, Sequential
+from target_prop.layers import ConvPoolBlock, Sequential
 
 
 @compute_dist_angle.register(ConvPoolBlock)
 @compute_dist_angle.register(Sequential)
 def _(
-    forward_module: ConvPoolBlock, backward_module: ConvTransposePoolBlock
+    forward_module: ConvPoolBlock, backward_module: Sequential
 ) -> tuple[Tensor, Tensor]:
+    # NOTE: For now, assume that if we're passed a `Sequential`, it will have a
+    # nn.Conv2d layer at key 'conv' and that the backward_module will have a
+    # `nn.ConvTranspose2d` at key `conv`.
+
+    # IDEA: Could instead start from the front of the forward_module and the back of the
+    # backward_module and compute the angles between the corresponding layers?
+    # angles = []
+    # distances = []
+    # for i in range(len(forward_module)):
+    #     F_i = forward_module[i]
+    #     G_i = backward_module[-1 - i]
+    #     dist, angle = compute_dist_angle(F_i, G_i)
+
     conv2d = forward_module.conv
     convtranspose2d = backward_module.conv
     return compute_dist_angle(conv2d, convtranspose2d)

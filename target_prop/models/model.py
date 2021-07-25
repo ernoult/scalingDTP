@@ -50,7 +50,6 @@ from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import (  # Conv2dELU,; ConvTranspose2dELU,
     AdaptiveAvgPool2d,
-    AdaptiveMaxPool2d,
     ConvPoolBlock,
     MaxPool2d,
     MaxUnpool2d,
