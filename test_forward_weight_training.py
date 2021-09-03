@@ -39,8 +39,13 @@ def get_forward_weight_losses(
             only_inputs=True,  # Do not backpropagate further than the input tensor!
             create_graph=False,
         )
+        assert len(grads) == 1
+
     y_n_grad = grads[0]
+
     delta = -beta * y_n_grad
+
+    print(f"Delta norm: {delta.norm().item()}")
 
     # NOTE: Initialize the list of targets with Nones, and we'll replace all the
     # entries with tensors corresponding to the targets of each layer.
@@ -52,15 +57,19 @@ def get_forward_weight_losses(
 
     N = len(forward_net)
 
-    aligned_feedback_net = reversed(feedback_net)
+    # Reverse the ordering of the layers, just to make the indexing in the code below match those of
+    # the math equations.
+    reordered_feedback_net = reversed(feedback_net)  # type: ignore
 
     # Calculate the targets for each layer, moving backward through the forward net:
     # N-1, N-2, ..., 2, 1
     # NOTE: Starting from N-1 since we already have the target for the last layer).
     with torch.no_grad():
         for i in reversed(range(1, N)):
-            # G = aligned_feedback_net[i]
-            G = feedback_net[-1 - i]
+
+            G = reordered_feedback_net[i]
+            # G = feedback_net[-1 - i]
+            
             assert targets[i - 1] is None  # Make sure we're not overwriting anything.
             # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
             # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
@@ -69,28 +78,26 @@ def get_forward_weight_losses(
             # NOTE: Alternatively, just target propagation:
             # targets[i - 1] = G(targets[i])
 
-    # assert False, (targets[-1] - ys[-1]).sum()
     # NOTE: targets[0] is the targets for the output of the first layer, not for x.
-
-    # Calculate the losses for each layer:
     assert all(targets[i] is not None for i in range(0, N))
 
+    # Calculate the losses for each layer:
     forward_loss_per_layer = [
         # 0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).sum()
         # NOTE: Equivalent to the following.
         0.5 * F.mse_loss(ys[i], targets[i], reduction="sum")  # type: ignore
         for i in range(0, N)
     ]
-    assert len(ys) == len(targets) == len(forward_loss_per_layer)
+    assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(forward_net)
+
     for i, layer_loss in enumerate(forward_loss_per_layer):
         print(f"F_loss[{i}]", layer_loss)
-    assert len(forward_loss_per_layer) == len(forward_net)
 
-    # NOTE: Returning the loss for each layer here so we can debug things a bit easier.
+    # NOTE: Returning the loss for each layer here rather than a single loss tensor, so we can debug
+    # things a bit easier.
+    # loss_tensor = torch.stack(forward_loss_per_layer, -1)
+    # return loss_tensor.sum()
     return forward_loss_per_layer
-
-    forward_loss = forward_loss_per_layer.sum()
-    return forward_loss
 
 
 @pytest.fixture()
@@ -104,9 +111,7 @@ def channels():
 
 
 @pytest.fixture
-def forward_net(channels: List[int], beta: float) -> Sequential:
-    # channels = [1, 16, 32]
-    # beta = 0.7
+def forward_net(channels: List[int]) -> Sequential:
     n_classes = 10
     torch.random.manual_seed(123)
 
@@ -146,9 +151,7 @@ def forward_net(channels: List[int], beta: float) -> Sequential:
     # need to know their inputs/output shapes get a chance to know them.
     # This is necessary for creating the backward network, as some layers
     # (e.g. Reshape) need to know what the input shape is.
-    example_out: Tensor = forward_net(example_input_array)
-    out_shape = example_out.shape
-
+    _ = forward_net(example_input_array)
     return forward_net
 
 
@@ -159,9 +162,7 @@ def feedback_net(forward_net: Sequential) -> Sequential:
     print(forward_net)
     torch.random.manual_seed(123)
 
-    n_classes = 10
     example_input_array = torch.rand([32, 1, 32, 32])
-    example_labels = torch.randint(0, n_classes, [32])
     example_out: Tensor = forward_net(example_input_array)
     assert example_out.requires_grad
     # Get the "pseudo-inverse" of the forward network:
@@ -197,7 +198,6 @@ def test_losses_of_each_layer_are_independant(
     forward_net: Sequential, feedback_net: Sequential, beta: float
 ):
     n_classes = 10
-    beta = 0.7
 
     torch.random.manual_seed(123)
     example_input_array = torch.rand([32, 1, 32, 32])
@@ -218,17 +218,19 @@ def test_losses_of_each_layer_are_independant(
     ):
         # Make sure that this layer has never received a gradient before.
         assert all(p.grad is None or (p.grad == 0).all() for p in layer.parameters())
+        
         print(f"Backpropagating the loss for layer {i}.")
         if any(p.requires_grad for p in layer.parameters()):
+            # there should be a 'live', non-zero loss for the trainable layers.
             assert layer_loss.requires_grad
             assert (layer_loss != 0.0).any()
         else:
             # Some layers (e.g. Reshape) have a 'target' but their loss doesn't require any gradients.
             assert not layer_loss.requires_grad
-            # assert layer_loss == 0.0, (i, layer)
 
         #  NOTE: This also checks that the losses for each layer are independant, since we
-        # backpropagate the losses starting from the end of the forward net and moving backward.
+        # backpropagate the losses starting from the end of the forward net and moving backward
+        # without calling `zero_grad()`. 
         if layer_loss.requires_grad:
             layer_loss.backward()
             dtp_grads_v0.update(
