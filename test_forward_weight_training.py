@@ -52,7 +52,7 @@ def get_forward_weight_losses(
     targets: List[Optional[Tensor]] = [None for _ in ys]
 
     # Compute the first target (for the last layer of the forward network):
-    t = logits + delta
+    t = logits.detach() + delta
     targets[-1] = t
 
     N = len(forward_net)
@@ -100,9 +100,8 @@ def get_forward_weight_losses(
     return forward_loss_per_layer
 
 
-@pytest.fixture()
-def beta():
-    return 0.7
+# def beta():
+#     return 0.01
 
 
 @pytest.fixture()
@@ -124,26 +123,35 @@ def forward_net(channels: List[int]) -> Sequential:
                 *(
                     (
                         f"conv_{i}",
-                        Sequential(
-                            OrderedDict(
-                                conv=nn.Conv2d(
-                                    channels[i],
-                                    channels[i + 1],
-                                    kernel_size=3,
-                                    stride=1,
-                                    padding=1,
-                                ),
-                                rho=nn.ELU(),
-                                pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
-                                # pool=nn.AvgPool2d(kernel_size=2),
-                            )
+                        # NOTE: Using a simpler network architecture for the sake of testing.
+                        nn.Conv2d(
+                            channels[i],
+                            channels[i + 1],
+                            kernel_size=3,
+                            stride=1,
+                            padding=0,
+                            bias=False,
                         ),
+                        # Sequential(
+                        #     OrderedDict(
+                        #         conv=nn.Conv2d(
+                        #             channels[i],
+                        #             channels[i + 1],
+                        #             kernel_size=3,
+                        #             stride=1,
+                        #             padding=0,
+                        #         ),
+                        #         rho=nn.ELU(),
+                        #         pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
+                        #         # pool=nn.AvgPool2d(kernel_size=2),
+                        #     )
+                        # ),
                     )
                     for i in range(0, len(channels) - 1)
                 ),
                 ("reshape", Reshape(target_shape=(-1,))),
                 # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
-                ("linear", nn.LazyLinear(out_features=n_classes, bias=True)),
+                ("linear", nn.LazyLinear(out_features=n_classes, bias=False)),
             ]
         )
     )
@@ -193,7 +201,7 @@ def test_weights_are_initialized_symmetrically(forward_net: Sequential):
             assert forward_param.shape == feedback_param.t().shape
             assert (forward_param == feedback_param.t()).all()
 
-
+@pytest.mark.parametrize("beta", [1e-4, 1e-3, 1e-2, 0.1, 0.5, 0.7])
 def test_losses_of_each_layer_are_independant(
     forward_net: Sequential, feedback_net: Sequential, beta: float
 ):
@@ -261,6 +269,7 @@ def test_losses_of_each_layer_are_independant(
     # if we backpropagate the losses for each layer moving backward (as you'd expect).
 
 
+@pytest.mark.parametrize("beta", [1e-4, 1e-3, 1e-2, 0.1])
 def test_grads_are_similar(forward_net: Sequential, beta: float):
     n_classes = 10
     
@@ -311,7 +320,7 @@ def test_grads_are_similar(forward_net: Sequential, beta: float):
     dtp_grads = {
         name: p.grad.clone().detach() for name, p in named_trainable_parameters(forward_net)
     }
-
+    print(f"Beta: {beta}")
     for name, backprop_grad in true_backprop_grads.items():
         if name.endswith("bias"):
             continue
@@ -329,7 +338,6 @@ def test_grads_are_similar(forward_net: Sequential, beta: float):
         if backprop_grad.dim() > 1:
             distance, angle = compute_dist_angle(backprop_grad, dtp_grad)
             print(f"\tDistance between grads: {distance:.3f}, angle between grads: {angle:.3f}")
-
         # l1_distance_between_grads = (backprop_grad - dtp_grad).abs().sum().item()
         # l2_distance_between_grads = F.mse_loss(backprop_grad, dtp_grad).item()
         # print(f"\tDistance between grads: {l1_distance_between_grads=}, {l2_distance_between_grads=}")

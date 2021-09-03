@@ -294,7 +294,7 @@ class SequentialModel(BaseModel):
         targets: List[Optional[Tensor]] = [None for _ in ys]
 
         # Compute the first target:
-        t = y_n + delta
+        t = logits.detach() + delta
         targets[-1] = t
 
         n_layers = len(self.forward_net)
