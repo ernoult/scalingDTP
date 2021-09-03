@@ -98,7 +98,10 @@ class layer_fc(nn.Module):
             dr_y = (r_noise_y - r)
 
             #4- Compute the loss
-            loss_b = -2*(noise*dr).view(dr.size(0), -1).sum(1).mean() + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean() 
+            loss_b = (
+                -2*(noise*dr).view(dr.size(0), -1).sum(1).mean()
+                + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean()
+            )
             optimizer.zero_grad()
 
             #5- Update the feedback weights

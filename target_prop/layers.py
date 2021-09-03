@@ -64,7 +64,7 @@ class Invertible(nn.Module, Generic[ModuleType], ABC):
             self.register_forward_hook(type(self).forward_hook)
 
     @abstractmethod
-    def invert(self) -> ModuleType:
+    def invert(self, init_symetric_weights: bool = False) -> ModuleType:
         """ Returns a Module that can be used to compute or approximate the inverse
         operation of `self`.
         """
@@ -91,9 +91,7 @@ class Invertible(nn.Module, Generic[ModuleType], ABC):
         module._check_input_shape(inputs[0])
 
     @staticmethod
-    def forward_hook(
-        module: Invertible, _: Any, output: Tensor | tuple[Tensor, ...]
-    ) -> None:
+    def forward_hook(module: Invertible, _: Any, output: Tensor | tuple[Tensor, ...]) -> None:
         if isinstance(output, tuple):
             output = output[0]
         module._check_output_shape(output)
@@ -120,13 +118,13 @@ class Invertible(nn.Module, Generic[ModuleType], ABC):
 
 
 @get_backward_equivalent.register(Invertible)
-def _(network: Invertible):
+def _(network: Invertible, init_symetric_weights: bool = False):
     # Register this, so that calling `get_backward_equivalent` will use the `invert`
     # method if its input is an `Invertible` module.
     # Otherwise, `get_backward_equivalent` will fallback to its handlers for built-in
     # modules like `nn.Conv2d`, `nn.ConvTranspose2d`, etc, and if none is found, an
     # error is raised.
-    return network.invert()
+    return network.invert(init_symetric_weights=init_symetric_weights)
 
 
 class Sequential(Invertible["Sequential"], nn.Sequential):
@@ -148,9 +146,7 @@ class Sequential(Invertible["Sequential"], nn.Sequential):
         assert len(xs) == len(self)
         return [layer(x_i) for layer, x_i in zip(self, xs)]
 
-    def forward_all(
-        self, x: Tensor, allow_grads_between_layers: bool = False,
-    ) -> list[Tensor]:
+    def forward_all(self, x: Tensor, allow_grads_between_layers: bool = False,) -> list[Tensor]:
         """Gets the outputs of all forward layers for the given input. 
         
         Parameters
@@ -174,7 +170,7 @@ class Sequential(Invertible["Sequential"], nn.Sequential):
             activations.append(x)
         return activations
 
-    def invert(self) -> Sequential:
+    def invert(self, init_symetric_weights: bool = True) -> Sequential:
         """ Returns a Module that can be used to compute or approximate the inverse
         operation of `self`.
 
@@ -184,7 +180,7 @@ class Sequential(Invertible["Sequential"], nn.Sequential):
         assert self.input_shape and self.output_shape, "Use the net before inverting."
         return type(self)(
             OrderedDict(
-                (name, get_backward_equivalent(module))
+                (name, get_backward_equivalent(module, init_symetric_weights=init_symetric_weights))
                 for name, module in list(self._modules.items())[::-1]
             ),
             input_shape=self.output_shape,
@@ -210,9 +206,7 @@ class Reshape(Invertible["Reshape"]):
             assert output_shape, "need one of target_shape or output_shape."
             target_shape = output_shape
         super().__init__(
-            input_shape=input_shape,
-            output_shape=output_shape,
-            enforce_shapes=enforce_shapes,
+            input_shape=input_shape, output_shape=output_shape, enforce_shapes=enforce_shapes,
         )
         self.target_shape = tuple(target_shape)
 
@@ -225,7 +219,7 @@ class Reshape(Invertible["Reshape"]):
     def __repr__(self):
         return f"{type(self).__name__}({self.input_shape} -> {self.target_shape})"
 
-    def invert(self) -> Reshape:
+    def invert(self, init_symetric_weights: bool = False) -> Reshape:
         assert self.input_shape and self.output_shape, "Use the net before inverting."
         return type(self)(
             # target_shape=self.target_shape,
@@ -235,7 +229,7 @@ class Reshape(Invertible["Reshape"]):
         )
 
 
-class AdaptiveAvgPool2d(Invertible, nn.AdaptiveAvgPool2d):
+class AdaptiveAvgPool2d(Invertible["AdaptiveAvgPool2d"], nn.AdaptiveAvgPool2d):
     def __init__(
         self,
         output_size: Tuple[int, int] = None,
@@ -253,7 +247,7 @@ class AdaptiveAvgPool2d(Invertible, nn.AdaptiveAvgPool2d):
             enforce_shapes=enforce_shapes,
         )
 
-    def invert(self) -> AdaptiveAvgPool2d:
+    def invert(self, init_symetric_weights: bool = False) -> AdaptiveAvgPool2d:
         """ Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input! """
         assert self.input_shape and self.output_shape, "Use the net before inverting."
         return type(self)(
@@ -298,7 +292,7 @@ class MaxUnpool2d(Invertible["AdaptiveMaxPool2d"], nn.MaxUnpool2d):
             indices = self.magic_bridge[0]
         return super().forward(input=input, indices=indices, output_size=output_size)
 
-    def invert(self) -> "AdaptiveMaxPool2d":
+    def invert(self, init_symetric_weights: bool = False) -> "AdaptiveMaxPool2d":
         raise NotImplementedError("Never really need to invert a max Unpool layer.")
         assert self.input_shape and self.output_shape
         assert len(self.input_shape) > 2
@@ -345,7 +339,7 @@ class MaxPool2d(Invertible[MaxUnpool2d], nn.MaxPool2d):
             return out, indices
         return out
 
-    def invert(self) -> MaxUnpool2d:
+    def invert(self, init_symetric_weights: bool = False) -> MaxUnpool2d:
         return MaxUnpool2d(
             kernel_size=self.kernel_size,
             stride=None,  # todo: Not sure waht to do with this value here.
@@ -366,20 +360,17 @@ class BatchUnNormalize(nn.Module):
 
     def __init__(self, num_features: int, dtype=torch.float32):
         super().__init__()
-        self.scale = nn.Parameter(
-            torch.ones(num_features, dtype=dtype), requires_grad=True
-        )
+        self.scale = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
         torch.nn.init.xavier_uniform_(self.scale)
-        self.offset = nn.Parameter(
-            torch.zeros(num_features, dtype=dtype), requires_grad=True
-        )
+        self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
 
     def forward(self, input: Tensor) -> Tensor:
         return input * self.scale + self.offset
 
 
 @get_backward_equivalent.register(nn.BatchNorm2d)
-def _(layer: nn.BatchNorm2d) -> BatchUnNormalize:
+def _(layer: nn.BatchNorm2d, init_symetric_weights: bool = False) -> BatchUnNormalize:
+    # TODO: Is there a way to initialize symetric weights for BatchNorm?
     return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
 
 
@@ -435,9 +426,9 @@ class ConvPoolBlock(Sequential, Invertible["ConvTransposePoolBlock"]):
         y = self.pool(y)
         return y
 
-    def invert(self) -> Sequential:
+    def invert(self, init_symetric_weights: bool = False) -> Sequential:
         assert self.input_shape and self.output_shape, "Use the net before inverting."
-        return super().invert()
+        return super().invert(init_symetric_weights=init_symetric_weights)
         # return ConvTransposePoolBlock(
         #     in_channels=self.out_channels,
         #     out_channels=self.in_channels,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from functools import singledispatch
-
+from typing import Any
 import torch
 import numpy as np
 from torch import nn, Tensor
@@ -9,35 +9,45 @@ from torch import nn, Tensor
 @singledispatch
 @torch.no_grad()
 def compute_dist_angle(
-    forward_module: nn.Module, backward_module: nn.Module
-) -> tuple[Tensor, Tensor]:
+    forward_module: Any, backward_module: Any
+) -> tuple[float, float]:
     """
-    Computes angle and distance between the feedforward and feedback weights
+    Computes distance and angle between the feedforward and feedback weights
     """
     raise NotImplementedError((forward_module, backward_module))
+
+
+@compute_dist_angle.register(Tensor)
+@compute_dist_angle.register(nn.Parameter)
+def _compute_dist_angle_between_weights(
+    forward_weight: Tensor, feedback_weight: Tensor
+) -> tuple[float, float]:
+    F = forward_weight
+    G = feedback_weight
+    dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
+
+    F_flat = F.flatten(1)
+    G_flat = G.flatten(1)
+    cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
+        ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
+    )
+    angle_rad = torch.acos(cos_angle).mean()
+    angle = torch.rad2deg(angle_rad)
+    return dist.item(), angle.item()
 
 
 @compute_dist_angle.register(nn.Linear)
 def _compute_dist_angle_linear(
     forward_module: nn.Linear, backward_module: nn.Linear
-) -> tuple[Tensor, Tensor]:
+) -> tuple[float, float]:
     """
     Computes angle and distance between feedforward and feedback weights of linear layers
+    
+    Returns angle (degrees) and distance (no real unit I guess) as floats.
     """
     F = forward_module.weight
     G = backward_module.weight.t()
-
-    dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
-
-    F_flat = torch.reshape(F, (F.size(0), -1))
-    G_flat = torch.reshape(G, (G.size(0), -1))
-    cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
-        ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
-    )
-    angle = (180.0 / np.pi) * (
-        torch.acos(cos_angle).mean()
-    )  # Note: removed a ".item()"
-    return dist, angle
+    return compute_dist_angle(F, G)
 
 
 @compute_dist_angle.register(nn.Conv2d)
@@ -49,16 +59,7 @@ def _compute_dist_angle_conv(
     """
     F = forward_module.weight
     G = backward_module.weight
-    dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
-
-    F_flat = torch.reshape(F, (F.size(0), -1))
-    G_flat = torch.reshape(G, (G.size(0), -1))
-    cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
-        ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
-    )
-    angle = (180.0 / np.pi) * (torch.acos(cos_angle).mean())  # Note: Removed '.item()'
-
-    return dist, angle
+    return compute_dist_angle(F, G)
 
 
 from target_prop.layers import ConvPoolBlock, Sequential

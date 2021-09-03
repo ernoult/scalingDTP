@@ -1,30 +1,36 @@
 import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, TypeVar
+from pathlib import Path
 
+import numpy as np
+import plotly.graph_objects as go
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from plotly.subplots import make_subplots
+from pytorch_lightning import Trainer
 from simple_parsing.helpers import list_field
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.metrics import compute_dist_angle
-from target_prop.models.model import Model
+from target_prop.models.model import BaseModel
 from target_prop.utils import get_list_of_values, is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 logger = logging.getLogger(__file__)
 T = TypeVar("T")
 
 
-class SequentialModel(Model):
+class SequentialModel(BaseModel):
     """ Model that trains the forward weights and feedback weights sequentially.
 
     NOTE: This is basically the same as @ernoult's implementation.
     """
 
     @dataclass
-    class HParams(Model.HParams):
+    class HParams(BaseModel.HParams):
         """ Hyper-Parameters of the model.
 
         TODO: Set these values as default (cifar10)
@@ -63,54 +69,60 @@ class SequentialModel(Model):
         # TODO: Use something like this:
         # self.supervised_metrics: List[Metrics]
 
-    def training_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
-    ) -> float:
+    @property
+    def phase(self) -> str:
+        if self.trainer.training:
+            return "train"
+        if self.trainer.validating:
+            return "val"
+        if self.trainer.testing:
+            return "test"
+        if self.trainer.predicting:
+            return "predict"
+        # NOTE: This doesn't work when inside the sanity check!
+        if self.trainer.state.stage.value == "sanity_check":
+            return "val"
+        # raise RuntimeError(f"HUH?", self.trainer.state,)
+
+    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
         return self.shared_step(batch, batch_idx=batch_idx, phase="train")
 
-    def validation_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
-    ) -> float:
+    def validation_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
-    def test_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
-    ) -> float:
+    def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-        phase: str,
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
     ):
         """ Main step, used by the `[training/valid/test]_step` methods.
         """
-        
+
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
         # and `feedback_loss` below.
-        self.phase = phase
-
+        assert self.phase == phase, (self.phase, phase)
+        
         dtype: Optional[torch.dtype] = self.dtype if isinstance(
             self.dtype, torch.dtype
         ) else None
-        
+
         # ----------- Optimize the feedback weights -------------
         feedback_loss = self.feedback_loss(x, y)
-        self.log(f"{phase}/B_loss", feedback_loss, prog_bar=True)
-        
+        self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase=="train")
+
         # This is never a 'live' loss, since we do the optimization steps sequentially
         # inside `feedback_loss`.
         assert not feedback_loss.requires_grad
 
         # ----------- Optimize the forward weights -------------
         forward_loss = self.forward_loss(x, y)
-        self.log(f"{phase}/F_loss", forward_loss, prog_bar=True)
+        self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase=="train")
 
         # During training, the forward loss will be a 'live' loss tensor, since we
         # gather the losses for each layer. Here we perform only one step.
-        if forward_loss.requires_grad:
+        if forward_loss.requires_grad and not self.automatic_optimization:
             f_optimizer = self.forward_optimizer
             self.manual_backward(forward_loss)
             f_optimizer.step()
@@ -125,12 +137,11 @@ class SequentialModel(Model):
         feedback_optimizer = self.feedback_optimizer
 
         n_layers = len(self.backward_net)
-
-        # Expand these values to get one value for each feedback layer to train
-        noise_scale_per_layer = self._get_noise_scale_per_feedback_layer(forward_ordering=True)
-        iterations_per_layer = self._get_iterations_per_feedback_layer(forward_ordering=True)
-        # Reverse the backward net, just for ease of readability:
+        # Reverse the backward net, just for ease of readability.
         reversed_backward_net = self.backward_net[::-1]
+        # Also reverse these values so they stay aligned with the net above.
+        noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
+        iterations_per_layer = list(reversed(self.feedback_iterations))
 
         # NOTE: We never train the last layer of the feedback net (G_0).
         assert iterations_per_layer[0] == 0
@@ -144,50 +155,57 @@ class SequentialModel(Model):
                 x, allow_grads_between_layers=False
             )
 
-        # 2- Layer-wise autoencoder training begins:
+        angles: List[List[float]] = []
+        distances: List[List[float]] = []
+
+        # Layer-wise autoencoder training begins:
         # NOTE: Skipping the first layer
-        layer_losses: List[Optional[Tensor]] = []
+        layer_losses: List[Tensor] = []
         for layer_index in range(1, n_layers):
             # Forward layer
             F_i = self.forward_net[layer_index]
             # Feedback layer
             G_i = reversed_backward_net[layer_index]
-            iterations = iterations_per_layer[layer_index]
-            noise_scale = noise_scale_per_layer[layer_index]
+            x_i = ys[layer_index - 1]
+            y_i = ys[layer_index]
+            iterations_i = iterations_per_layer[layer_index]
+            noise_scale_i = noise_scale_per_layer[layer_index]
 
-            if iterations == 0:
+            layer_angles: List[float] = []
+            layer_distances: List[float] = []
+
+            if iterations_i == 0:
                 # Skip this layer, since it's not trainable.
                 continue
+            assert noise_scale_i > 0
 
             if self.phase != "train":
                 # Only perform one iteration per layer when not training.
-                iterations = 1
+                iterations_i = 1
 
-            assert noise_scale > 0
+            # Train the current autoencoder:
             losses_per_iteration: List[Tensor] = []
-            angles = []
-            distances = []
-            # 3- Train the current autoencoder:
-            for iteration in range(iterations):
+            for iteration in range(iterations_i):
                 # Get the loss (see `feedback_loss.py`)
-                layer_input = ys[layer_index-1]
                 loss = get_feedback_loss(
                     G_i,
                     F_i,
-                    input=layer_input,
-                    noise_scale=noise_scale,
+                    input=x_i,
+                    output=y_i,
+                    noise_scale=noise_scale_i,
                     noise_samples=self.hp.feedback_samples_per_iteration,
                 )
 
                 # Compute the angle and distance for debugging the training of the
                 # feedback weights:
                 with torch.no_grad():
-                    angle, distance = compute_dist_angle(F_i, G_i)
+                    distance, angle = compute_dist_angle(F_i, G_i)
+
                 logger.debug(
                     f"Layer {layer_index}, Iteration {iteration}, angle={angle}, distance={distance}"
                 )
-                angles.append(angle)
-                distances.append(distance)
+                layer_angles.append(angle)
+                layer_distances.append(distance)
 
                 if isinstance(loss, Tensor) and loss.requires_grad:
                     feedback_optimizer.zero_grad()
@@ -195,30 +213,49 @@ class SequentialModel(Model):
                     feedback_optimizer.step()
                     loss = loss.detach()
                     losses_per_iteration.append(loss)
-
                 else:
                     if isinstance(loss, float):
                         loss = torch.as_tensor(loss, device=y.device)
                     losses_per_iteration.append(loss)
 
             iteration_losses = torch.stack(losses_per_iteration)
-            total_loss_for_layer = iteration_losses.sum()
+            # Do we want to report the average loss per iteration? or the total?
+            total_loss_for_layer = iteration_losses.mean() # .sum()
             layer_losses.append(total_loss_for_layer)
             self.log(f"{self.phase}/B_loss[{layer_index}]", total_loss_for_layer)
             # IDEA: Could log this if we add some kind of early stopping for the feedback
             # training
             # self.log(f"{self.phase}/B_iterations[{layer_index}]", iterations)
-            if angles:
-                self.log(f"{self.phase}/B_angles[{layer_index}]", angles)
-            if distances:
-                self.log(f"{self.phase}/B_distances[{layer_index}]", distances)
+            if layer_angles:
+                # TODO: Logging all the distances and angles at once, which isn't ideal!
+                # What would be nicer would be to log this as a small, light-weight plot.
+                self.log(f"{self.phase}/B_angles[{layer_index}]", layer_angles)
+                angles.append(layer_angles)
+            if layer_distances:
+                self.log(f"{self.phase}/B_distances[{layer_index}]", layer_distances)
+                distances.append(layer_distances)
+
+        if self.training and self.global_step % 100 == 0:
+            if self.config.debug:
+                fig = self.make_feedback_training_figure(angles=angles, distances=distances)
+                self.log(f"{self.phase}/plot[{layer_index}]", fig)
+                figures_dir = Path(self.trainer.log_dir or ".") / "figures"
+                figures_dir.mkdir(exist_ok=True, parents=False)
+                fig.write_image(str(figures_dir / f"feedback_training_{self.global_step}.png"))
+                fig.write_html(str(figures_dir / f"feedback_training_{self.global_step}.html"), include_plotlyjs="cdn")
 
         return torch.stack(layer_losses).sum()
 
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
+        # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
+        ## --------
+        # return super().forward_loss(x=x, y=y)
+        ## --------
+        
         ys: List[Tensor] = self.forward_net.forward_all(
             x, allow_grads_between_layers=False
         )
+
         y_n = ys[-1]
 
         labels = y
@@ -232,25 +269,25 @@ class SequentialModel(Model):
             self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
 
             # NOTE: detaching the logits before computing the first target, because we don't
-            # want the cross-entropy loss to backpropagate itself into the last layer?
+            # want the cross-entropy loss to backpropagate itself into the last layer!
             temp_logits = logits.detach()
             temp_logits.requires_grad_(True)
 
-            ce_loss = self.criterion(temp_logits, labels)
+            ce_loss = F.cross_entropy(temp_logits, labels, reduction="sum")
             batch_size = x.size(0)
             # NOTE: Need to pass a grad_outputs argument because `ce_loss` isn't a
             # scalar here.
-            out_grads = ce_loss.new_ones([batch_size], requires_grad=False)
+            # out_grads = ce_loss.new_ones([batch_size], requires_grad=False)
             grads = torch.autograd.grad(
                 ce_loss,
                 temp_logits,
-                grad_outputs=out_grads,
-                only_inputs=True,
+                # grad_outputs=out_grads,
+                only_inputs=True,  # Do not backpropagate further than the input tensor!
                 create_graph=False,
             )
 
         y_n_grad = grads[0]
-        delta = -self.hp.beta * y_n_grad
+        delta = - self.hp.beta * y_n_grad
 
         # NOTE: Initialize the list of targets with Nones, and we'll replace all the
         # entries with tensors corresponding to the targets of each layer.
@@ -278,49 +315,80 @@ class SequentialModel(Model):
         # NOTE: targets[0] is the targets for the output of the first layer, not of x.
         # Calculate the losses for each layer:
         assert all(targets[i] is not None for i in range(0, n_layers))
-        forward_loss_per_layer = torch.stack(
-            [F.mse_loss(ys[i], targets[i]) for i in range(0, n_layers)]
+        forward_loss_per_layer = 0.5 * torch.stack(
+            # [
+            #     0.5*((y_i - t_i)**2).flatten(1).sum(1).mean()
+            #     for y_i, t_i in zip(ys, targets)
+            # ] #NOTE: Equivalent to the MSE loss:
+            [F.mse_loss(ys[i], targets[i]) for i in range(0, n_layers)]  # type: ignore
         )
-
+        for i, layer_loss in enumerate(forward_loss_per_layer):
+            self.log(f"{self.phase}/F_loss[{i}]", layer_loss)
+        # if self.training:
+        #     assert False, forward_loss_per_layer
         forward_loss = forward_loss_per_layer.sum()
         return forward_loss
 
-    def __unused_original(self):
-        """ Keeping this here just for reference """
+    def configure_optimizers(self):
+        # NOTE: We pass the learning rates in the same order as the feedback net:
+        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
+        feedback_optimizer = self.hp.b_optim.make_optimizer(
+            self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
+        )
+        forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
 
-        # 1- Compute the output layer (y) and the reconstruction of the penultimate layer (r = G(y))
-        """
-        '''
-        NOTE 1: the flag ind_layer specifies where the forward pass stops (default: None)
-        NOTE 2: if ind_layer=n, layer n-1 is detached from the computational graph
-        '''
-        y, r = net(data, ind_layer = len(net.layers))
+        feedback_optim_config = {"optimizer": feedback_optimizer}
+        forward_optim_config = {
+            "optimizer": forward_optimizer,
+            "lr_scheduler": CosineAnnealingLR(
+                forward_optimizer, T_max=85, eta_min=1e-5
+            ),
+        }
+        assert self.hp.f_optim.use_lr_scheduler
+        assert self.hp.feedback_before_forward
+        return [
+            feedback_optim_config,
+            forward_optim_config,
+        ]
+    
+    def make_feedback_training_figure(self, angles: List[List[float]], distances: List[List[float]]):
+        n_plots = len(angles)
+        # Create figure with secondary y-axis
+        from plotly.graph_objects import Figure
+        fig: Figure = make_subplots(
+            rows=2,
+            cols=n_plots,
+            x_title="# of feedback training iterations",
+            column_titles=[f"layer {i}" for i in range(n_plots)],
+            row_titles=["Angle (degrees)", "Distance"],
+        )
+        # Add traces
+        for i in range(n_plots):
+            layer_angles = angles[i]
+            layer_distances = distances[i]
+            x = np.arange(len(layer_angles))
 
-        #2- Compute the loss
-        L = criterion(y.float(), target).squeeze()
+            fig.add_trace(
+                go.Scatter(x=x, y=layer_angles), row=1, col=i + 1,
+            )
+            fig.add_trace(
+                go.Scatter(x=x, y=layer_distances),
+                row=2,
+                col=i + 1,
+            )
 
-        #3- Compute the first target 
-        init_grads = torch.tensor([1 for i in range(y.size(0))], dtype=torch.float, device=y.device, requires_grad=True) 
-        grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph = True)
-        delta = -args.beta*grads[0]
-        t = y + delta
+        # Add figure title
+        fig.update_layout(
+            title_text="Distance and angle between F and G during feedback weight training",
+            showlegend=False,
+        )
 
-        #4- Layer-wise feedforward training begins
-        for id_layer in range(len(net.layers)):
-            #5- Train current forward weights so that current layer matches its target   
-            loss_f = net.layers[-1 - id_layer].weight_f_train(y, t, optimizer_f)
+        # Set x-axis title
+        # fig.update_xaxes(title_text="# of feedback training iterations", row=2)
+        # Set y-axes titles (only for the first column)
+        fig.update_yaxes(title_text="Angle (degrees)", row=1, col=1)
+        fig.update_yaxes(title_text="Distance", row=2, col=1)
 
-            #6- Compute the previous target (except if we already have reached the first hidden layer)    
-            if (id_layer < len(net.layers) - 1):
-                #7- Compute delta^n = G(s^{n+1} + t^{n+1}) - G(s^{n+1})
-                delta = net.layers[-1 - id_layer].propagateError(r, t)
-                
-                #8- Compute the feedforward prediction s^n and r=G(s^n)
-                y, r = net(data, ind_layer = len(net.layers) - 1 - id_layer)
-        
-                #9- Compute the target t^n= s^n + delta^n
-                t = (y + delta).detach()
-            
-            if id_layer == 0:
-                loss = loss_f
-        """
+        return fig

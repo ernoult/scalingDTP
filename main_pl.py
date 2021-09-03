@@ -5,7 +5,8 @@ Use `python main.py --help` for a list of all available arguments,
     or (even better), take a look at the [`Config`](target_prop/config.py) and the
     [`Model.HParams`](target_prop/model.py) classes to see their definition.
 """
-from target_prop.models import Model, SequentialModel, ParallelModel
+from typing import Type
+from target_prop.models import BaseModel, SequentialModel, ParallelModel
 from target_prop.config import Config
 from simple_parsing import ArgumentParser
 import json
@@ -27,32 +28,33 @@ def main(sample_hparams: bool = False):
 
     subparsers = parser.add_subparsers(title="model", description="Type of model to use.")
 
-    parallel_parser = subparsers.add_parser("parallel")
-    parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
-    parallel_parser.add_arguments(Config, dest="config")
-    parallel_parser.set_defaults(model=ParallelModel)
-
-    sequential_parser = subparsers.add_parser("sequential")
+    sequential_parser: ArgumentParser = subparsers.add_parser("sequential")
     sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
     sequential_parser.add_arguments(Config, dest="config")
     sequential_parser.set_defaults(model=SequentialModel)
 
-    # Fixing this for now, but should use a subparser instead.    
-    # parser.add_arguments(Model.HParams, dest="hparams")
+    parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
+    parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
+    parallel_parser.add_arguments(Config, dest="config")
+    parallel_parser.set_defaults(model=ParallelModel)
 
-    # TODO: we unfortunately can't do this directly atm:
+    # NOTE: we unfortunately can't add the PL Trainer arguments directly atm, because they don't
+    # play nice with simple-parsing.
     # trainer_parser = Trainer.add_argparse_args(parser)
 
     args = parser.parse_args()
-    # assert False, args.model
     
     config: Config = args.config
-    hparams: Model.HParams = args.hparams
-    if sample_hparams:
-        hparams = Model.HParams.sample()
-        # TODO: overwrite any sampled values with those set from the command-line
-        default_hparams_dict = Model.HParams().to_dict()
-        cmd_hparams: Model.HParams = args.hparams
+    hparams: BaseModel.HParams = args.hparams
+    if not sample_hparams:
+        # Use the values from the command-line.
+        hparams = args.hparams
+    else:
+        # Sample some hyper-parameters from the prior, and overwrite the sampled values with those
+        # passed through the command-line.
+        hparams = BaseModel.HParams.sample()
+        default_hparams_dict = BaseModel.HParams().to_dict()
+        cmd_hparams: BaseModel.HParams = args.hparams
         custom_hparams = {
             k: v
             for k, v in cmd_hparams.to_dict().items()
@@ -62,10 +64,7 @@ def main(sample_hparams: bool = False):
             print(f"Overwriting sampled values for entries {custom_hparams}")
             hparams_dict = hparams.to_dict()
             hparams_dict.update(custom_hparams)
-            hparams = Model.HParams.from_dict(hparams_dict)
-    else:
-        hparams = args.hparams
-    hparams: Model.HParams
+            hparams = BaseModel.HParams.from_dict(hparams_dict)
     print(f"Config:", config.dumps_json(indent="\t"))
     # print(f"HParams:", hparams)
 
@@ -73,11 +72,11 @@ def main(sample_hparams: bool = False):
         print(f"Setting the max_epochs to 1, since '--debug' was passed.")
         hparams.max_epochs = 1
 
-    print("HParams:", json.dumps(hparams.to_dict(), indent="\t"))
+    print("HParams:", hparams.dumps_json(indent="\t"))
     # Create the datamodule:
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-    
-    model_class: Type[Model] = args.model
+
+    model_class: Type[BaseModel] = args.model
     model = model_class(datamodule=datamodule, hparams=hparams, config=config)
     trainer = Trainer(
         max_epochs=hparams.max_epochs,
@@ -89,8 +88,7 @@ def main(sample_hparams: bool = False):
         # callbacks=[],
         logger=WandbLogger() if not config.debug else None,
     )
-    b = trainer.fit(model, datamodule=datamodule)
-    print(f"fit returned {b}")
+    trainer.fit(model, datamodule=datamodule)
 
     test_results = trainer.test(model, datamodule=datamodule)
     wandb.finish()

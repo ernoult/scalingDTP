@@ -8,13 +8,15 @@ from logging import getLogger
 from typing import Union, List
 
 logger = getLogger(__file__)
+import torch
 
 
 @singledispatch
 def get_feedback_loss(
-    backward_layer: nn.Module,
+    feedback_layer: nn.Module,
     forward_layer: nn.Module,
     input: Tensor,
+    output: Tensor,
     noise_scale: float | Tensor,
     noise_samples: int = 1,
 ) -> float | Tensor:
@@ -25,42 +27,41 @@ def get_feedback_loss(
     Can optionally use more than one noise sample per iteration.
     """
     # QUESTION: TODO: Should we 'recurse' into the sequential blocks for getting the
-    # feedback loss?
+    # feedback loss? Or consider the whole block as a single "layer"?
     x = input
-    # 1- Compute y = F(input) and r=G(y)
-    with torch.no_grad():
-        y = forward_layer(x)
-    r = backward_layer(y)
+    y = output
+
+    r = feedback_layer(y)
 
     noise_sample_losses = []
     for sample in range(noise_samples):
-        # TODO: Use CUDA streams to make this faster:
+        # TODO: Use CUDA streams to make this faster, since all iterations are distinct,
+        # computations could perhaps be parallelized on the hardware level. 
         # with torch.cuda.Stream():
 
-        # y, (r, ind) = self(x, back=True)
-        noise = noise_scale * torch.randn_like(x)
-
         # 2- Perturbate x <-- x + noise and redo x--> y --> r
+        dx = noise_scale * torch.randn_like(x)
         with torch.no_grad():
-            y_noise = forward_layer(x + noise)
-        r_noise = backward_layer(y_noise)
-        # _, (r_noise, ind_noise) = self(x + noise, back=True)
+            y_noise = forward_layer(x + dx)
 
+        r_noise = feedback_layer(y_noise)
+
+        # Distance between `r` and the reconstructed `r`.
         dr = r_noise - r
 
         # 3- Perturbate y <-- y + noise and redo y --> r
-        noise_y = noise_scale * torch.randn_like(y)
-        r_noise_y = backward_layer(y + noise_y)
+        dy = noise_scale * torch.randn_like(y)
+        r_noise_y = feedback_layer(y + dy)
 
-        # noise_y = sigma * torch.randn_like(y)
-        # r_noise_y = self.bb(x, y + noise_y, ind)
         dr_y = r_noise_y - r
 
         # 4- Compute the loss
-        sample_loss = (
-            -2 * (noise * dr).flatten(1).sum(1).mean()
-            + (dr_y ** 2).flatten(1).sum(1).mean()
-        )
+        dr_loss = -2 * (dx * dr).flatten(1).sum(1).mean()
+        dy_loss = (dr_y ** 2).flatten(1).sum(1).mean()
+
+        # print(dr_loss.item(), dy_loss.item())
+
+        sample_loss = dr_loss + dy_loss
         noise_sample_losses.append(sample_loss)
 
     feedback_losses = torch.stack(noise_sample_losses)

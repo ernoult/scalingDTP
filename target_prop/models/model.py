@@ -6,6 +6,7 @@ TODO: Add callbacks that compute the jacobians and log images / stuff to wandb.
 # from __future__ import annotations
 import json
 import warnings
+import textwrap
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
@@ -16,6 +17,7 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
+    ForwardRef,
     Iterable,
     List,
     NamedTuple,
@@ -70,7 +72,7 @@ T = TypeVar("T")
 logger = getLogger(__file__)
 
 
-class Model(LightningModule, ABC):
+class BaseModel(LightningModule, ABC):
     """ Pytorch Lightning version of the prototype from `prototype.py`.
     """
 
@@ -135,7 +137,10 @@ class Model(LightningModule, ABC):
         early_stopping_patience: int = 3
 
         # seed: Optional[int] = None  # Random seed to use.
-        # sym: bool = False  # sets symmetric weight initialization
+        
+        # Sets symmetric weight initialization
+        init_symetric_weights: bool = False
+        
         # jacobian: bool = False  # compute jacobians
 
         # NOTE: Using a single value rather than one value per layer.
@@ -171,7 +176,7 @@ class Model(LightningModule, ABC):
 
     def __init__(self, datamodule: VisionDataModule, hparams: HParams, config: Config):
         super().__init__()
-        self.hp: Model.HParams = hparams
+        self.hp: BaseModel.HParams = hparams
         self.datamodule = datamodule
         self.config = config
         if self.config.seed is not None:
@@ -196,6 +201,10 @@ class Model(LightningModule, ABC):
                             padding=1,
                         ),
                         rho=nn.ELU(),
+                        # NOTE: Even though `return_indices` is `False` here, we're actually passing
+                        # the indices to the backward net for this layer through a "magic bridge".
+                        # We use `return_indices=False` here just so the layer doesn't also return
+                        # the indices in its forward pass.
                         pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
                         # pool=nn.AvgPool2d(kernel_size=2),
                     )
@@ -219,11 +228,43 @@ class Model(LightningModule, ABC):
 
         assert example_out.requires_grad
         # Get the "pseudo-inverse" of the forward network:
-        self.backward_net = self.forward_net.invert()
+        # TODO: Initializing the weights of the backward net with the transpose of the weights of
+        # the forward net, and will check if the gradients are similar.
+        self.backward_net = self.forward_net.invert(init_symetric_weights=self.hp.init_symetric_weights)
+
+        # Expand these values to get one value for each feedback layer to train.
+        self.feedback_noise_scales = self._get_noise_scale_per_feedback_layer(forward_ordering=False)
+        self.feedback_lrs = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
+        self.feedback_iterations = self._get_iterations_per_feedback_layer(forward_ordering=False)
 
         if self.config.debug:
             print(f"Backward net: ")
-            print(self.backward_net)
+            N = len(self.backward_net)
+            for i, (layer, lr, noise, iterations) in list(enumerate(zip(
+                    self.backward_net,
+                    self.feedback_lrs,
+                    self.feedback_noise_scales,
+                    self.feedback_iterations,
+                ))):
+                print(f"Layer {i} (G[{N-i}]): LR: {lr}, noise: {noise}, iterations: {iterations}")
+                print(textwrap.indent(str(layer), prefix="\t"))
+                if i == N - 1:
+                    # The last layer of the backward_net (the layer closest to the input) is not
+                    # currently being trained, so we expect it to not have these parameters.
+                    assert lr == 0
+                    assert noise == 0
+                    assert iterations == 0
+                elif any(p.requires_grad for p in layer.parameters()):
+                    # For any of the trainable layers in the backward net (except the last one), we
+                    # expect to have positive values:
+                    assert lr > 0
+                    assert noise > 0
+                    assert iterations > 0
+                else:
+                    # Non-Trainable layers (e.g. Reshape) are not trained.
+                    assert lr == 0
+                    assert noise == 0
+                    assert iterations == 0
 
         # TODO: Fix the feedback optimizer's learning rates not aligning with the backward_net.
 
@@ -247,11 +288,13 @@ class Model(LightningModule, ABC):
         # kwargs that will get passed to all calls to `self.log()`, just to make things
         # a bit more tidy
         self.log_kwargs: Dict = dict()  # dict(prog_bar=True)
-        self.phase: str = ""
+        # self.phase: str = ""
 
         # Index of the optimizers. Gets influenced by the value of `feedback_before_forward`
         self._feedback_optim_index: int = 0 if self.hp.feedback_before_forward else 1
         self._forward_optim_index: int = 1 if self.hp.feedback_before_forward else 0
+
+        self.trainer: Trainer  # type: ignore
 
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
         # Dummy forward pass, not used in practice. We just implement it so that PL can
@@ -272,7 +315,8 @@ class Model(LightningModule, ABC):
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
         # and `feedback_loss` below.
-        self.phase = phase
+        assert self.phase == phase, (self.phase, phase)
+        # self.phase = phase
 
         dtype: Optional[torch.dtype] = self.dtype if isinstance(
             self.dtype, torch.dtype
@@ -298,7 +342,13 @@ class Model(LightningModule, ABC):
 
     @abstractmethod
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
-        raise NotImplementedError
+        # raise NotImplementedError
+        # FIXME: Sanity check: Use standard backpropagation for training rather than TP.
+        logits = self.forward_net.forward_all(x, allow_grads_between_layers=True)[-1]
+        accuracy = self.accuracy(torch.softmax(logits, -1), y)
+        self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
+        return F.cross_entropy(logits, y, reduction="mean")
+        # return self.criterion(logits, y)
 
     @abstractmethod
     def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
@@ -401,8 +451,12 @@ class Model(LightningModule, ABC):
         # Don't count the last layer of the backward net (i.e. G_0), since we don't
         # train it.
         n_layers_that_need_a_value -= 1
-
-        assert len(values) == n_layers_that_need_a_value
+        if len(values) != n_layers_that_need_a_value:
+            raise ValueError(
+                f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+                f"given {len(values)} values! (values={values})\n "
+                f"NOTE: The order of the values would be reversed before using them with the backward net."
+            )
 
         values_left = values.copy()
 
@@ -473,6 +527,7 @@ class Model(LightningModule, ABC):
         return lr_per_layer
 
     def configure_optimizers(self):
+        # NOTE: We pass the learning rates in the same order as the feedback net:
         lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
             forward_ordering=False
         )

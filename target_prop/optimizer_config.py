@@ -2,10 +2,13 @@ from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import HyperParameters, log_uniform
 import torch
 from target_prop.utils import get_list_of_values
-from typing import ClassVar, Dict, Type, List, Optional
+from typing import ClassVar, Dict, Type, List, Optional, Union
 from dataclasses import dataclass
 from torch.optim.optimizer import Optimizer
 from torch import nn
+import logging
+
+logger = logging.getLogger(__file__)
 
 
 @dataclass
@@ -45,12 +48,15 @@ class OptimizerConfig(HyperParameters):
         )
         assert len(lrs) == n_layers
         params: List[Dict] = []
-        for layer, lr in zip(network, lrs):
+        for i, (layer, lr) in enumerate(zip(network, lrs)):
+            logger.debug(f"Layer at index {i} (of type {type(layer)}) has lr of {lr}")
             params.append({"params": layer.parameters(), "lr": lr})
-            
+
         optimizer_kwargs = {}
         if self.weight_decay is not None:
             optimizer_kwargs["weight_decay"] = self.weight_decay
+
+        logger.debug("optimizer kwargs:", optimizer_kwargs)
         return optimizer_class(  # type: ignore
             params, **optimizer_kwargs,
         )

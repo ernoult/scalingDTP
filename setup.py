@@ -30,5 +30,7 @@ setuptools.setup(
         "pytorch-lightning-bolts",
         "tqdm",
         "wandb",
+        "plotly",
+        "kaleido",
     ],
 )

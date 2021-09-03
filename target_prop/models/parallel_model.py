@@ -1,4 +1,4 @@
-from .model import Model
+from .model import BaseModel
 from torch import Tensor
 from typing import List
 from torch import nn
@@ -6,7 +6,7 @@ import torch
 from target_prop.utils import is_trainable
 
 
-class ParallelModel(Model):
+class ParallelModel(BaseModel):
     """ "Parallel" version of the sequential model, uses more noise samples but a single
     iteration for the training of the feedback weights, which makes it possible to use
     the automatic optimization and distributed training features of PyTorch-Lightning.

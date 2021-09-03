@@ -105,12 +105,12 @@ def backward_activation(
 
 
 @get_backward_equivalent.register(nn.ELU)
-def _(activation_layer: nn.ELU) -> nn.Module:
+def _(activation_layer: nn.ELU, init_symetric_weights: bool = False) -> nn.Module:
     return nn.ELU(alpha=activation_layer.alpha, inplace=False)
 
 
 @get_backward_equivalent.register(nn.AvgPool2d)
-def _(pooling_layer: nn.AvgPool2d) -> nn.Upsample:
+def _(pooling_layer: nn.AvgPool2d, init_symetric_weights: bool = False) -> nn.Upsample:
     assert pooling_layer.kernel_size == 2, pooling_layer
     assert pooling_layer.stride == 2, pooling_layer
     return nn.Upsample(scale_factor=2)
