@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, TypeVar
+from typing import List, Optional, Sequence, Tuple, TypeVar, cast
 from pathlib import Path
 
 import numpy as np
@@ -251,15 +251,12 @@ class SequentialModel(BaseModel):
         ## --------
         # return super().forward_loss(x=x, y=y)
         ## --------
-        
+
         ys: List[Tensor] = self.forward_net.forward_all(
-            x, allow_grads_between_layers=False
+            x, allow_grads_between_layers=False,
         )
-
-        y_n = ys[-1]
-
-        labels = y
         logits = ys[-1]
+        labels = y
 
         # Calculate the first target using the gradients of the loss w.r.t. the logits.
         # NOTE: Need to manually enable grad here so that we can also compute the first
@@ -267,67 +264,68 @@ class SequentialModel(BaseModel):
         with torch.set_grad_enabled(True):
             accuracy = self.accuracy(torch.softmax(logits, -1), labels)
             self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
-
-            # NOTE: detaching the logits before computing the first target, because we don't
-            # want the cross-entropy loss to backpropagate itself into the last layer!
-            temp_logits = logits.detach()
-            temp_logits.requires_grad_(True)
-
-            ce_loss = F.cross_entropy(temp_logits, labels, reduction="sum")
-            batch_size = x.size(0)
-            # NOTE: Need to pass a grad_outputs argument because `ce_loss` isn't a
-            # scalar here.
-            # out_grads = ce_loss.new_ones([batch_size], requires_grad=False)
+            ce_loss = F.cross_entropy(logits, labels, reduction="sum")
             grads = torch.autograd.grad(
                 ce_loss,
-                temp_logits,
-                # grad_outputs=out_grads,
+                logits,
                 only_inputs=True,  # Do not backpropagate further than the input tensor!
                 create_graph=False,
             )
+            assert len(grads) == 1
 
         y_n_grad = grads[0]
-        delta = - self.hp.beta * y_n_grad
 
+        delta = -self.hp.beta * y_n_grad
+
+        self.log(f"{self.phase}/delta.norm()", delta.norm())
+        # Compute the first target (for the last layer of the forward network):
+        last_layer_target = logits.detach() + delta
+
+        N = len(self.forward_net)
         # NOTE: Initialize the list of targets with Nones, and we'll replace all the
         # entries with tensors corresponding to the targets of each layer.
-        targets: List[Optional[Tensor]] = [None for _ in ys]
+        targets: List[Optional[Tensor]] = [*(None for _ in range(N-1)), last_layer_target]
 
-        # Compute the first target:
-        t = logits.detach() + delta
-        targets[-1] = t
-
-        n_layers = len(self.forward_net)
+        # Reverse the ordering of the layers, just to make the indexing in the code below match
+        # those of the math equations.
+        reordered_feedback_net: Sequential = reversed(feedback_net)  # type: ignore
 
         # Calculate the targets for each layer, moving backward through the forward net:
         # N-1, N-2, ..., 2, 1
         # NOTE: Starting from N-1 since we already have the target for the last layer).
-        for i in reversed(range(1, n_layers)):
-            G = self.backward_net[-1 - i]
-            with torch.no_grad():
-                assert (
-                    targets[i - 1] is None
-                )  # Make sure we're not overwriting anything.
+        with torch.no_grad():
+            for i in reversed(range(1, N)):
+
+                G = reordered_feedback_net[i]
+                # G = feedback_net[-1 - i]
+                
+                assert targets[i - 1] is None  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
                 targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
 
-        # NOTE: targets[0] is the targets for the output of the first layer, not of x.
+                # NOTE: Alternatively, just target propagation:
+                # targets[i - 1] = G(targets[i])
+
+        # NOTE: targets[0] is the targets for the output of the first layer, not for x.
+        # Make sure that all targets have been computed and that they are fixed (don't require grad)
+        assert all(target is not None and not target.requires_grad for target in targets)
+        target_tensors = cast(List[Tensor], targets) # Rename just for typing purposes.
+
         # Calculate the losses for each layer:
-        assert all(targets[i] is not None for i in range(0, n_layers))
-        forward_loss_per_layer = 0.5 * torch.stack(
-            # [
-            #     0.5*((y_i - t_i)**2).flatten(1).sum(1).mean()
-            #     for y_i, t_i in zip(ys, targets)
-            # ] #NOTE: Equivalent to the MSE loss:
-            [F.mse_loss(ys[i], targets[i]) for i in range(0, n_layers)]  # type: ignore
-        )
+        forward_loss_per_layer = [
+            # 0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).sum()
+            # NOTE: Equivalent to the following.
+            0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="sum")  # type: ignore
+            for i in range(0, N)
+        ]
+        assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(self.forward_net) == N
+
         for i, layer_loss in enumerate(forward_loss_per_layer):
             self.log(f"{self.phase}/F_loss[{i}]", layer_loss)
-        # if self.training:
-        #     assert False, forward_loss_per_layer
-        forward_loss = forward_loss_per_layer.sum()
-        return forward_loss
+
+        loss_tensor = torch.stack(forward_loss_per_layer, -1)
+        return loss_tensor.sum()
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:

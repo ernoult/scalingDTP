@@ -79,7 +79,8 @@ def get_forward_weight_losses(
             # targets[i - 1] = G(targets[i])
 
     # NOTE: targets[0] is the targets for the output of the first layer, not for x.
-    assert all(targets[i] is not None for i in range(0, N))
+    # Make sure that all targets have been computed and that they are fixed (don't require grad)
+    assert all(target is not None and not target.requires_grad for target in targets)
 
     # Calculate the losses for each layer:
     forward_loss_per_layer = [
@@ -202,9 +203,10 @@ def test_weights_are_initialized_symmetrically(forward_net: Sequential):
             assert (forward_param == feedback_param.t()).all()
 
 @pytest.mark.parametrize("beta", [1e-4, 1e-3, 1e-2, 0.1, 0.5, 0.7])
-def test_losses_of_each_layer_are_independant(
+def test_losses_of_each_layer_are_independent(
     forward_net: Sequential, feedback_net: Sequential, beta: float
 ):
+    # Asserts that losses only affect their own layer and not the layers before.
     n_classes = 10
 
     torch.random.manual_seed(123)
@@ -220,7 +222,6 @@ def test_losses_of_each_layer_are_independant(
     )
 
     dtp_grads_v0 = {}
-    # TODO: Triple-check that the losses only affect their own layer.
     for i, ((layer_name, layer), layer_loss) in reversed(
         list(enumerate(zip(forward_net.named_children(), dtp_losses)))
     ):
@@ -238,7 +239,7 @@ def test_losses_of_each_layer_are_independant(
 
         #  NOTE: This also checks that the losses for each layer are independant, since we
         # backpropagate the losses starting from the end of the forward net and moving backward
-        # without calling `zero_grad()`. 
+        # without calling `zero_grad()`.
         if layer_loss.requires_grad:
             layer_loss.backward()
             dtp_grads_v0.update(
@@ -269,7 +270,7 @@ def test_losses_of_each_layer_are_independant(
     # if we backpropagate the losses for each layer moving backward (as you'd expect).
 
 
-@pytest.mark.parametrize("beta", [1e-4, 1e-3, 1e-2, 0.1])
+@pytest.mark.parametrize("beta", [0.005])
 def test_grads_are_similar(forward_net: Sequential, beta: float):
     n_classes = 10
     
@@ -320,17 +321,21 @@ def test_grads_are_similar(forward_net: Sequential, beta: float):
     dtp_grads = {
         name: p.grad.clone().detach() for name, p in named_trainable_parameters(forward_net)
     }
+    dtp_grads = {
+        key: (1 / beta) * grad for key, grad in dtp_grads.items()
+    }
+
     print(f"Beta: {beta}")
     for name, backprop_grad in true_backprop_grads.items():
         if name.endswith("bias"):
             continue
+        print(f"Gradients for parameter: {name} ")
+        dtp_grad = dtp_grads[name]
 
-        print(f"Gradient for parameter: {name} ")
         l1_norm = backprop_grad.norm(p=1).item()
         l2_norm = backprop_grad.norm(p=2).item()
         print(f"\tGradient norm (backprop):\t {l1_norm=}, {l2_norm=}")
 
-        dtp_grad = dtp_grads[name]
         l1_norm = dtp_grad.norm(p=1).item()
         l2_norm = dtp_grad.norm(p=2).item()
         print(f"\tGradient norm (diff-tp) :\t {l1_norm=}, {l2_norm=}")
