@@ -238,7 +238,8 @@ class SequentialModel(BaseModel):
         if self.training and self.global_step % 100 == 0:
             if self.config.debug:
                 fig = self.make_feedback_training_figure(angles=angles, distances=distances)
-                self.log(f"{self.phase}/plot[{layer_index}]", fig)
+                # BUG: PL bug: tries to call len(figure).
+                # self.log(f"{self.phase}/plot[{layer_index}]", fig)
                 figures_dir = Path(self.trainer.log_dir or ".") / "figures"
                 figures_dir.mkdir(exist_ok=True, parents=False)
                 fig.write_image(str(figures_dir / f"feedback_training_{self.global_step}.png"))
@@ -264,10 +265,13 @@ class SequentialModel(BaseModel):
         with torch.set_grad_enabled(True):
             accuracy = self.accuracy(torch.softmax(logits, -1), labels)
             self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
-            ce_loss = F.cross_entropy(logits, labels, reduction="sum")
+            
+            temp_logits = logits.detach().clone()
+            temp_logits.requires_grad_(True)
+            ce_loss = F.cross_entropy(temp_logits, labels, reduction="sum")
             grads = torch.autograd.grad(
                 ce_loss,
-                logits,
+                temp_logits,
                 only_inputs=True,  # Do not backpropagate further than the input tensor!
                 create_graph=False,
             )
@@ -288,7 +292,7 @@ class SequentialModel(BaseModel):
 
         # Reverse the ordering of the layers, just to make the indexing in the code below match
         # those of the math equations.
-        reordered_feedback_net: Sequential = reversed(feedback_net)  # type: ignore
+        reordered_feedback_net: Sequential = self.backward_net[::-1]  # type: ignore
 
         # Calculate the targets for each layer, moving backward through the forward net:
         # N-1, N-2, ..., 2, 1

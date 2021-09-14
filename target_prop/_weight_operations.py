@@ -9,11 +9,17 @@ import torch
 
 
 @singledispatch
-def weight_b_sym(forward_layer: nn.Module, backward_layer: nn.Module) -> None:
-    raise NotImplementedError(forward_layer, backward_layer)
+def init_symetric_weights(forward_layer: nn.Module, backward_layer: nn.Module) -> None:
+    if any(p.requires_grad for p in forward_layer.parameters()):
+        raise NotImplementedError(forward_layer, backward_layer)
+
+@init_symetric_weights.register
+def weight_b_sym_linear(forward_layer: nn.Sequential, backward_layer: nn.Sequential) -> None:
+    for f_layer, b_layer in zip(forward_layer, backward_layer[::-1]):
+        init_symetric_weights(f_layer, b_layer)
 
 
-@weight_b_sym.register(nn.Conv2d)
+@init_symetric_weights.register(nn.Conv2d)
 def weight_b_sym_conv2d(
     forward_layer: nn.Conv2d, backward_layer: nn.ConvTranspose2d
 ) -> None:
@@ -23,7 +29,7 @@ def weight_b_sym_conv2d(
         backward_layer.weight.data = forward_layer.weight.data
 
 
-@weight_b_sym.register(nn.Linear)
+@init_symetric_weights.register(nn.Linear)
 def weight_b_sym_linear(forward_layer: nn.Linear, backward_layer: nn.Linear) -> None:
     assert forward_layer.in_features == backward_layer.out_features
     assert forward_layer.out_features == backward_layer.in_features

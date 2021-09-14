@@ -51,13 +51,9 @@ from simple_parsing.helpers.serialization import Serializable
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import (  # Conv2dELU,; ConvTranspose2dELU,
-    AdaptiveAvgPool2d,
-    ConvPoolBlock,
     MaxPool2d,
-    MaxUnpool2d,
     Reshape,
-    Sequential,
-    get_backward_equivalent,
+    invert
 )
 from target_prop.optimizer_config import OptimizerConfig as OptimizerHParams
 from target_prop.utils import flag, get_list_of_values, is_trainable
@@ -67,6 +63,7 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
+from target_prop._weight_operations import init_symetric_weights
 
 T = TypeVar("T")
 logger = getLogger(__file__)
@@ -189,9 +186,9 @@ class BaseModel(LightningModule, ABC):
         )
         ## Create the forward achitecture:
         channels = [self.in_channels] + self.hp.channels
-        self.forward_net = Sequential(
+        self.forward_net = nn.Sequential(
             *(
-                Sequential(
+                nn.Sequential(
                     OrderedDict(
                         conv=nn.Conv2d(
                             channels[i],
@@ -230,7 +227,9 @@ class BaseModel(LightningModule, ABC):
         # Get the "pseudo-inverse" of the forward network:
         # TODO: Initializing the weights of the backward net with the transpose of the weights of
         # the forward net, and will check if the gradients are similar.
-        self.backward_net = self.forward_net.invert(init_symetric_weights=self.hp.init_symetric_weights)
+        self.backward_net = invert(self.forward_net)
+        if self.hp.init_symetric_weights:
+            init_symetric_weights(self.forward_net, self.backward_net)
 
         # Expand these values to get one value for each feedback layer to train.
         self.feedback_noise_scales = self._get_noise_scale_per_feedback_layer(forward_ordering=False)
