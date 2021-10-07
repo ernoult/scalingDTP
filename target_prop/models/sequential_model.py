@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple, TypeVar, cast
+from typing import Dict, List, Optional, Sequence, Tuple, TypeVar, Union, cast
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +10,7 @@ from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from plotly.subplots import make_subplots
 from pytorch_lightning import Trainer
 from simple_parsing.helpers import list_field
+from torch.optim import optimizer
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.metrics import compute_dist_angle
@@ -18,8 +19,11 @@ from target_prop.utils import get_list_of_values, is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from target_prop.layers import forward_all, forward_each
+import wandb
+from plotly.graph_objects import Figure
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
@@ -53,11 +57,11 @@ class SequentialModel(BaseModel):
         # integers, where each value represents the number of iterations for that layer.
         feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
 
+        # Step interval for creating and logging plots.
+        plot_every: int = 10
+
     def __init__(
-        self,
-        datamodule: VisionDataModule,
-        hparams: "SequentialModel.HParams",
-        config: Config,
+        self, datamodule: VisionDataModule, hparams: "SequentialModel.HParams", config: Config,
     ):
         super().__init__(datamodule, hparams, config)
         # Can't do automatic optimization here, since we do multiple sequential updates
@@ -68,21 +72,6 @@ class SequentialModel(BaseModel):
         print(self.hp.dumps_json(indent="\t"))
         # TODO: Use something like this:
         # self.supervised_metrics: List[Metrics]
-
-    @property
-    def phase(self) -> str:
-        if self.trainer.training:
-            return "train"
-        if self.trainer.validating:
-            return "val"
-        if self.trainer.testing:
-            return "test"
-        if self.trainer.predicting:
-            return "predict"
-        # NOTE: This doesn't work when inside the sanity check!
-        if self.trainer.state.stage.value == "sanity_check":
-            return "val"
-        # raise RuntimeError(f"HUH?", self.trainer.state,)
 
     def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
         return self.shared_step(batch, batch_idx=batch_idx, phase="train")
@@ -98,27 +87,22 @@ class SequentialModel(BaseModel):
     ):
         """ Main step, used by the `[training/valid/test]_step` methods.
         """
-
         x, y = batch
-        # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
-        # and `feedback_loss` below.
-        assert self.phase == phase, (self.phase, phase)
-        
-        dtype: Optional[torch.dtype] = self.dtype if isinstance(
-            self.dtype, torch.dtype
-        ) else None
 
         # ----------- Optimize the feedback weights -------------
-        feedback_loss = self.feedback_loss(x, y)
-        self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase=="train")
+        # NOTE: feedback_loss here returns a dict for now, since I think that makes things easier to
+        # inspect.
+        feedback_training_outputs: Dict = self.feedback_loss(x, y)
 
+        feedback_loss: Tensor = feedback_training_outputs["loss"]
+        self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
         # This is never a 'live' loss, since we do the optimization steps sequentially
         # inside `feedback_loss`.
         assert not feedback_loss.requires_grad
 
         # ----------- Optimize the forward weights -------------
         forward_loss = self.forward_loss(x, y)
-        self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase=="train")
+        self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
 
         # During training, the forward loss will be a 'live' loss tensor, since we
         # gather the losses for each layer. Here we perform only one step.
@@ -131,6 +115,8 @@ class SequentialModel(BaseModel):
             lr_scheduler = self.lr_schedulers()
             lr_scheduler.step()  # type: ignore
 
+        # Since here we do manual optimization, we just return a float. This tells PL that we've
+        # already performed the optimization steps.
         return float(forward_loss + feedback_loss)
 
     def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
@@ -151,16 +137,15 @@ class SequentialModel(BaseModel):
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
         with torch.no_grad():
-            ys: List[Tensor] = self.forward_net.forward_all(
-                x, allow_grads_between_layers=False
-            )
+            ys: List[Tensor] = forward_all(self.forward_net, x, allow_grads_between_layers=False)
 
-        angles: List[List[float]] = []
-        distances: List[List[float]] = []
+        # List of losses, distances, and angles for each layer (with multiple iterations per layer).
+        layer_losses: List[List[Tensor]] = []
+        layer_angles: List[List[float]] = []
+        layer_distances: List[List[float]] = []
 
         # Layer-wise autoencoder training begins:
         # NOTE: Skipping the first layer
-        layer_losses: List[Tensor] = []
         for layer_index in range(1, n_layers):
             # Forward layer
             F_i = self.forward_net[layer_index]
@@ -168,24 +153,29 @@ class SequentialModel(BaseModel):
             G_i = reversed_backward_net[layer_index]
             x_i = ys[layer_index - 1]
             y_i = ys[layer_index]
+            # Number of feedback training iterations to perform for this layer.
             iterations_i = iterations_per_layer[layer_index]
+            if iterations_i and self.phase != "train":
+                # NOTE: Only perform one iteration per layer when not training.
+                iterations_i = 1
+            # The scale of noise to use for thist layer.
             noise_scale_i = noise_scale_per_layer[layer_index]
 
-            layer_angles: List[float] = []
-            layer_distances: List[float] = []
+            # Collect the distances and angles between the forward and backward weights during this
+            # iteratin.
+            iteration_angles: List[float] = []
+            iteration_distances: List[float] = []
+            iteration_losses: List[Tensor] = []
 
-            if iterations_i == 0:
-                # Skip this layer, since it's not trainable.
-                continue
-            assert noise_scale_i > 0
-
-            if self.phase != "train":
-                # Only perform one iteration per layer when not training.
-                iterations_i = 1
+            # NOTE: When a layer isn't trainable (e.g. layer is a Reshape or nn.ELU), then
+            # iterations_i will be 0, so the for loop below won't be run.
 
             # Train the current autoencoder:
-            losses_per_iteration: List[Tensor] = []
             for iteration in range(iterations_i):
+                assert noise_scale_i > 0, (
+                    layer_index,
+                    iterations_i,
+                )
                 # Get the loss (see `feedback_loss.py`)
                 loss = get_feedback_loss(
                     G_i,
@@ -201,51 +191,78 @@ class SequentialModel(BaseModel):
                 with torch.no_grad():
                     distance, angle = compute_dist_angle(F_i, G_i)
 
-                logger.debug(
-                    f"Layer {layer_index}, Iteration {iteration}, angle={angle}, distance={distance}"
-                )
-                layer_angles.append(angle)
-                layer_distances.append(distance)
-
-                if isinstance(loss, Tensor) and loss.requires_grad:
+                # perform the optimization step for that layer when training.
+                if self.phase == "train":
+                    assert isinstance(loss, Tensor) and loss.requires_grad
                     feedback_optimizer.zero_grad()
                     self.manual_backward(loss)
                     feedback_optimizer.step()
                     loss = loss.detach()
-                    losses_per_iteration.append(loss)
                 else:
-                    if isinstance(loss, float):
-                        loss = torch.as_tensor(loss, device=y.device)
-                    losses_per_iteration.append(loss)
+                    assert isinstance(loss, Tensor) and not loss.requires_grad
+                    # When not training that layer,
+                    loss = torch.as_tensor(loss, device=y.device)
 
-            iteration_losses = torch.stack(losses_per_iteration)
-            # Do we want to report the average loss per iteration? or the total?
-            total_loss_for_layer = iteration_losses.mean() # .sum()
-            layer_losses.append(total_loss_for_layer)
-            self.log(f"{self.phase}/B_loss[{layer_index}]", total_loss_for_layer)
-            # IDEA: Could log this if we add some kind of early stopping for the feedback
-            # training
-            # self.log(f"{self.phase}/B_iterations[{layer_index}]", iterations)
-            if layer_angles:
-                # TODO: Logging all the distances and angles at once, which isn't ideal!
-                # What would be nicer would be to log this as a small, light-weight plot.
-                self.log(f"{self.phase}/B_angles[{layer_index}]", layer_angles)
-                angles.append(layer_angles)
-            if layer_distances:
-                self.log(f"{self.phase}/B_distances[{layer_index}]", layer_distances)
-                distances.append(layer_distances)
+                logger.debug(
+                    f"Layer {layer_index}, Iteration {iteration}, angle={angle}, "
+                    f"distance={distance}"
+                )
+                iteration_losses.append(loss)
+                iteration_angles.append(angle)
+                iteration_distances.append(distance)
 
-        if self.training and self.global_step % 100 == 0:
+                # IDEA: If we log these values once per iteration, will the plots look nice?
+                # self.log(f"{self.phase}/B_loss[{layer_index}]", loss)
+                # self.log(f"{self.phase}/B_angle[{layer_index}]", angle)
+                # self.log(f"{self.phase}/B_distance[{layer_index}]", distance)
+
+            layer_losses.append(iteration_losses)
+            layer_angles.append(iteration_angles)
+            layer_distances.append(iteration_distances)
+
+            # IDEA: Logging the number of iterations could be useful if we add some kind of early
+            # stopping for the feedback training, since the number of iterations might vary.
+            self.log(f"{self.phase}/B_total_loss[{layer_index}]", sum(iteration_losses))
+            self.log(f"{self.phase}/B_iterations[{layer_index}]", iterations_i)
+            # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
+            # What would be nicer would be to log this as a small, light-weight plot showing the
+            # evolution of the distances / angles for each layer.
+            # self.log(f"{self.phase}/B_angles[{layer_index}]", iteration_angles)
+            # self.log(f"{self.phase}/B_distances[{layer_index}]", iteration_distances)
+
+        if self.training and self.global_step % self.hp.plot_every == 0:
+            fig = make_stacked_feedback_training_figure(
+                all_values=[layer_angles, layer_distances, layer_losses],
+                row_titles=["angles", "distances", "losses"],
+                title_text=(
+                    f"Evolution of various metrics during feedback weight training "
+                    f"(global_step={self.global_step})"
+                ),
+            )
+            fig_name = f"feedback_training_{self.global_step}"
+            figures_dir = Path(self.trainer.log_dir or ".") / "figures"
+            figures_dir.mkdir(exist_ok=True, parents=False)
+            save_path: Path = figures_dir / fig_name
+            fig.write_image(str(save_path.with_suffix(".png")))
+            logger.info(f"Figure saved at path {save_path.with_suffix('.png')}")
+            # TODO: Figure out why exactly logger.info isn't showing up.
+            print(f"Figure saved at path {save_path.with_suffix('.png')}")
+
             if self.config.debug:
-                fig = self.make_feedback_training_figure(angles=angles, distances=distances)
-                # BUG: PL bug: tries to call len(figure).
-                # self.log(f"{self.phase}/plot[{layer_index}]", fig)
-                figures_dir = Path(self.trainer.log_dir or ".") / "figures"
-                figures_dir.mkdir(exist_ok=True, parents=False)
-                fig.write_image(str(figures_dir / f"feedback_training_{self.global_step}.png"))
-                fig.write_html(str(figures_dir / f"feedback_training_{self.global_step}.html"), include_plotlyjs="cdn")
+                # Also save an HTML version when debugging.
+                fig.write_html(str(save_path.with_suffix(".html")), include_plotlyjs="cdn")
 
-        return torch.stack(layer_losses).sum()
+            if wandb.run:
+                wandb.log({"feedback_training": fig})
+
+        # NOTE: Need to return something.
+        total_b_loss = sum(sum(iteration_losses) for iteration_losses in layer_losses) 
+        return {
+            "loss": total_b_loss,
+            "layer_losses": layer_losses,
+            "layer_angles": layer_angles,
+            "layer_distances": layer_distances,
+        }
 
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
         # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
@@ -253,8 +270,8 @@ class SequentialModel(BaseModel):
         # return super().forward_loss(x=x, y=y)
         ## --------
 
-        ys: List[Tensor] = self.forward_net.forward_all(
-            x, allow_grads_between_layers=False,
+        ys: List[Tensor] = forward_all(
+            self.forward_net, x, allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y
@@ -265,7 +282,7 @@ class SequentialModel(BaseModel):
         with torch.set_grad_enabled(True):
             accuracy = self.accuracy(torch.softmax(logits, -1), labels)
             self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
-            
+
             temp_logits = logits.detach().clone()
             temp_logits.requires_grad_(True)
             ce_loss = F.cross_entropy(temp_logits, labels, reduction="sum")
@@ -288,7 +305,7 @@ class SequentialModel(BaseModel):
         N = len(self.forward_net)
         # NOTE: Initialize the list of targets with Nones, and we'll replace all the
         # entries with tensors corresponding to the targets of each layer.
-        targets: List[Optional[Tensor]] = [*(None for _ in range(N-1)), last_layer_target]
+        targets: List[Optional[Tensor]] = [*(None for _ in range(N - 1)), last_layer_target]
 
         # Reverse the ordering of the layers, just to make the indexing in the code below match
         # those of the math equations.
@@ -302,7 +319,7 @@ class SequentialModel(BaseModel):
 
                 G = reordered_feedback_net[i]
                 # G = feedback_net[-1 - i]
-                
+
                 assert targets[i - 1] is None  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
@@ -314,13 +331,13 @@ class SequentialModel(BaseModel):
         # NOTE: targets[0] is the targets for the output of the first layer, not for x.
         # Make sure that all targets have been computed and that they are fixed (don't require grad)
         assert all(target is not None and not target.requires_grad for target in targets)
-        target_tensors = cast(List[Tensor], targets) # Rename just for typing purposes.
+        target_tensors = cast(List[Tensor], targets)  # Rename just for typing purposes.
 
         # Calculate the losses for each layer:
         forward_loss_per_layer = [
-            # 0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).sum()
+            # 0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).mean()
             # NOTE: Equivalent to the following.
-            0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="sum")  # type: ignore
+            0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")  # type: ignore
             for i in range(0, N)
         ]
         assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(self.forward_net) == N
@@ -329,13 +346,12 @@ class SequentialModel(BaseModel):
             self.log(f"{self.phase}/F_loss[{i}]", layer_loss)
 
         loss_tensor = torch.stack(forward_loss_per_layer, -1)
+        # TODO: Use 'sum' or 'mean' as the reduction between layers
         return loss_tensor.sum()
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:
-        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
-            forward_ordering=False
-        )
+        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
         feedback_optimizer = self.hp.b_optim.make_optimizer(
             self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
         )
@@ -344,9 +360,7 @@ class SequentialModel(BaseModel):
         feedback_optim_config = {"optimizer": feedback_optimizer}
         forward_optim_config = {
             "optimizer": forward_optimizer,
-            "lr_scheduler": CosineAnnealingLR(
-                forward_optimizer, T_max=85, eta_min=1e-5
-            ),
+            "lr_scheduler": CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5),
         }
         assert self.hp.f_optim.use_lr_scheduler
         assert self.hp.feedback_before_forward
@@ -354,43 +368,105 @@ class SequentialModel(BaseModel):
             feedback_optim_config,
             forward_optim_config,
         ]
+
+
+def make_stacked_feedback_training_figure(
+    all_values: Sequence[List[List[Union[Tensor, np.ndarray, float]]]],
+    row_titles: Sequence[str],
+    title_text: str,
+    layer_names: List[str] = None,
+) -> Figure:
+    """Creates a stacked plot that shows the evolution of different values during a step of
+    feedback training.
     
-    def make_feedback_training_figure(self, angles: List[List[float]], distances: List[List[float]]):
-        n_plots = len(angles)
-        # Create figure with secondary y-axis
-        from plotly.graph_objects import Figure
-        fig: Figure = make_subplots(
-            rows=2,
-            cols=n_plots,
-            x_title="# of feedback training iterations",
-            column_titles=[f"layer {i}" for i in range(n_plots)],
-            row_titles=["Angle (degrees)", "Distance"],
-        )
-        # Add traces
-        for i in range(n_plots):
-            layer_angles = angles[i]
-            layer_distances = distances[i]
-            x = np.arange(len(layer_angles))
+    `all_values` should contain a sequence of list of lists. (a list of "metric_values").
+    Each "metric_values" should contain the value of a metric, for each layer, for each iteration.
+    `row_titles` should contain the name associated with each item in `all_values`.
+    `title_text` is the name of the overall figure.
+    """
+    all_values = [
+        [
+            [v.cpu().numpy() if isinstance(v, Tensor) else v for v in layer_values]
+            for layer_values in values
+        ]
+        for values in all_values
+    ]
 
+    n_layers = len(all_values[0])
+    n_plots = len(all_values)
+    layer_names = layer_names or [f"layer {i}" for i in range(n_layers)]
+    assert len(row_titles) == n_plots
+    # Each list needs to have the same number of items (i.e. same number of layers)
+    assert all(len(values) == n_layers for values in all_values)
+
+    fig: Figure = make_subplots(
+        rows=n_plots,
+        cols=n_layers,
+        x_title="# of feedback training iterations",
+        column_titles=layer_names,
+        row_titles=[row_title for row_title in row_titles],
+    )
+
+    # Add traces
+    for plot_id, values in enumerate(all_values):
+        for layer_id in range(n_layers):
+            layer_values = values[layer_id]
+            x = np.arange(len(layer_values))
+            trace = go.Scatter(x=x, y=layer_values)
             fig.add_trace(
-                go.Scatter(x=x, y=layer_angles), row=1, col=i + 1,
+                trace, row=plot_id + 1, col=layer_id + 1,
             )
-            fig.add_trace(
-                go.Scatter(x=x, y=layer_distances),
-                row=2,
-                col=i + 1,
-            )
+    for plot_id, row_title in enumerate(row_titles):
+        if "angle" in row_title.lower():
+            # TODO: Having trouble making the y axis stick to [0,90] range for just these rows.
+            fig.update_layout(yaxis=dict(range = [0,90]))
+            # fig.update_layout(yaxis=dict(range = [0,90]), row=plot_id+1, col=layer_id+1)
 
-        # Add figure title
-        fig.update_layout(
-            title_text="Distance and angle between F and G during feedback weight training",
-            showlegend=False,
+    # Add figure title
+    fig.update_layout(
+        title_text=title_text, showlegend=False,
+    )
+
+    # Set x-axis title
+    # fig.update_xaxes(title_text="# of feedback training iterations", row=2)
+    # Set y-axes titles (only for the first column)
+    for i, row_title in enumerate(row_titles):
+        fig.update_yaxes(title_text=row_title, row=i + 1, col=1)
+    return fig
+
+
+def make_feedback_training_figure(
+    values: List[List[Tensor]], row_title: str, title_text: str
+) -> Figure:
+    """Given values for each layer, for each iteration, creates a nice figure that shows their
+    evolution.
+    """
+    n_layers = len(values)
+
+    fig: Figure = make_subplots(
+        rows=1,
+        cols=n_layers,
+        x_title="# of feedback training iterations",
+        column_titles=[f"layer {i}" for i in range(n_layers)],
+        row_titles=[row_title],
+    )
+
+    # Add traces
+    for i in range(n_layers):
+        layer_values = values[i]
+        x = np.arange(len(layer_values))
+        trace = go.Scatter(x=x, y=layer_values)
+        fig.add_trace(
+            trace, row=1, col=i + 1,
         )
+        
+    # Add figure title
+    fig.update_layout(
+        title_text=title_text, showlegend=False,
+    )
 
-        # Set x-axis title
-        # fig.update_xaxes(title_text="# of feedback training iterations", row=2)
-        # Set y-axes titles (only for the first column)
-        fig.update_yaxes(title_text="Angle (degrees)", row=1, col=1)
-        fig.update_yaxes(title_text="Distance", row=2, col=1)
-
-        return fig
+    # Set x-axis title
+    # fig.update_xaxes(title_text="# of feedback training iterations", row=2)
+    # Set y-axes titles (only for the first column)
+    fig.update_yaxes(title_text=row_title, row=1, col=1)
+    return fig

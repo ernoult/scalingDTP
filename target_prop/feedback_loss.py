@@ -7,7 +7,7 @@ from torch.optim.optimizer import Optimizer
 from logging import getLogger
 from typing import Union, List
 
-logger = getLogger(__file__)
+logger = getLogger(__name__)
 import torch
 
 

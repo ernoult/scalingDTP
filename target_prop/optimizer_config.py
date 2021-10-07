@@ -8,7 +8,7 @@ from torch.optim.optimizer import Optimizer
 from torch import nn
 import logging
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 
 
 @dataclass

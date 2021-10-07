@@ -168,7 +168,7 @@ class layer_convpool(nn.Module):
         '''
         Feedforward operator (x --> y = F(x))
         '''
-
+        # conv -> rho -> pool
         y, ind = self.pool(self.rho(self.f(x)))
         
         if ret_ind:
@@ -180,7 +180,7 @@ class layer_convpool(nn.Module):
         '''
         Feedback operator (y --> r = G(y))
         '''
-
+        # unpool -> rho -> conv_transpose
         if hasattr(self, 'b'):
             r = self.unpool(y, ind, output_size = x.size())
             r = self.b(self.rho(r), output_size = x.size())

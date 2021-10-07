@@ -5,6 +5,7 @@ Use `python main.py --help` for a list of all available arguments,
     or (even better), take a look at the [`Config`](target_prop/config.py) and the
     [`Model.HParams`](target_prop/model.py) classes to see their definition.
 """
+import logging
 from typing import Type
 from target_prop.models import BaseModel, SequentialModel, ParallelModel
 from target_prop.config import Config
@@ -43,7 +44,7 @@ def main(sample_hparams: bool = False):
     # trainer_parser = Trainer.add_argparse_args(parser)
 
     args = parser.parse_args()
-    
+        
     config: Config = args.config
     hparams: BaseModel.HParams = args.hparams
     if not sample_hparams:
@@ -71,6 +72,9 @@ def main(sample_hparams: bool = False):
     if config.debug:
         print(f"Setting the max_epochs to 1, since '--debug' was passed.")
         hparams.max_epochs = 1
+        logging.getLogger("target_prop").setLevel(logging.DEBUG)
+    else:
+        logging.getLogger("target_prop").setLevel(logging.INFO)
 
     print("HParams:", hparams.dumps_json(indent="\t"))
     # Create the datamodule:
@@ -83,9 +87,11 @@ def main(sample_hparams: bool = False):
         gpus=torch.cuda.device_count(),
         track_grad_norm=False,
         accelerator=None,
+        # max_steps=10 if config.debug else None, # NOTE: Can be useful when generating a lot of plots.
         # accelerator="ddp",
         # profiler="simple",
         # callbacks=[],
+        # terminate_on_nan=True, # BUG: Would like to use this, but doesn't seem to work.
         logger=WandbLogger() if not config.debug else None,
     )
     trainer.fit(model, datamodule=datamodule)

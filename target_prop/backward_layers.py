@@ -2,7 +2,7 @@ from __future__ import annotations
 from functools import singledispatch
 from torch import nn
 import torch
-from typing import OrderedDict, TypeVar, Tuple
+from typing import OrderedDict, TypeVar, Tuple, overload
 
 from functools import singledispatch
 from typing import (
@@ -28,21 +28,22 @@ class Invertible(Protocol):
     enforce_shapes: bool = False
 
 
+@overload
+def invert(layer: nn.Sequential) -> nn.Sequential: ...
+
+
+@overload
+def invert(layer: nn.Module) -> nn.Module: ...
+
+
 @singledispatch
-def invert(
-    layer: nn.Module, init_symetric_weights: bool = False
-) -> nn.Module:
+def invert(layer: Union[nn.Module, nn.Sequential]) -> Union[nn.Module, nn.Sequential]:
     """Returns the module to be used to compute the 'backward' version of `layer`.
     
     Parameters
     ----------
     layer : nn.Module
         Layer of the forward-pass.
-        
-    init_symetric_weights : bool, optional
-        Wether to initialize the weights of the backward layer based on those of the
-        forward layer.
-
 
     Returns
     -------

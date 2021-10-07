@@ -138,14 +138,25 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
         )
         self.magic_bridge: deque[Tensor] | None = magic_bridge
 
+    def train(self, mode: bool = True) -> "MaxUnpool2d":
+        if self.magic_bridge is not None:
+            self.magic_bridge.clear()
+        return super().train(mode=mode)
+
+    def eval(self) -> "MaxUnpool2d":
+        if self.magic_bridge is not None:
+            self.magic_bridge.clear()
+        return super().eval()
+
     def forward(
         self, input: Tensor, indices: Tensor = None, output_size: list[int] = None
     ) -> Tensor:
         if indices is None:
-            assert self.magic_bridge, "Need to pass indices or use a magic bridge!"
+            assert self.magic_bridge is not None, "Need to pass indices or use a magic bridge!"
             # Only inspect rather than pop the item out, because of how the feedback
-            # loss uses this backward layer twice.
+            # loss uses this backward layer twice in a row (once with y and again with y+noise)
             indices = self.magic_bridge[0]
+            # indices = self.magic_bridge.pop()
         return super().forward(input=input, indices=indices, output_size=output_size)
 
 
@@ -180,9 +191,20 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
         self._return_indices = return_indices
         self.magic_bridge: deque[Tensor] = deque(maxlen=1)
 
+    def train(self, mode: bool = True) -> "MaxPool2d":
+        self.magic_bridge.clear()
+        return super().train(mode=mode)
+
+    def eval(self) -> "MaxPool2d":
+        self.magic_bridge.clear()
+        return super().eval()
+
     def forward(self, input: Tensor) -> Tensor | tuple[Tensor, Tensor]:
         out, indices = super().forward(input)
         # Push the indices onto the 'magic bridge':
+        # if self.training:
+        #     # IDEA: Could clear the magic bridges after the forward passes are done if needed.  
+        #     assert len(self.magic_bridge) == 0, "Expected magic bridge to be empty!"
         self.magic_bridge.append(indices)
         if self._return_indices:
             return out, indices
