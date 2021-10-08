@@ -25,9 +25,9 @@ def main(sample_hparams: bool = False):
     passed from the command-line, if present).
     """
     parser = ArgumentParser(description=__doc__)
-    # parser.set_defaults(model=SequentialModel)
-    
+
     # Hard-set to use the Sequential model, for now.
+    parser.set_defaults(model=SequentialModel)
     parser.add_arguments(SequentialModel.HParams, "hparams")
     parser.add_arguments(Config, "config")
 
