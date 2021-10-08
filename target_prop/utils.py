@@ -18,18 +18,13 @@ class Normal(Normal_):
     """
 
     def __add__(self, other: int | float | Tensor) -> Normal:
-        return type(self)(
-            loc=self.loc + other,
-            scale=self.scale,
-        )
+        return type(self)(loc=self.loc + other, scale=self.scale,)
 
     def __radd__(self, other: int | float | Tensor) -> Normal | Any:
         return self.__add__(other)
 
 
-def get_list_of_values(
-    values: V | list[V], out_length: int, name: str = ""
-) -> list[V]:
+def get_list_of_values(values: V | list[V], out_length: int, name: str = "") -> list[V]:
     """Gets a list of values of length `out_length` from `values`. 
     
     If `values` is a single value, it gets repeated `out_length` times to form the

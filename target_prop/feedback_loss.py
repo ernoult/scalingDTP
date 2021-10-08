@@ -36,7 +36,7 @@ def get_feedback_loss(
     noise_sample_losses = []
     for sample in range(noise_samples):
         # TODO: Use CUDA streams to make this faster, since all iterations are distinct,
-        # computations could perhaps be parallelized on the hardware level. 
+        # computations could perhaps be parallelized on the hardware level.
         # with torch.cuda.Stream():
 
         # 2- Perturbate x <-- x + noise and redo x--> y --> r
@@ -56,6 +56,9 @@ def get_feedback_loss(
         dr_y = r_noise_y - r
 
         # 4- Compute the loss
+        # NOTE: Original code:
+        # (-2*(noise*dr).view(dr.size(0), -1).sum(1).mean()
+        #  + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean())
         dr_loss = -2 * (dx * dr).flatten(1).sum(1).mean()
         dy_loss = (dr_y ** 2).flatten(1).sum(1).mean()
 
@@ -64,8 +67,8 @@ def get_feedback_loss(
         sample_loss = dr_loss + dy_loss
         noise_sample_losses.append(sample_loss)
 
-    feedback_losses = torch.stack(noise_sample_losses)
-    return feedback_losses.mean()
+    feedback_losses = torch.stack(noise_sample_losses, dim=0)
+    return feedback_losses.mean(dim=0)
 
 
 from .layers import Reshape
@@ -83,4 +86,3 @@ def _(
     noise_samples: int = 1,
 ) -> float:
     return 0.0
-

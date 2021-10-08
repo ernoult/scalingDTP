@@ -7,14 +7,16 @@ from torch import nn, Tensor
 import torch
 
 
-
 @singledispatch
 def init_symetric_weights(forward_layer: nn.Module, backward_layer: nn.Module) -> None:
     if any(p.requires_grad for p in forward_layer.parameters()):
         raise NotImplementedError(forward_layer, backward_layer)
 
+
 @init_symetric_weights.register
-def weight_b_sym_linear(forward_layer: nn.Sequential, backward_layer: nn.Sequential) -> None:
+def weight_b_sym_linear(
+    forward_layer: nn.Sequential, backward_layer: nn.Sequential
+) -> None:
     for f_layer, b_layer in zip(forward_layer, backward_layer[::-1]):
         init_symetric_weights(f_layer, b_layer)
 
@@ -41,8 +43,6 @@ def weight_b_sym_linear(forward_layer: nn.Linear, backward_layer: nn.Linear) -> 
     with torch.no_grad():
         # NOTE: I guess the transposition isn't needed here?
         backward_layer.weight.data = forward_layer.weight.data.t()
-
-
 
 
 @singledispatch

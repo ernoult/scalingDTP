@@ -88,9 +88,9 @@ def get_forward_weight_losses(
 
     # Calculate the losses for each layer:
     forward_loss_per_layer = [
-        # 0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).sum()
-        # NOTE: Equivalent to the following.
-        0.5 * F.mse_loss(ys[i], targets[i], reduction="sum")  # type: ignore
+        0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).sum()
+        # NOTE: Apparently NOT equivalent to the following.
+        # 0.5 * F.mse_loss(ys[i], targets[i], reduction="sum")  # type: ignore
         for i in range(0, N)
     ]
     assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(forward_net)

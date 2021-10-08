@@ -29,11 +29,13 @@ class Invertible(Protocol):
 
 
 @overload
-def invert(layer: nn.Sequential) -> nn.Sequential: ...
+def invert(layer: nn.Sequential) -> nn.Sequential:
+    ...
 
 
 @overload
-def invert(layer: nn.Module) -> nn.Module: ...
+def invert(layer: nn.Module) -> nn.Module:
+    ...
 
 
 @singledispatch
@@ -66,7 +68,9 @@ def forward_pre_hook(module: Invertible, inputs: tuple[Tensor, ...]) -> None:
         _check_input_shape(module, input)
 
 
-def forward_hook(module: Invertible, _: Any, outputs: Tensor | tuple[Tensor, ...]) -> None:
+def forward_hook(
+    module: Invertible, _: Any, outputs: Tensor | tuple[Tensor, ...]
+) -> None:
     if isinstance(outputs, tuple) and len(outputs) == 1:
         output = outputs[0]
         _check_output_shape(module, output)
@@ -75,7 +79,11 @@ def forward_hook(module: Invertible, _: Any, outputs: Tensor | tuple[Tensor, ...
         _check_output_shape(module, output)
 
 
-from torch.nn.modules.module import register_module_forward_hook, register_module_forward_pre_hook
+from torch.nn.modules.module import (
+    register_module_forward_hook,
+    register_module_forward_pre_hook,
+)
+
 register_module_forward_pre_hook(forward_pre_hook)
 register_module_forward_hook(forward_hook)
 
@@ -141,9 +149,7 @@ def invert_linear(layer: nn.Linear) -> nn.Linear:
 
 
 @invert.register
-def invert_conv(
-    layer: nn.Conv2d
-) -> nn.ConvTranspose2d:
+def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
     assert len(layer.kernel_size) == 2
     assert len(layer.stride) == 2
     assert len(layer.padding) == 2
@@ -168,20 +174,16 @@ def invert_conv(
         dilation=d_h,
         padding=(p_h, p_w),
         # TODO: Get this value programmatically.
-        output_padding=(s_h - 1, s_w - 1),   
+        output_padding=(s_h - 1, s_w - 1),
         # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
     )
     return backward
 
 
 @invert.register(nn.ReLU)
-def invert_activation(
-    activation_layer: nn.Module
-) -> nn.Module:
+def invert_activation(activation_layer: nn.Module) -> nn.Module:
     # TODO: Return an identity function?
-    raise NotImplementedError(
-        f"Activations aren't invertible by default!"
-    )
+    raise NotImplementedError(f"Activations aren't invertible by default!")
     # NOTE: It may also be the case that this activation is misplaced (leading to the
     # mis-alignment of layers in contiguous blocks of a network)
     return nn.Identity()

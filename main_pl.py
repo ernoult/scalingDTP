@@ -7,6 +7,8 @@ Use `python main.py --help` for a list of all available arguments,
 """
 import logging
 from typing import Type
+
+from pytorch_lightning.utilities.seed import seed_everything
 from target_prop.models import BaseModel, SequentialModel, ParallelModel
 from target_prop.config import Config
 from simple_parsing import ArgumentParser
@@ -24,27 +26,32 @@ def main(sample_hparams: bool = False):
     """
     parser = ArgumentParser(description=__doc__)
     # parser.set_defaults(model=SequentialModel)
-    # parser.add_arguments(SequentialModel.HParams, "hparams")
-    # parser.add_arguments(Config, "config")
+    
+    # Hard-set to use the Sequential model, for now.
+    parser.add_arguments(SequentialModel.HParams, "hparams")
+    parser.add_arguments(Config, "config")
 
-    subparsers = parser.add_subparsers(title="model", description="Type of model to use.")
+    ## TODO: Once the parallel model is usable (currently focussing on the Sequential model), then
+    ## use this to make it possible to swap between them.
+    # subparsers = parser.add_subparsers(
+    #     title="model", description="Type of model to use.", metavar="<model_type>", required=True
+    # )
+    # sequential_parser: ArgumentParser = subparsers.add_parser("sequential")
+    # sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
+    # sequential_parser.add_arguments(Config, dest="config")
+    # sequential_parser.set_defaults(model=SequentialModel)
 
-    sequential_parser: ArgumentParser = subparsers.add_parser("sequential")
-    sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
-    sequential_parser.add_arguments(Config, dest="config")
-    sequential_parser.set_defaults(model=SequentialModel)
-
-    parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
-    parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
-    parallel_parser.add_arguments(Config, dest="config")
-    parallel_parser.set_defaults(model=ParallelModel)
+    # parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
+    # parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
+    # parallel_parser.add_arguments(Config, dest="config")
+    # parallel_parser.set_defaults(model=ParallelModel)
 
     # NOTE: we unfortunately can't add the PL Trainer arguments directly atm, because they don't
     # play nice with simple-parsing.
     # trainer_parser = Trainer.add_argparse_args(parser)
 
     args = parser.parse_args()
-        
+
     config: Config = args.config
     hparams: BaseModel.HParams = args.hparams
     if not sample_hparams:
@@ -57,9 +64,7 @@ def main(sample_hparams: bool = False):
         default_hparams_dict = BaseModel.HParams().to_dict()
         cmd_hparams: BaseModel.HParams = args.hparams
         custom_hparams = {
-            k: v
-            for k, v in cmd_hparams.to_dict().items()
-            if v != default_hparams_dict[k]
+            k: v for k, v in cmd_hparams.to_dict().items() if v != default_hparams_dict[k]
         }
         if custom_hparams:
             print(f"Overwriting sampled values for entries {custom_hparams}")
@@ -69,12 +74,20 @@ def main(sample_hparams: bool = False):
     print(f"Config:", config.dumps_json(indent="\t"))
     # print(f"HParams:", hparams)
 
+    if config.seed is not None:
+        seed = config.seed
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        g = torch.Generator(device=config.device)
+        seed = g.seed()
+    print(f"Selected seed: {seed}")
+    seed_everything(seed=seed, workers=True)
+
+    logging.getLogger().setLevel(logging.INFO)
     if config.debug:
         print(f"Setting the max_epochs to 1, since '--debug' was passed.")
         hparams.max_epochs = 1
         logging.getLogger("target_prop").setLevel(logging.DEBUG)
-    else:
-        logging.getLogger("target_prop").setLevel(logging.INFO)
 
     print("HParams:", hparams.dumps_json(indent="\t"))
     # Create the datamodule:

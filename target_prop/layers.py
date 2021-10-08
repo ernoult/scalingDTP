@@ -132,9 +132,7 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
         magic_bridge: deque[Tensor] = None,
     ):
         super().__init__(
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=padding,
+            kernel_size=kernel_size, stride=stride, padding=padding,
         )
         self.magic_bridge: deque[Tensor] | None = magic_bridge
 
@@ -152,7 +150,9 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
         self, input: Tensor, indices: Tensor = None, output_size: list[int] = None
     ) -> Tensor:
         if indices is None:
-            assert self.magic_bridge is not None, "Need to pass indices or use a magic bridge!"
+            assert (
+                self.magic_bridge is not None
+            ), "Need to pass indices or use a magic bridge!"
             # Only inspect rather than pop the item out, because of how the feedback
             # loss uses this backward layer twice in a row (once with y and again with y+noise)
             indices = self.magic_bridge[0]
@@ -161,13 +161,13 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
 
 
 @invert.register
-def invert_maxunpool2d(module: AdaptiveMaxPool2d, init_symetric_weights: bool = False) -> "AdaptiveMaxPool2d":
+def invert_maxunpool2d(
+    module: AdaptiveMaxPool2d, init_symetric_weights: bool = False
+) -> "AdaptiveMaxPool2d":
     raise NotImplementedError("Never really need to invert a max Unpool layer.")
     assert module.input_shape and module.output_shape
     assert len(module.input_shape) > 2
-    return AdaptiveMaxPool2d(
-        output_size=module.input_shape[-2:],
-    )
+    return AdaptiveMaxPool2d(output_size=module.input_shape[-2:],)
 
 
 class MaxPool2d(nn.MaxPool2d, Invertible):
@@ -203,7 +203,7 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
         out, indices = super().forward(input)
         # Push the indices onto the 'magic bridge':
         # if self.training:
-        #     # IDEA: Could clear the magic bridges after the forward passes are done if needed.  
+        #     # IDEA: Could clear the magic bridges after the forward passes are done if needed.
         #     assert len(self.magic_bridge) == 0, "Expected magic bridge to be empty!"
         self.magic_bridge.append(indices)
         if self._return_indices:
@@ -212,7 +212,9 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
 
 
 @invert.register
-def invert_maxpool2d(module: MaxPool2d, init_symetric_weights: bool = False) -> MaxUnpool2d:
+def invert_maxpool2d(
+    module: MaxPool2d, init_symetric_weights: bool = False
+) -> MaxUnpool2d:
     return MaxUnpool2d(
         kernel_size=module.kernel_size,
         stride=None,  # todo: Not sure waht to do with this value here.
@@ -230,16 +232,22 @@ class BatchUnNormalize(nn.Module):
 
     def __init__(self, num_features: int, dtype=torch.float32):
         super().__init__()
-        self.scale = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
+        self.scale = nn.Parameter(
+            torch.ones(num_features, dtype=dtype), requires_grad=True
+        )
         torch.nn.init.xavier_uniform_(self.scale)
-        self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
+        self.offset = nn.Parameter(
+            torch.zeros(num_features, dtype=dtype), requires_grad=True
+        )
 
     def forward(self, input: Tensor) -> Tensor:
         return input * self.scale + self.offset
 
 
 @invert.register(nn.BatchNorm2d)
-def invert_batchnorm(layer: nn.BatchNorm2d, init_symetric_weights: bool = False) -> BatchUnNormalize:
+def invert_batchnorm(
+    layer: nn.BatchNorm2d, init_symetric_weights: bool = False
+) -> BatchUnNormalize:
     # TODO: Is there a way to initialize symetric weights for BatchNorm?
     return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
 
@@ -266,9 +274,7 @@ class ConvPoolBlock(nn.Sequential, Invertible):
         conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         rho = activation_type()
         pool = MaxPool2d(2)
-        super().__init__(
-            OrderedDict([("conv", conv), ("rho", rho), ("pool", pool)]),
-        )
+        super().__init__(OrderedDict([("conv", conv), ("rho", rho), ("pool", pool)]),)
 
     def forward(self, x: Tensor) -> Tensor:
         """

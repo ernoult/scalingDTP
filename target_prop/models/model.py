@@ -4,63 +4,34 @@ optimizations.
 TODO: Add callbacks that compute the jacobians and log images / stuff to wandb.
 """
 # from __future__ import annotations
-import json
-import warnings
 import textwrap
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from dataclasses import asdict, dataclass
-from functools import singledispatch
+from dataclasses import dataclass
 from logging import getLogger
-from pathlib import Path
-from typing import (
-    Callable,
-    ClassVar,
-    Dict,
-    ForwardRef,
-    Iterable,
-    List,
-    Literal,
-    NamedTuple,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-)
+from typing import Dict, List, Literal, Optional, Tuple, Type, TypeVar, Union
 
-import pytorch_lightning
 import torch
-import tqdm
-import wandb
-from pl_bolts.datamodules import CIFAR10DataModule, MNISTDataModule
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer
+from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping
-from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing import ArgumentParser
-from simple_parsing.helpers import choice, list_field, mutable_field
-from simple_parsing.helpers.hparams import (
-    HyperParameters,
-    categorical,
-    log_uniform,
-    uniform,
-)
-from simple_parsing.helpers.serialization import Serializable
+from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers.hparams import HyperParameters, log_uniform, uniform
+from target_prop._weight_operations import init_symetric_weights
 from target_prop.config import Config
-from target_prop.feedback_loss import get_feedback_loss
-from target_prop.layers import MaxPool2d, Reshape, invert  # Conv2dELU,; ConvTranspose2dELU,
-from target_prop.optimizer_config import OptimizerConfig as OptimizerHParams
-from target_prop.utils import flag, get_list_of_values, is_trainable
+from target_prop.layers import (
+    MaxPool2d,
+    Reshape,
+    invert,
+)  # Conv2dELU,; ConvTranspose2dELU,
+from target_prop.optimizer_config import OptimizerConfig
+from target_prop.utils import flag, is_trainable
 from torch import Tensor, nn
-from torch.distributions import Normal
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
-from target_prop._weight_operations import init_symetric_weights
 
 T = TypeVar("T")
 logger = getLogger(__name__)
@@ -105,15 +76,14 @@ class BaseModel(LightningModule, ABC):
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
-        f_optim: OptimizerHParams = OptimizerHParams(
-            type="sgd", lr=0.08, use_lr_scheduler=True, weight_decay=1e-4,
+        # NOTE: f_optim.use_lr_scheduler is equivalent to the previous '--scheduler' argument:
+        # > Use of a learning rate scheduler for the forward weights.
+        f_optim: OptimizerConfig = OptimizerConfig(
+            type="sgd", lr=0.08, weight_decay=1e-4,
         )
         # Hyper-parameters for the "backward" optimizer
-        # BUG: The default values of the arguments don't reflect the values that are
-        # passed to `mutable_field`
-        b_optim: OptimizerHParams = OptimizerHParams(
-            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], use_lr_scheduler=False,
+        b_optim: OptimizerConfig = OptimizerConfig(
+            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], weight_decay=None,
         )
 
         # nudging parameter: Used when calculating the first target.
@@ -140,7 +110,9 @@ class BaseModel(LightningModule, ABC):
         # Wether to update the feedback weights before the forward weights.
         feedback_before_forward: bool = flag(True)
 
-        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default="elu")
+        activation: Type[nn.Module] = choice(
+            {"relu": nn.ReLU, "elu": nn.ELU,}, default="elu"
+        )
 
         # feedback_weight_training_procedure: str = choice(
         #     "awesome", "sequential", "best_of_both_worlds", default="sequential",
@@ -181,7 +153,11 @@ class BaseModel(LightningModule, ABC):
                 nn.Sequential(
                     OrderedDict(
                         conv=nn.Conv2d(
-                            channels[i], channels[i + 1], kernel_size=3, stride=1, padding=1,
+                            channels[i],
+                            channels[i + 1],
+                            kernel_size=3,
+                            stride=1,
+                            padding=1,
                         ),
                         rho=nn.ELU(),
                         # NOTE: Even though `return_indices` is `False` here, we're actually passing
@@ -222,8 +198,12 @@ class BaseModel(LightningModule, ABC):
         self.feedback_noise_scales = self._get_noise_scale_per_feedback_layer(
             forward_ordering=False
         )
-        self.feedback_lrs = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
-        self.feedback_iterations = self._get_iterations_per_feedback_layer(forward_ordering=False)
+        self.feedback_lrs = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
+        self.feedback_iterations = self._get_iterations_per_feedback_layer(
+            forward_ordering=False
+        )
 
         if self.config.debug:
             print(f"Backward net: ")
@@ -238,7 +218,9 @@ class BaseModel(LightningModule, ABC):
                     )
                 )
             ):
-                print(f"Layer {i} (G[{N-i}]): LR: {lr}, noise: {noise}, iterations: {iterations}")
+                print(
+                    f"Layer {i} (G[{N-i}]): LR: {lr}, noise: {noise}, iterations: {iterations}"
+                )
                 print(textwrap.indent(str(layer), prefix="\t"))
                 if i == N - 1:
                     # The last layer of the backward_net (the layer closest to the input) is not
@@ -271,7 +253,11 @@ class BaseModel(LightningModule, ABC):
         self.accuracy = Accuracy()
 
         self.save_hyperparameters(
-            {"hp": self.hp.to_dict(), "datamodule": datamodule, "config": self.config.to_dict(),}
+            {
+                "hp": self.hp.to_dict(),
+                "datamodule": datamodule,
+                "config": self.config.to_dict(),
+            }
         )
         # kwargs that will get passed to all calls to `self.log()`, just to make things
         # a bit more tidy
@@ -306,7 +292,9 @@ class BaseModel(LightningModule, ABC):
         assert self.phase == phase, (self.phase, phase)
         # self.phase = phase
 
-        dtype: Optional[torch.dtype] = self.dtype if isinstance(self.dtype, torch.dtype) else None
+        dtype: Optional[torch.dtype] = self.dtype if isinstance(
+            self.dtype, torch.dtype
+        ) else None
         # The total loss to be returned.
         loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
 
@@ -351,63 +339,16 @@ class BaseModel(LightningModule, ABC):
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
     ) -> Union[Tensor, float]:
-        loss = self.shared_step(
+        return self.shared_step(
             batch=batch, batch_idx=batch_idx, optimizer_idx=optimizer_idx, phase="train"
         )
-        if self.automatic_optimization:
-            # Should have a loss with gradients if we're using automatic optimization
-            # from PL.
-            assert loss.requires_grad, (loss, optimizer_idx)
-            return loss
-        elif isinstance(loss, Tensor):
-            # Need to NOT return a Tensor when not using automatic optimization.
-            # BUG: Pytorch Lightning complains that we're returning a Tensor, even if
-            # it's a float!
-            return float(loss.item())
-        return loss
-
-    def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
-        """ Called with the results of each worker / replica's output.
-
-        See the `training_step_end` of pytorch-lightning for more info.
-        """
-        # TODO: For now we're kinda losing the logs and stuff that happens within the
-        # workers in DP (they won't show up in the progress bar for instance).
-        # merged_step_results = {
-        #     k: sum(v_i.to(self.device) for v_i in v)
-        #     for k, v in step_results
-        # }
-        merged_step_result = (
-            step_results if isinstance(step_results, (Tensor, float)) else sum(step_results)
-        )
-
-        # TODO: If NOT in automatic differentiation, but still in a scenario where we
-        # can do a single update, do it here.
-        loss = merged_step_result
-        self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
-
-        if not self.automatic_optimization and isinstance(loss, Tensor) and loss.requires_grad:
-            forward_optimizer = self.forward_optimizer
-            backward_optimizer = self.feedback_optimizer
-            forward_optimizer.zero_grad()
-            backward_optimizer.zero_grad()
-
-            self.manual_backward(loss)
-
-            forward_optimizer.step()
-            backward_optimizer.step()
-            return float(loss)
-
-        elif not self.automatic_optimization:
-            return float(merged_step_result)
-
-        assert self.automatic_optimization
-        return merged_step_result
 
     def validation_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int
     ) -> Union[Tensor, float]:
-        return self.shared_step(batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val")
+        return self.shared_step(
+            batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val"
+        )
 
     def test_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int
@@ -447,7 +388,9 @@ class BaseModel(LightningModule, ABC):
         assert values_per_layer[-1] == default
         return values_per_layer
 
-    def _get_iterations_per_feedback_layer(self, forward_ordering: bool = True) -> List[int]:
+    def _get_iterations_per_feedback_layer(
+        self, forward_ordering: bool = True
+    ) -> List[int]:
         """ Returns the number of iterations to perform for each of the layers in
         `self.backward_net`.
 
@@ -459,12 +402,16 @@ class BaseModel(LightningModule, ABC):
         # Reverse it, since it's passed in 'forward' order and the `align_values...`
         # function expects to receive 'reversed' values.
         iterations_per_layer = list(reversed(iterations_per_layer))
-        iterations_per_layer = self._align_values_with_backward_net(iterations_per_layer, default=0)
+        iterations_per_layer = self._align_values_with_backward_net(
+            iterations_per_layer, default=0
+        )
         if forward_ordering:
             iterations_per_layer.reverse()
         return iterations_per_layer
 
-    def _get_noise_scale_per_feedback_layer(self, forward_ordering: bool = True) -> List[float]:
+    def _get_noise_scale_per_feedback_layer(
+        self, forward_ordering: bool = True
+    ) -> List[float]:
         """ Returns the noise scale for each feedback layer.
 
         If `forward_ordering` is False, returns it in the same order as the
@@ -482,7 +429,9 @@ class BaseModel(LightningModule, ABC):
             noise_scale_per_layer.reverse()
         return noise_scale_per_layer
 
-    def _get_learning_rate_per_feedback_layer(self, forward_ordering: bool = False) -> List[float]:
+    def _get_learning_rate_per_feedback_layer(
+        self, forward_ordering: bool = False
+    ) -> List[float]:
         """ Returns the learning rate for each feedback layer.
 
         If `forward_ordering` is False, returns it in the same order as the
@@ -506,7 +455,9 @@ class BaseModel(LightningModule, ABC):
         forward_optim_config = {"optimizer": forward_optimizer}
 
         # NOTE: We pass the learning rates in the same order as the feedback net:
-        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
+        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
         feedback_optimizer = self.hp.b_optim.make_optimizer(
             self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
         )
@@ -515,7 +466,9 @@ class BaseModel(LightningModule, ABC):
         if self.hp.b_optim.use_lr_scheduler:
             # NOTE: By default we don't use a scheduler for the feedback optimizer.
             feedback_optim_config["lr_scheduler"] = {
-                "scheduler": CosineAnnealingLR(feedback_optimizer, T_max=85, eta_min=1e-5),
+                "scheduler": CosineAnnealingLR(
+                    feedback_optimizer, T_max=85, eta_min=1e-5
+                ),
                 "interval": "epoch",  # called after each training epoch
                 "frequency": 1,
             }
@@ -524,7 +477,9 @@ class BaseModel(LightningModule, ABC):
             # `main.py` seems to be using a weight scheduler only for the forward weight
             # training.
             forward_optim_config["lr_scheduler"] = {
-                "scheduler": CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5),
+                "scheduler": CosineAnnealingLR(
+                    forward_optimizer, T_max=85, eta_min=1e-5
+                ),
                 "interval": "epoch",  # called after each training epoch
                 "frequency": 1,
             }
@@ -565,7 +520,9 @@ class BaseModel(LightningModule, ABC):
             # If early stopping is enabled, add a PL Callback for it:
             callbacks.append(
                 EarlyStopping(
-                    "val/accuracy", patience=self.hp.early_stopping_patience, verbose=True,
+                    "val/accuracy",
+                    patience=self.hp.early_stopping_patience,
+                    verbose=True,
                 )
             )
         return callbacks
@@ -585,7 +542,9 @@ class BaseModel(LightningModule, ABC):
         if self.trainer.predicting:
             return "predict"
         # NOTE: This doesn't work when inside the sanity check!
-        if self.trainer.state.stage and self.trainer.state.stage.value == "sanity_check":
+        if (
+            self.trainer.state.stage
+            and self.trainer.state.stage.value == "sanity_check"
+        ):
             return "val"
         raise RuntimeError(f"unexpected trainer state: {self.trainer.state}")
-

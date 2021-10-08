@@ -1,6 +1,6 @@
 from .model import BaseModel
 from torch import Tensor
-from typing import List
+from typing import List, Tuple, Union
 from torch import nn
 import torch
 from target_prop.utils import is_trainable
@@ -19,6 +19,80 @@ class ParallelModel(BaseModel):
         self.automatic_optimization = True
         self.criterion = nn.CrossEntropyLoss(reduction="none")
 
+    def training_step(  # type: ignore
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
+    ) -> Union[Tensor, float]:
+        loss = self.shared_step(
+            batch=batch, batch_idx=batch_idx, optimizer_idx=optimizer_idx, phase="train"
+        )
+        if self.automatic_optimization:
+            # Should have a loss with gradients if we're using automatic optimization
+            # from PL.
+            assert loss.requires_grad, (loss, optimizer_idx)
+            return loss
+        elif isinstance(loss, Tensor):
+            # Need to NOT return a Tensor when not using automatic optimization.
+            # BUG: Pytorch Lightning complains that we're returning a Tensor, even if
+            # it's a float!
+            return float(loss.item())
+        return loss
+
+    def validation_step(  # type: ignore
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int
+    ) -> Union[Tensor, float]:
+        return self.shared_step(
+            batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val"
+        )
+
+    def test_step(  # type: ignore
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int
+    ) -> Union[Tensor, float]:
+        return self.shared_step(batch, batch_idx=batch_idx, phase="test")
+
+    def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
+        """ Called with the results of each worker / replica's output.
+
+        See the `training_step_end` of pytorch-lightning for more info.
+        """
+        # TODO: For now we're kinda losing the logs and stuff that happens within the
+        # workers in DP (they won't show up in the progress bar for instance).
+        # merged_step_results = {
+        #     k: sum(v_i.to(self.device) for v_i in v)
+        #     for k, v in step_results
+        # }
+        merged_step_result = (
+            step_results
+            if isinstance(step_results, (Tensor, float))
+            else sum(step_results)
+        )
+
+        # TODO: If NOT in automatic differentiation, but still in a scenario where we
+        # can do a single update, do it here.
+        loss = merged_step_result
+        self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
+
+        if (
+            not self.automatic_optimization
+            and isinstance(loss, Tensor)
+            and loss.requires_grad
+        ):
+            forward_optimizer = self.forward_optimizer
+            backward_optimizer = self.feedback_optimizer
+            forward_optimizer.zero_grad()
+            backward_optimizer.zero_grad()
+
+            self.manual_backward(loss)
+
+            forward_optimizer.step()
+            backward_optimizer.step()
+            return float(loss)
+
+        elif not self.automatic_optimization:
+            return float(merged_step_result)
+
+        assert self.automatic_optimization
+        return merged_step_result
+
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
         # NOTE: Could use the same exact forward loss as the sequential model, at the
         # moment.
@@ -27,7 +101,7 @@ class ParallelModel(BaseModel):
     def feedback_loss(self, x, y):
         raise NotImplementedError("Fix this, focusing on the SequentialModel for now.")
 
-         # Get the outputs for all layers.
+        # Get the outputs for all layers.
         # NOTE: no need for gradients w.r.t. forward parameters.
         with torch.no_grad():
             ys = self.forward_net.forward_all(x)
@@ -64,7 +138,9 @@ class ParallelModel(BaseModel):
         n_layers = len(self.backward_net)
         if not isinstance(self.hp.feedback_training_iterations, int):
             assert len(set(self.hp.feedback_training_iterations)) == 1
-            self.hp.feedback_training_iterations = self.hp.feedback_training_iterations[0]
+            self.hp.feedback_training_iterations = self.hp.feedback_training_iterations[
+                0
+            ]
 
         iterations: int = self.hp.feedback_training_iterations
         # Only do one iteration when evaluating or testing.
@@ -84,7 +160,8 @@ class ParallelModel(BaseModel):
                     noise_scale=noise_scale_per_layer[i],
                     noise_samples=self.hp.feedback_,
                 )
-                if is_trainable(reversed_backward_net[i]) else 0
+                if is_trainable(reversed_backward_net[i])
+                else 0
                 for i in range(n_layers)
             ]
             loss = torch.stack(feedback_losses)

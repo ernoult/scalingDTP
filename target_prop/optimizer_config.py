@@ -31,8 +31,10 @@ class OptimizerConfig(HyperParameters):
     lr: List[float] = log_uniform(1e-4, 1e-1, default=5e-3, shape=2)
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
-    # Wether or not to use a learning rate scheduler.
-    use_lr_scheduler: bool = False
+
+    # Momentum term to pass to SGD.
+    # NOTE: This value is only used with SGD, not with Adam.
+    momentum: float = 0.9
 
     def make_optimizer(
         self, network: nn.Sequential, learning_rates_per_layer: List[float] = None
@@ -55,6 +57,8 @@ class OptimizerConfig(HyperParameters):
         optimizer_kwargs = {}
         if self.weight_decay is not None:
             optimizer_kwargs["weight_decay"] = self.weight_decay
+        if optimizer_class is torch.optim.SGD:
+            optimizer_kwargs["momentum"] = self.momentum
 
         logger.debug("optimizer kwargs:", optimizer_kwargs)
         return optimizer_class(  # type: ignore

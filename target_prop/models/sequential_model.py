@@ -1,27 +1,37 @@
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, TypeVar, Union, cast
 from pathlib import Path
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import numpy as np
 import plotly.graph_objects as go
 import torch
+import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from plotly.graph_objects import Figure
 from plotly.subplots import make_subplots
-from pytorch_lightning import Trainer
-from simple_parsing.helpers import list_field
-from torch.optim import optimizer
+from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers.hparams import log_uniform, uniform
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
+from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
 from target_prop.models.model import BaseModel
-from target_prop.utils import get_list_of_values, is_trainable
+from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from target_prop.layers import forward_all, forward_each
-import wandb
-from plotly.graph_objects import Figure
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -53,15 +63,64 @@ class SequentialModel(BaseModel):
         ```
         """
 
+        # batch size
+        batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
+
+        # Channels per conv layer.
+        channels: List[int] = list_field(128, 128, 256, 256, 512)
+
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
+
+        # Max number of training epochs in total.
+        max_epochs: int = 90
+
+        # Hyper-parameters for the "backward" optimizer
+        # BUG: The default values of the arguments don't reflect the values that are
+        # passed to `mutable_field`
+        b_optim: OptimizerConfig = OptimizerConfig(
+            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+        )
+        # The scale of the gaussian random variable in the feedback loss calculation.
+        noise: List[float] = uniform(
+            0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
+        )
+        # Hyper-parameters for the forward optimizer
+        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
+        f_optim: OptimizerConfig = OptimizerConfig(
+            type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
+        )
+        # Use of a learning rate scheduler for the forward weights.
+        scheduler: bool = True
+        # nudging parameter: Used when calculating the first target.
+        beta: float = uniform(0.01, 1.0, default=0.7)
+
+        # Number of noise samples to use to get the feedback loss in a single iteration.
+        # NOTE: The loss used for each update is the average of these losses.
+        feedback_samples_per_iteration: int = uniform(1, 20, default=1)
+
+        # Max number of epochs to train for without an improvement to the validation
+        # accuracy before the training is stopped. When 0, no early stopping is used.
+        early_stopping_patience: int = 0
+
+        # Sets symmetric weight initialization
+        init_symetric_weights: bool = False
+
+        # jacobian: bool = False  # compute jacobians
+
+        activation: Type[nn.Module] = choice(
+            {"relu": nn.ReLU, "elu": nn.ELU,}, default="elu"
+        )
 
         # Step interval for creating and logging plots.
         plot_every: int = 10
 
     def __init__(
-        self, datamodule: VisionDataModule, hparams: "SequentialModel.HParams", config: Config,
+        self,
+        datamodule: VisionDataModule,
+        hparams: "SequentialModel.HParams",
+        config: Config,
     ):
         super().__init__(datamodule, hparams, config)
         # Can't do automatic optimization here, since we do multiple sequential updates
@@ -113,7 +172,9 @@ class SequentialModel(BaseModel):
             f_optimizer.zero_grad()
             forward_loss = forward_loss.detach()
             lr_scheduler = self.lr_schedulers()
-            lr_scheduler.step()  # type: ignore
+            if lr_scheduler:
+                assert not isinstance(lr_scheduler, list)
+                lr_scheduler.step()
 
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps.
@@ -137,7 +198,9 @@ class SequentialModel(BaseModel):
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
         with torch.no_grad():
-            ys: List[Tensor] = forward_all(self.forward_net, x, allow_grads_between_layers=False)
+            ys: List[Tensor] = forward_all(
+                self.forward_net, x, allow_grads_between_layers=False
+            )
 
         # List of losses, distances, and angles for each layer (with multiple iterations per layer).
         layer_losses: List[List[Tensor]] = []
@@ -250,13 +313,15 @@ class SequentialModel(BaseModel):
 
             if self.config.debug:
                 # Also save an HTML version when debugging.
-                fig.write_html(str(save_path.with_suffix(".html")), include_plotlyjs="cdn")
+                fig.write_html(
+                    str(save_path.with_suffix(".html")), include_plotlyjs="cdn"
+                )
 
             if wandb.run:
                 wandb.log({"feedback_training": fig})
 
         # NOTE: Need to return something.
-        total_b_loss = sum(sum(iteration_losses) for iteration_losses in layer_losses) 
+        total_b_loss = sum(sum(iteration_losses) for iteration_losses in layer_losses)
         return {
             "loss": total_b_loss,
             "layer_losses": layer_losses,
@@ -265,11 +330,15 @@ class SequentialModel(BaseModel):
         }
 
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
+        """ Get the loss used to train the forward net. 
+
+        NOTE: Unlike `feedback_loss`, this actually returns the 'live' loss tensor.
+        """
         # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
         ## --------
         # return super().forward_loss(x=x, y=y)
         ## --------
-
+        step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
             self.forward_net, x, allow_grads_between_layers=False,
         )
@@ -305,7 +374,10 @@ class SequentialModel(BaseModel):
         N = len(self.forward_net)
         # NOTE: Initialize the list of targets with Nones, and we'll replace all the
         # entries with tensors corresponding to the targets of each layer.
-        targets: List[Optional[Tensor]] = [*(None for _ in range(N - 1)), last_layer_target]
+        targets: List[Optional[Tensor]] = [
+            *(None for _ in range(N - 1)),
+            last_layer_target,
+        ]
 
         # Reverse the ordering of the layers, just to make the indexing in the code below match
         # those of the math equations.
@@ -320,7 +392,9 @@ class SequentialModel(BaseModel):
                 G = reordered_feedback_net[i]
                 # G = feedback_net[-1 - i]
 
-                assert targets[i - 1] is None  # Make sure we're not overwriting anything.
+                assert (
+                    targets[i - 1] is None
+                )  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
                 targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
@@ -330,28 +404,38 @@ class SequentialModel(BaseModel):
 
         # NOTE: targets[0] is the targets for the output of the first layer, not for x.
         # Make sure that all targets have been computed and that they are fixed (don't require grad)
-        assert all(target is not None and not target.requires_grad for target in targets)
+        assert all(
+            target is not None and not target.requires_grad for target in targets
+        )
         target_tensors = cast(List[Tensor], targets)  # Rename just for typing purposes.
 
         # Calculate the losses for each layer:
         forward_loss_per_layer = [
-            # 0.5*((ys[i] - targets[i])**2).view(ys[i].size(0), -1).sum(1).mean()
-            # NOTE: Equivalent to the following.
-            0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")  # type: ignore
+            0.5 * ((ys[i] - targets[i]) ** 2).view(ys[i].size(0), -1).sum(1).mean()
+            # NOTE: Apprently NOT Equivalent to the following!
+            # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
             for i in range(0, N)
         ]
-        assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(self.forward_net) == N
+        assert (
+            len(ys)
+            == len(targets)
+            == len(forward_loss_per_layer)
+            == len(self.forward_net)
+            == N
+        )
 
         for i, layer_loss in enumerate(forward_loss_per_layer):
             self.log(f"{self.phase}/F_loss[{i}]", layer_loss)
 
-        loss_tensor = torch.stack(forward_loss_per_layer, -1)
-        # TODO: Use 'sum' or 'mean' as the reduction between layers
-        return loss_tensor.sum()
+        loss_tensor = torch.stack(forward_loss_per_layer, dim=0)
+        # TODO: Use 'sum' or 'mean' as the reduction between layers?
+        return loss_tensor.sum(dim=0)
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:
-        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
+        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
         feedback_optimizer = self.hp.b_optim.make_optimizer(
             self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
         )
@@ -360,10 +444,11 @@ class SequentialModel(BaseModel):
         feedback_optim_config = {"optimizer": feedback_optimizer}
         forward_optim_config = {
             "optimizer": forward_optimizer,
-            "lr_scheduler": CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5),
         }
-        assert self.hp.f_optim.use_lr_scheduler
-        assert self.hp.feedback_before_forward
+        if self.hp.scheduler:
+            # Using the same LR scheduler as the original code:
+            lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
+            forward_optim_config["lr_scheduler"] = lr_scheduler
         return [
             feedback_optim_config,
             forward_optim_config,
@@ -419,7 +504,7 @@ def make_stacked_feedback_training_figure(
     for plot_id, row_title in enumerate(row_titles):
         if "angle" in row_title.lower():
             # TODO: Having trouble making the y axis stick to [0,90] range for just these rows.
-            fig.update_layout(yaxis=dict(range = [0,90]))
+            fig.update_layout(yaxis=dict(range=[0, 90]))
             # fig.update_layout(yaxis=dict(range = [0,90]), row=plot_id+1, col=layer_id+1)
 
     # Add figure title
@@ -432,41 +517,4 @@ def make_stacked_feedback_training_figure(
     # Set y-axes titles (only for the first column)
     for i, row_title in enumerate(row_titles):
         fig.update_yaxes(title_text=row_title, row=i + 1, col=1)
-    return fig
-
-
-def make_feedback_training_figure(
-    values: List[List[Tensor]], row_title: str, title_text: str
-) -> Figure:
-    """Given values for each layer, for each iteration, creates a nice figure that shows their
-    evolution.
-    """
-    n_layers = len(values)
-
-    fig: Figure = make_subplots(
-        rows=1,
-        cols=n_layers,
-        x_title="# of feedback training iterations",
-        column_titles=[f"layer {i}" for i in range(n_layers)],
-        row_titles=[row_title],
-    )
-
-    # Add traces
-    for i in range(n_layers):
-        layer_values = values[i]
-        x = np.arange(len(layer_values))
-        trace = go.Scatter(x=x, y=layer_values)
-        fig.add_trace(
-            trace, row=1, col=i + 1,
-        )
-        
-    # Add figure title
-    fig.update_layout(
-        title_text=title_text, showlegend=False,
-    )
-
-    # Set x-axis title
-    # fig.update_xaxes(title_text="# of feedback training iterations", row=2)
-    # Set y-axes titles (only for the first column)
-    fig.update_yaxes(title_text=row_title, row=1, col=1)
     return fig
