@@ -501,20 +501,17 @@ def make_stacked_feedback_training_figure(
             fig.add_trace(
                 trace, row=plot_id + 1, col=layer_id + 1,
             )
-    for plot_id, row_title in enumerate(row_titles):
-        if "angle" in row_title.lower():
-            # TODO: Having trouble making the y axis stick to [0,90] range for just these rows.
-            fig.update_layout(yaxis=dict(range=[0, 90]))
-            # fig.update_layout(yaxis=dict(range = [0,90]), row=plot_id+1, col=layer_id+1)
 
     # Add figure title
     fig.update_layout(
         title_text=title_text, showlegend=False,
     )
 
-    # Set x-axis title
-    # fig.update_xaxes(title_text="# of feedback training iterations", row=2)
-    # Set y-axes titles (only for the first column)
     for i, row_title in enumerate(row_titles):
+        # Set y-axes titles (only for the first column)
         fig.update_yaxes(title_text=row_title, row=i + 1, col=1)
+        # Set a fixed range on the y axis for that row:
+        if "angle" in row_title.lower():
+            fig.update_yaxes(row=plot_id+1, range=[0, 90], fixedrange=True)
+
     return fig
