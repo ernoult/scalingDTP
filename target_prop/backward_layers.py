@@ -1,46 +1,118 @@
 from __future__ import annotations
-from functools import singledispatch
-from torch import nn
-import torch
-from typing import OrderedDict, TypeVar, Tuple, overload
 
 from functools import singledispatch
 from typing import (
     Any,
+    OrderedDict,
     Protocol,
     Tuple,
     TypeVar,
     Union,
+    cast,
+    overload,
     runtime_checkable,
 )
 
 import torch
 from torch import Tensor, nn
+from torch.nn.modules.lazy import LazyModuleMixin
 
-
-ModuleType = TypeVar("ModuleType", bound=nn.Module, covariant=True)
+ModuleType = TypeVar("ModuleType", bound=nn.Module)
 
 
 @runtime_checkable
 class Invertible(Protocol):
+    """ Marks a Module as "easy to invert", since it has known input and output shapes.
+    
+    This is useful because it's easier to mark modules as invertible in-place than to create new
+    subclass for every single nn.Module that we use and have them inherit from some kind of
+    `InvertibleMixin` (which is what I was doing before).
+
+    NOTE: (@lebrice) Using a Protocol for this isn't 100% necessary. Just having fun with the new
+    structural subtyping.
+    """
+
     input_shape: Tuple[int, ...] = ()
     output_shape: Tuple[int, ...] = ()
     enforce_shapes: bool = False
 
 
-@overload
-def invert(layer: nn.Sequential) -> nn.Sequential:
-    ...
+def check_shapes_hook(
+    module: Invertible,
+    inputs: Tensor | tuple[Tensor, ...],
+    outputs: Tensor | tuple[Tensor, ...],
+) -> None:
+    """ Hook that sets the `input_shape` and `output_shape` attributes on the layers if not present.
+    
+    Also, if the `enforce_shapes` attribute is set to `True` on `module`, and the shapes don't match
+    with their respective attributes, this will raise an error.
+    """
+    if isinstance(inputs, tuple) and len(inputs) == 1:
+        inputs = inputs[0]
+    if isinstance(outputs, tuple) and len(outputs) == 1:
+        outputs = outputs[0]
 
+    if not isinstance(inputs, Tensor) or not isinstance(outputs, Tensor):
+        # For now we can only add this hook on modules that take one tensor in and return one
+        # tensor out.
+        return
 
-@overload
-def invert(layer: nn.Module) -> nn.Module:
-    ...
+    # Don't consider the batch dimension.
+    input_shape = tuple(inputs.shape[1:])
+    output_shape = tuple(outputs.shape[1:])
+    # Set the `input_shape`, `output_shape`, `enforce_shapes` attributes if not present:
+    if not hasattr(module, "enforce_shapes"):
+        module.enforce_shapes = False
+    # NOTE: not using hasattr since some layers might have type annotations with empty tuple or smt.
+    if getattr(module, "input_shape", ()) is ():
+        module.input_shape = input_shape
+    if getattr(module, "output_shape", ()) is ():
+        module.output_shape = output_shape
+
+    # NOTE: This isinstance check works with the `Invertible` procol since the attributes are there.
+    assert isinstance(module, Invertible)
+
+    if module.enforce_shapes:
+        if input_shape != module.input_shape:
+            raise RuntimeError(
+                f"Layer {module} expected individual inputs to have shape {module.input_shape}, but "
+                f"got {input_shape} "
+            )
+        if output_shape != module.output_shape:
+            raise RuntimeError(
+                f"Outputs of layer {module} have unexpected shape {output_shape} "
+                f"(expected {module.output_shape})!"
+            )
 
 
 @singledispatch
-def invert(layer: Union[nn.Module, nn.Sequential]) -> Union[nn.Module, nn.Sequential]:
+def mark_as_invertible(module: nn.Module) -> Union[nn.Module, Invertible]:
+    """ Makes the module easier to "invert" by adding hooks that set the
+    `input_shape` and `output_shape` attributes. Modifies the module in-place.
+    """
+    if check_shapes_hook not in module._forward_hooks.values():
+        module.register_forward_hook(check_shapes_hook)
+    return module
+
+
+@mark_as_invertible.register
+def make_sequential_as_invertible(
+    module: nn.Sequential,
+) -> Union[nn.Sequential, Invertible]:
+    if check_shapes_hook not in module._forward_hooks.values():
+        module.register_forward_hook(check_shapes_hook)
+    for layer in module:
+        # NOTE:
+        _ = mark_as_invertible(layer)
+    return module
+
+
+@singledispatch
+def invert(layer: Union[Invertible, ModuleType]) -> ModuleType:
     """Returns the module to be used to compute the 'backward' version of `layer`.
+    
+    NOTE: All concrete handlers below usually assume that a layer has been marked as 'invertible'.
+    This is usually 
     
     Parameters
     ----------
@@ -62,84 +134,9 @@ def invert(layer: Union[nn.Module, nn.Sequential]) -> Union[nn.Module, nn.Sequen
     )
 
 
-def forward_pre_hook(module: Invertible, inputs: tuple[Tensor, ...]) -> None:
-    if isinstance(inputs, tuple) and len(inputs) == 1:
-        input = inputs[0]
-        _check_input_shape(module, input)
-
-
-def forward_hook(
-    module: Invertible, _: Any, outputs: Tensor | tuple[Tensor, ...]
-) -> None:
-    if isinstance(outputs, tuple) and len(outputs) == 1:
-        output = outputs[0]
-        _check_output_shape(module, output)
-    elif isinstance(outputs, Tensor):
-        output = outputs
-        _check_output_shape(module, output)
-
-
-from torch.nn.modules.module import (
-    register_module_forward_hook,
-    register_module_forward_pre_hook,
-)
-
-register_module_forward_pre_hook(forward_pre_hook)
-register_module_forward_hook(forward_hook)
-
-
-@singledispatch
-def add_hooks(module: nn.Module) -> Union[nn.Module, Invertible]:
-    # if forward_pre_hook not in module._forward_pre_hooks.values():
-    #     module.register_forward_pre_hook(forward_pre_hook)
-    # if forward_hook not in module._forward_hooks.values():
-    #     module.register_forward_hook(forward_hook)
-    return module
-
-
-# @add_hooks.register
-# def add_hooks_to_sequential(module: nn.Sequential) -> Union[nn.Sequential, Invertible]:
-#     # if forward_pre_hook not in module._forward_pre_hooks.values():
-#     #     module.register_forward_pre_hook(forward_pre_hook)
-#     # if forward_hook not in module._forward_hooks.values():
-#     #     module.register_forward_hook(forward_hook)
-#     # return type(module)(
-#     #     OrderedDict((key, add_hooks(value)) for key, value in module._modules.items())
-#     # )
-#     for layer in module:
-#         _ = add_hooks(layer)
-#     return module
-
-
-def _check_input_shape(module: Invertible, x: Tensor) -> None:
-    input_shape = tuple(x.shape[1:])
-    if not hasattr(module, "enforce_shapes"):
-        module.enforce_shapes = False
-    if getattr(module, "input_shape", ()) is ():
-        module.input_shape = input_shape
-    elif module.enforce_shapes and input_shape != module.input_shape:
-        raise RuntimeError(
-            f"Layer {module} expected individual inputs to have shape {module.input_shape}, but "
-            f"got {input_shape} "
-        )
-
-
-def _check_output_shape(module: Invertible, output: Tensor) -> None:
-    output_shape = tuple(output.shape[1:])
-    if not hasattr(module, "enforce_shapes"):
-        module.enforce_shapes = False
-    if getattr(module, "output_shape", ()) is ():
-        module.output_shape = output_shape
-    elif module.enforce_shapes and output_shape != module.output_shape:
-        raise RuntimeError(
-            f"Outputs of layer {module} have unexpected shape {output_shape} "
-            f"(expected {module.output_shape})!"
-        )
-
-
 @invert.register
 def invert_linear(layer: nn.Linear) -> nn.Linear:
-    # assert layer.bias is None, "Not sure how to handle the bias term"
+    # NOTE: Not sure how to handle the bias term
     backward = type(layer)(
         in_features=layer.out_features,
         out_features=layer.in_features,

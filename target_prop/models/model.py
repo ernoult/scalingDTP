@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Dict, List, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -19,6 +19,7 @@ from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import HyperParameters, log_uniform, uniform
 from target_prop._weight_operations import init_symetric_weights
+from target_prop.backward_layers import Invertible, mark_as_invertible
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape, invert
 from target_prop.optimizer_config import OptimizerConfig
@@ -32,7 +33,7 @@ from torchmetrics.classification import Accuracy
 try:
     from typing import Literal
 except ImportError:
-    from typing_extensions import Literal
+    from typing_extensions import Literal  # type: ignore
 
 
 T = TypeVar("T")
@@ -110,9 +111,15 @@ class BaseModel(LightningModule, ABC):
         )
 
         # Wether to update the feedback weights before the forward weights.
+        # NOTE: This takes the default value, and isn't used at all by the 'sequential training'
+        # model (the default). TODO: Probably move/remove this?
         feedback_before_forward: bool = flag(True)
 
-        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default="elu")
+        # Choice of activation function.
+        # TODO: Seems like we're only using elu for now.
+        activation: Type[nn.Module] = choice(
+            {"relu": nn.ReLU, "elu": nn.ELU,}, default="elu"
+        )
 
         # feedback_weight_training_procedure: str = choice(
         #     "awesome", "sequential", "best_of_both_worlds", default="sequential",
@@ -146,36 +153,14 @@ class BaseModel(LightningModule, ABC):
         self.example_input_array = torch.rand(  # type: ignore
             [datamodule.batch_size, *datamodule.dims], device=self.device
         )
-        ## Create the forward achitecture:
-        channels = [self.in_channels] + self.hp.channels
-        self.forward_net = nn.Sequential(
-            *(
-                nn.Sequential(
-                    OrderedDict(
-                        conv=nn.Conv2d(
-                            channels[i], channels[i + 1], kernel_size=3, stride=1, padding=1,
-                        ),
-                        rho=nn.ELU(),
-                        # NOTE: Even though `return_indices` is `False` here, we're actually passing
-                        # the indices to the backward net for this layer through a "magic bridge".
-                        # We use `return_indices=False` here just so the layer doesn't also return
-                        # the indices in its forward pass.
-                        pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
-                        # pool=nn.AvgPool2d(kernel_size=2),
-                    )
-                )
-                for i in range(0, len(channels) - 1)
-            ),
-            Reshape(target_shape=(-1,)),
-            # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
-            nn.LazyLinear(out_features=self.n_classes, bias=True),
-        )
-        # Pass an example input through the forward net so that all the layers which
-        # need to know their inputs/output shapes get a chance to know them.
-        # This is necessary for creating the backward network, as some layers
-        # (e.g. Reshape) need to know what the input shape is.
-        example_out: Tensor = self.forward_net(self.example_input_array)
 
+        ## Create the forward achitecture:
+        self.forward_net = self.create_forward_net()
+
+        # Pass an example input through the forward net so that we know the input/output shapes for
+        # each layer. This makes it easier to then create the feedback (a.k.a backward) net.
+        mark_as_invertible(self.forward_net)
+        example_out: Tensor = self.forward_net(self.example_input_array)
         if self.config.debug:
             print(f"Forward net: ")
             print(self.forward_net)
@@ -184,7 +169,7 @@ class BaseModel(LightningModule, ABC):
         # Get the "pseudo-inverse" of the forward network:
         # TODO: Initializing the weights of the backward net with the transpose of the weights of
         # the forward net, and will check if the gradients are similar.
-        self.backward_net: nn.Sequential = invert(self.forward_net)
+        self.backward_net: nn.Sequential = invert(self.forward_net)  # type: ignore
         if self.hp.init_symetric_weights:
             logger.info(f"Initializing the backward net with symetric weights.")
             init_symetric_weights(self.forward_net, self.backward_net)
@@ -194,8 +179,12 @@ class BaseModel(LightningModule, ABC):
         self.feedback_noise_scales = self._get_noise_scale_per_feedback_layer(
             forward_ordering=False
         )
-        self.feedback_lrs = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
-        self.feedback_iterations = self._get_iterations_per_feedback_layer(forward_ordering=False)
+        self.feedback_lrs = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
+        self.feedback_iterations = self._get_iterations_per_feedback_layer(
+            forward_ordering=False
+        )
 
         if self.config.debug:
             print(f"Backward net: ")
@@ -210,7 +199,9 @@ class BaseModel(LightningModule, ABC):
                     )
                 )
             ):
-                print(f"Layer {i} (G[{N-i}]): LR: {lr}, noise: {noise}, iterations: {iterations}")
+                print(
+                    f"Layer {i} (G[{N-i}]): LR: {lr}, noise: {noise}, iterations: {iterations}"
+                )
                 print(textwrap.indent(str(layer), prefix="\t"))
                 if i == N - 1:
                     # The last layer of the backward_net (the layer closest to the input) is not
@@ -243,7 +234,11 @@ class BaseModel(LightningModule, ABC):
         self.accuracy = Accuracy()
 
         self.save_hyperparameters(
-            {"hp": self.hp.to_dict(), "datamodule": datamodule, "config": self.config.to_dict(),}
+            {
+                "hp": self.hp.to_dict(),
+                "datamodule": datamodule,
+                "config": self.config.to_dict(),
+            }
         )
         # kwargs that will get passed to all calls to `self.log()`, just to make things
         # a bit more tidy
@@ -255,6 +250,36 @@ class BaseModel(LightningModule, ABC):
         self._forward_optim_index: int = 1 if self.hp.feedback_before_forward else 0
 
         self.trainer: Trainer  # type: ignore
+
+    def create_forward_net(self) -> nn.Sequential:
+        channels = [self.in_channels] + self.hp.channels
+        return nn.Sequential(
+            *(
+                nn.Sequential(
+                    OrderedDict(
+                        conv=nn.Conv2d(
+                            channels[i],
+                            channels[i + 1],
+                            kernel_size=3,
+                            stride=1,
+                            padding=1,
+                        ),
+                        rho=nn.ELU(),
+                        # NOTE: Even though `return_indices` is `False` here, we're actually passing
+                        # the indices to the backward net for this layer through a "magic bridge".
+                        # We use `return_indices=False` here just so the layer doesn't also return
+                        # the indices in its forward pass.
+                        pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
+                        # pool=nn.AvgPool2d(kernel_size=2),
+                    )
+                )
+                for i in range(0, len(channels) - 1)
+            ),
+            Reshape(target_shape=(-1,)),
+            # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
+            # nn.Linear(in_features=512, out_features=self.n_classes, bias=True),
+            nn.LazyLinear(out_features=self.n_classes, bias=True),
+        )
 
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
         # Dummy forward pass, not used in practice. We just implement it so that PL can
@@ -278,7 +303,9 @@ class BaseModel(LightningModule, ABC):
         assert self.phase == phase, (self.phase, phase)
         # self.phase = phase
 
-        dtype: Optional[torch.dtype] = self.dtype if isinstance(self.dtype, torch.dtype) else None
+        dtype: Optional[torch.dtype] = self.dtype if isinstance(
+            self.dtype, torch.dtype
+        ) else None
         # The total loss to be returned.
         loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
 
@@ -302,7 +329,7 @@ class BaseModel(LightningModule, ABC):
     def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
         # raise NotImplementedError
         # FIXME: Sanity check: Use standard backpropagation for training rather than TP.
-        logits = self.forward_net.forward_all(x, allow_grads_between_layers=True)[-1]
+        logits = self.forward_net(x)
         accuracy = self.accuracy(torch.softmax(logits, -1), y)
         self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
         return F.cross_entropy(logits, y, reduction="mean")
@@ -330,7 +357,9 @@ class BaseModel(LightningModule, ABC):
     def validation_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int
     ) -> Union[Tensor, float]:
-        return self.shared_step(batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val")
+        return self.shared_step(
+            batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val"
+        )
 
     def test_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int
@@ -370,7 +399,9 @@ class BaseModel(LightningModule, ABC):
         assert values_per_layer[-1] == default
         return values_per_layer
 
-    def _get_iterations_per_feedback_layer(self, forward_ordering: bool = True) -> List[int]:
+    def _get_iterations_per_feedback_layer(
+        self, forward_ordering: bool = True
+    ) -> List[int]:
         """ Returns the number of iterations to perform for each of the layers in
         `self.backward_net`.
 
@@ -382,12 +413,16 @@ class BaseModel(LightningModule, ABC):
         # Reverse it, since it's passed in 'forward' order and the `align_values...`
         # function expects to receive 'reversed' values.
         iterations_per_layer = list(reversed(iterations_per_layer))
-        iterations_per_layer = self._align_values_with_backward_net(iterations_per_layer, default=0)
+        iterations_per_layer = self._align_values_with_backward_net(
+            iterations_per_layer, default=0
+        )
         if forward_ordering:
             iterations_per_layer.reverse()
         return iterations_per_layer
 
-    def _get_noise_scale_per_feedback_layer(self, forward_ordering: bool = True) -> List[float]:
+    def _get_noise_scale_per_feedback_layer(
+        self, forward_ordering: bool = True
+    ) -> List[float]:
         """ Returns the noise scale for each feedback layer.
 
         If `forward_ordering` is False, returns it in the same order as the
@@ -405,7 +440,9 @@ class BaseModel(LightningModule, ABC):
             noise_scale_per_layer.reverse()
         return noise_scale_per_layer
 
-    def _get_learning_rate_per_feedback_layer(self, forward_ordering: bool = False) -> List[float]:
+    def _get_learning_rate_per_feedback_layer(
+        self, forward_ordering: bool = False
+    ) -> List[float]:
         """ Returns the learning rate for each feedback layer.
 
         If `forward_ordering` is False, returns it in the same order as the
@@ -426,19 +463,23 @@ class BaseModel(LightningModule, ABC):
         """
         # Create the optimizers using the config class for it in `self.hp`.
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
-        forward_optim_config = {"optimizer": forward_optimizer}
+        forward_optim_config: Dict[str, Any] = {"optimizer": forward_optimizer}
 
         # NOTE: We pass the learning rates in the same order as the feedback net:
-        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(forward_ordering=False)
+        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
+            forward_ordering=False
+        )
         feedback_optimizer = self.hp.b_optim.make_optimizer(
             self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
         )
-        feedback_optim_config = {"optimizer": feedback_optimizer}
+        feedback_optim_config: Dict[str, Any] = {"optimizer": feedback_optimizer}
 
         if self.hp.b_optim.use_lr_scheduler:
             # NOTE: By default we don't use a scheduler for the feedback optimizer.
             feedback_optim_config["lr_scheduler"] = {
-                "scheduler": CosineAnnealingLR(feedback_optimizer, T_max=85, eta_min=1e-5),
+                "scheduler": CosineAnnealingLR(
+                    feedback_optimizer, T_max=85, eta_min=1e-5
+                ),
                 "interval": "epoch",  # called after each training epoch
                 "frequency": 1,
             }
@@ -447,7 +488,9 @@ class BaseModel(LightningModule, ABC):
             # `main.py` seems to be using a weight scheduler only for the forward weight
             # training.
             forward_optim_config["lr_scheduler"] = {
-                "scheduler": CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5),
+                "scheduler": CosineAnnealingLR(
+                    forward_optimizer, T_max=85, eta_min=1e-5
+                ),
                 "interval": "epoch",  # called after each training epoch
                 "frequency": 1,
             }
@@ -488,7 +531,9 @@ class BaseModel(LightningModule, ABC):
             # If early stopping is enabled, add a PL Callback for it:
             callbacks.append(
                 EarlyStopping(
-                    "val/accuracy", patience=self.hp.early_stopping_patience, verbose=True,
+                    "val/accuracy",
+                    patience=self.hp.early_stopping_patience,
+                    verbose=True,
                 )
             )
         return callbacks
@@ -508,6 +553,9 @@ class BaseModel(LightningModule, ABC):
         if self.trainer.predicting:
             return "predict"
         # NOTE: This doesn't work when inside the sanity check!
-        if self.trainer.state.stage and self.trainer.state.stage.value == "sanity_check":
+        if (
+            self.trainer.state.stage
+            and self.trainer.state.stage.value == "sanity_check"
+        ):
             return "val"
         raise RuntimeError(f"unexpected trainer state: {self.trainer.state}")

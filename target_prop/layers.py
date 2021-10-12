@@ -12,7 +12,7 @@ from torch import Tensor, nn
 from torch.nn.modules.conv import _size_2_t
 from torch.nn.modules.pooling import AdaptiveMaxPool2d, _size_any_t
 
-from .backward_layers import invert, Invertible, add_hooks
+from .backward_layers import invert, Invertible, mark_as_invertible
 
 ModuleType = TypeVar("ModuleType", bound=nn.Module, covariant=True)
 

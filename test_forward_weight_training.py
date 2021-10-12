@@ -9,7 +9,7 @@ import pytest
 from target_prop.metrics import compute_dist_angle
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.layers import invert, forward_all
-from target_prop.layers import add_hooks
+from target_prop.layers import mark_as_invertible
 
 
 def named_trainable_parameters(module: nn.Module) -> Iterable[Tuple[str, nn.Parameter]]:
@@ -160,7 +160,7 @@ def forward_net(channels: List[int]) -> nn.Sequential:
             ]
         )
     )
-    forward_net = add_hooks(forward_net)
+    forward_net = mark_as_invertible(forward_net)
     # Pass an example input through the forward net so that all the layers which
     # need to know their inputs/output shapes get a chance to know them.
     # This is necessary for creating the backward network, as some layers

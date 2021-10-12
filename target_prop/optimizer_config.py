@@ -2,7 +2,7 @@ from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import HyperParameters, log_uniform
 import torch
 from target_prop.utils import get_list_of_values
-from typing import ClassVar, Dict, Type, List, Optional, Union
+from typing import Any, ClassVar, Dict, Type, List, Optional, Union
 from dataclasses import dataclass
 from torch.optim.optimizer import Optimizer
 from torch import nn
@@ -28,7 +28,7 @@ class OptimizerConfig(HyperParameters):
     # categorical("sgd", "adam"], default="adam", strict=True)
 
     # Learning rate of the optimizer.
-    lr: List[float] = log_uniform(1e-4, 1e-1, default=5e-3, shape=2)
+    lr: Union[List[float], float] = log_uniform(1e-4, 1e-1, default=5e-3, shape=2)
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
 
@@ -54,7 +54,7 @@ class OptimizerConfig(HyperParameters):
             logger.debug(f"Layer at index {i} (of type {type(layer)}) has lr of {lr}")
             params.append({"params": layer.parameters(), "lr": lr})
 
-        optimizer_kwargs = {}
+        optimizer_kwargs: Dict[str, Any] = {}
         if self.weight_decay is not None:
             optimizer_kwargs["weight_decay"] = self.weight_decay
         if optimizer_class is torch.optim.SGD:
