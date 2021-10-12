@@ -42,7 +42,7 @@ class Config(Serializable):
     # Wether to pin the memory, which is good when using CUDA tensors.
     pin_memory: bool = True
     # Random seed.
-    seed: Optional[int] = None
+    seed: Optional[int] = 123
     # Portion of the dataset to reserve for validation
     val_split: float = 0.2
     # Wether to shuffle the dataset or not.
