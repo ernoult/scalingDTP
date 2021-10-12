@@ -12,7 +12,7 @@ from torch import Tensor, nn
 from torch.nn.modules.conv import _size_2_t
 from torch.nn.modules.pooling import AdaptiveMaxPool2d, _size_any_t
 
-from .backward_layers import invert, Invertible, mark_as_invertible
+from .backward_layers import invert, Invertible
 
 ModuleType = TypeVar("ModuleType", bound=nn.Module, covariant=True)
 
@@ -61,23 +61,6 @@ def forward_all(
         x = layer(x if allow_grads_between_layers else x.detach())
         activations.append(x)
     return activations
-
-
-@invert.register(nn.Sequential)
-def invert_sequential(module: nn.Sequential) -> nn.Sequential:
-    """ Returns a Module that can be used to compute or approximate the inverse
-    operation of `self`.
-
-    NOTE: In the case of Sequential, the order of the layers in the returned network
-    is reversed compared to the input.
-    """
-    assert module.input_shape and module.output_shape, "Use the net before inverting."
-    return type(module)(
-        OrderedDict(
-            (name, invert(module))
-            for name, module in list(module._modules.items())[::-1]
-        ),
-    )
 
 
 class Reshape(nn.Module, Invertible):

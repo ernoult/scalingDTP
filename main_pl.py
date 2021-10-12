@@ -78,7 +78,7 @@ def main(sample_hparams: bool = False):
         seed = config.seed
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        g = torch.Generator(device=config.device)
+        g = torch.Generator(device=device)
         seed = g.seed()
     print(f"Selected seed: {seed}")
     seed_everything(seed=seed, workers=True)

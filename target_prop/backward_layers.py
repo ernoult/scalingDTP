@@ -8,28 +8,22 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
-    cast,
-    overload,
     runtime_checkable,
 )
 
-import torch
 from torch import Tensor, nn
-from torch.nn.modules.lazy import LazyModuleMixin
 
 ModuleType = TypeVar("ModuleType", bound=nn.Module)
 
 
 @runtime_checkable
 class Invertible(Protocol):
-    """ Marks a Module as "easy to invert", since it has known input and output shapes.
-    
-    This is useful because it's easier to mark modules as invertible in-place than to create new
-    subclass for every single nn.Module that we use and have them inherit from some kind of
-    `InvertibleMixin` (which is what I was doing before).
+    """ A Module that is "easy to invert" since it has known input and output shapes.
 
-    NOTE: (@lebrice) Using a Protocol for this isn't 100% necessary. Just having fun with the new
-    structural subtyping.
+    It's easier to mark modules as invertible in-place than to create new subclass for every single
+    nn.Module class that we want to potentially use in the forward net.
+    NOTE @lebrice: This is what I was doing before, using a kind of `InvertibleMixin`. Using a
+    Protocol for this isn't 100% necessary. Just having fun with the new structural subtyping.
     """
 
     input_shape: Tuple[int, ...] = ()
@@ -37,10 +31,104 @@ class Invertible(Protocol):
     enforce_shapes: bool = False
 
 
+@singledispatch
+def invert(layer: Invertible) -> Any:
+    """Returns the module to be used to compute the 'backward' version of `layer`.
+    
+    NOTE: All concrete handlers below usually assume that a layer has been marked as 'invertible'.
+    This is usually 
+    
+    Parameters
+    ----------
+    layer : nn.Module
+        Layer of the forward-pass.
+
+    Returns
+    -------
+    nn.Module
+        Layer to use at the same index as `layer` in the backward-pass model.
+
+    Raises
+    ------
+    NotImplementedError
+        When we don't know what type of layer to use for the backward pass of `layer`.
+    """
+    raise NotImplementedError(f"Don't know what the 'backward' equivalent of {layer} is!")
+
+
+@invert.register
+def invert_linear(layer: nn.Linear) -> nn.Linear:
+    # NOTE: Not sure how to handle the bias term
+    backward = type(layer)(
+        in_features=layer.out_features, out_features=layer.in_features, bias=layer.bias is not None,
+    )
+    return backward
+
+
+@invert.register(nn.Sequential)
+def invert_sequential(module: nn.Sequential) -> nn.Sequential:
+    """ Returns a Module that can be used to compute or approximate the inverse
+    operation of `self`.
+
+    NOTE: In the case of Sequential, the order of the layers in the returned network
+    is reversed compared to the input.
+    """
+    assert module.input_shape and module.output_shape, "Use the net before inverting."
+    return type(module)(
+        OrderedDict((name, invert(module)) for name, module in list(module._modules.items())[::-1]),
+    )
+
+
+@invert.register
+def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
+    assert len(layer.kernel_size) == 2
+    assert len(layer.stride) == 2
+    assert len(layer.padding) == 2
+    assert len(layer.output_padding) == 2
+    k_h, k_w = layer.kernel_size
+    s_h, s_w = layer.stride
+    assert not isinstance(layer.padding, str)
+    p_h, p_w = layer.padding
+    d_h, d_w = layer.dilation
+    op_h, op_w = layer.output_padding
+    assert k_h == k_w, "only support square kernels for now"
+    assert s_h == s_w, "only support square stride for now"
+    assert p_h == p_w, "only support square padding for now"
+    assert d_h == d_w, "only support square padding for now"
+    assert op_h == op_w, "only support square output_padding for now"
+
+    backward = nn.ConvTranspose2d(
+        in_channels=layer.out_channels,
+        out_channels=layer.in_channels,
+        kernel_size=(k_h, k_w),
+        # TODO: Not 100% sure about these values:
+        stride=(s_h, s_w),
+        dilation=d_h,
+        padding=(p_h, p_w),
+        # TODO: Get this value programmatically.
+        output_padding=(s_h - 1, s_w - 1),
+        # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
+    )
+    return backward
+
+
+@invert.register(nn.ReLU)
+def invert_activation(activation_layer: nn.Module) -> nn.Module:
+    # TODO: Return an identity function?
+    raise NotImplementedError(f"Activations aren't invertible by default!")
+    # NOTE: It may also be the case that this activation is misplaced (leading to the
+    # mis-alignment of layers in contiguous blocks of a network)
+    return nn.Identity()
+    # return copy.deepcopy(activation_layer)
+
+
+@invert.register(nn.ELU)
+def _invert_elu(activation_layer: nn.ELU) -> nn.Module:
+    return nn.ELU(alpha=activation_layer.alpha, inplace=False)
+
+
 def check_shapes_hook(
-    module: Invertible,
-    inputs: Tensor | tuple[Tensor, ...],
-    outputs: Tensor | tuple[Tensor, ...],
+    module: Invertible, inputs: Tensor | tuple[Tensor, ...], outputs: Tensor | tuple[Tensor, ...],
 ) -> None:
     """ Hook that sets the `input_shape` and `output_shape` attributes on the layers if not present.
     
@@ -96,104 +184,10 @@ def mark_as_invertible(module: nn.Module) -> Union[nn.Module, Invertible]:
 
 
 @mark_as_invertible.register
-def make_sequential_as_invertible(
-    module: nn.Sequential,
-) -> Union[nn.Sequential, Invertible]:
+def mark_sequential_as_invertible(module: nn.Sequential,) -> Union[nn.Sequential, Invertible]:
     if check_shapes_hook not in module._forward_hooks.values():
         module.register_forward_hook(check_shapes_hook)
     for layer in module:
         # NOTE:
         _ = mark_as_invertible(layer)
     return module
-
-
-@singledispatch
-def invert(layer: Union[Invertible, ModuleType]) -> ModuleType:
-    """Returns the module to be used to compute the 'backward' version of `layer`.
-    
-    NOTE: All concrete handlers below usually assume that a layer has been marked as 'invertible'.
-    This is usually 
-    
-    Parameters
-    ----------
-    layer : nn.Module
-        Layer of the forward-pass.
-
-    Returns
-    -------
-    nn.Module
-        Layer to use at the same index as `layer` in the backward-pass model.
-
-    Raises
-    ------
-    NotImplementedError
-        When we don't know what type of layer to use for the backward pass of `layer`.
-    """
-    raise NotImplementedError(
-        f"Don't know what the 'backward' equivalent of {layer} is!"
-    )
-
-
-@invert.register
-def invert_linear(layer: nn.Linear) -> nn.Linear:
-    # NOTE: Not sure how to handle the bias term
-    backward = type(layer)(
-        in_features=layer.out_features,
-        out_features=layer.in_features,
-        bias=layer.bias is not None,
-    )
-    return backward
-
-
-@invert.register
-def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
-    assert len(layer.kernel_size) == 2
-    assert len(layer.stride) == 2
-    assert len(layer.padding) == 2
-    assert len(layer.output_padding) == 2
-    k_h, k_w = layer.kernel_size
-    s_h, s_w = layer.stride
-    p_h, p_w = layer.padding
-    d_h, d_w = layer.dilation
-    op_h, op_w = layer.output_padding
-    assert k_h == k_w, "only support square kernels for now"
-    assert s_h == s_w, "only support square stride for now"
-    assert p_h == p_w, "only support square padding for now"
-    assert d_h == d_w, "only support square padding for now"
-    assert op_h == op_w, "only support square output_padding for now"
-
-    backward = nn.ConvTranspose2d(
-        in_channels=layer.out_channels,
-        out_channels=layer.in_channels,
-        kernel_size=(k_h, k_w),
-        # TODO: Not 100% sure about these values:
-        stride=(s_h, s_w),
-        dilation=d_h,
-        padding=(p_h, p_w),
-        # TODO: Get this value programmatically.
-        output_padding=(s_h - 1, s_w - 1),
-        # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
-    )
-    return backward
-
-
-@invert.register(nn.ReLU)
-def invert_activation(activation_layer: nn.Module) -> nn.Module:
-    # TODO: Return an identity function?
-    raise NotImplementedError(f"Activations aren't invertible by default!")
-    # NOTE: It may also be the case that this activation is misplaced (leading to the
-    # mis-alignment of layers in contiguous blocks of a network)
-    return nn.Identity()
-    # return copy.deepcopy(activation_layer)
-
-
-@invert.register(nn.ELU)
-def _invert_elu(activation_layer: nn.ELU) -> nn.Module:
-    return nn.ELU(alpha=activation_layer.alpha, inplace=False)
-
-
-@invert.register(nn.AvgPool2d)
-def _invert_avgpool(pooling_layer: nn.AvgPool2d) -> nn.Upsample:
-    assert pooling_layer.kernel_size == 2, pooling_layer
-    assert pooling_layer.stride == 2, pooling_layer
-    return nn.Upsample(scale_factor=2)
