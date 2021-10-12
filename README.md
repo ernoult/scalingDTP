@@ -1,10 +1,20 @@
-## Revisiting Difference Target Propagation
+# Revisiting Difference Target Propagation
 
 The following code runs on Python > 3.6 with Pytorch 1.7.0.
+## Installation
+```console
+pip install -e .
+```
+
+## Running the code
+To run the new pytorch-lightning model on CIFAR-10, use the following command:
+```console
+python main_pl.py 
+```
 
 To check training on CIFAR-10, type the following command in the terminal:
 
-```
+```console
 python main.py --batch-size 128 \
     --C 128 128 256 256 512 \
     --iter 20 30 35 55 20 \
