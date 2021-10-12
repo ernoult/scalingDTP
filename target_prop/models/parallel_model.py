@@ -1,16 +1,45 @@
+from target_prop.feedback_loss import get_feedback_loss, get_feedback_loss_parallel
 from .model import BaseModel
 from torch import Tensor
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 from torch import nn
 import torch
+from dataclasses import dataclass
+from .sequential_model import SequentialModel
+from target_prop.layers import forward_all
 from target_prop.utils import is_trainable
+from simple_parsing.helpers.hparams import uniform
+from simple_parsing.helpers import field, list_field
+
+try:
+    from typing import Final
+except ImportError:
+    from typing_extensions import Final
 
 
-class ParallelModel(BaseModel):
+class ParallelModel(SequentialModel):
     """ "Parallel" version of the sequential model, uses more noise samples but a single
     iteration for the training of the feedback weights, which makes it possible to use
     the automatic optimization and distributed training features of PyTorch-Lightning.
     """
+
+    @dataclass
+    class HParams(SequentialModel.HParams):
+        """ HParams of the Parallel model. """
+
+        # Number of training steps for the feedback weights per batch.
+        # In the case of this parallel model, this parameter can't be changed and is fixed to 1.
+        feedback_training_iterations: List[int] = list_field(
+            default_factory=[1].copy, cmd=False
+        )
+
+        # Number of noise samples to use to get the feedback loss in a single iteration.
+        # NOTE: The loss used for each update is the average of these losses.
+        feedback_samples_per_iteration: int = uniform(1, 20, default=10)
+
+        def __post_init__(self):
+            super().__post_init__()
+            self.feedback_training_iterations = [1 for _ in self.b_optim.lr]
 
     def __init__(self, datamodule, hparams, config):
         super().__init__(datamodule, hparams, config)
@@ -18,36 +47,102 @@ class ParallelModel(BaseModel):
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True
         self.criterion = nn.CrossEntropyLoss(reduction="none")
+        # Set the number of feedback training iterations to 1.
 
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
     ) -> Union[Tensor, float]:
-        loss = self.shared_step(
+        # NOTE: The only difference here is the optimizer idx that gets passed to shared_step.
+        return self.shared_step(
             batch=batch, batch_idx=batch_idx, optimizer_idx=optimizer_idx, phase="train"
         )
-        if self.automatic_optimization:
-            # Should have a loss with gradients if we're using automatic optimization
-            # from PL.
-            assert loss.requires_grad, (loss, optimizer_idx)
-            return loss
-        elif isinstance(loss, Tensor):
-            # Need to NOT return a Tensor when not using automatic optimization.
-            # BUG: Pytorch Lightning complains that we're returning a Tensor, even if
-            # it's a float!
-            return float(loss.item())
+
+    def shared_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
+        optimizer_idx: Optional[int] = None,
+    ):
+        """ Main step, used by the `[training/valid/test]_step` methods.
+        
+        NOTE: In the case of this Parallel model, we use the automatic optimization from PL.
+        This means that we return a 'live' loss tensor here, rather than perform the optimzation
+        manually.
+        """
+        x, y = batch
+        # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
+        # and `feedback_loss` below.
+        assert self.phase == phase, (self.phase, phase)
+        # self.phase = phase
+
+        dtype: Optional[torch.dtype] = self.dtype if isinstance(
+            self.dtype, torch.dtype
+        ) else None
+        # The total loss to be returned.
+        loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
+
+        if optimizer_idx in [None, self._feedback_optim_index]:
+            # ----------- Optimize the feedback weights -------------
+            feedback_loss = self.feedback_loss(x, y)
+            loss += feedback_loss
+            self.log(f"{phase}/f_loss", feedback_loss, prog_bar=True, **self.log_kwargs)
+
+        if optimizer_idx in [None, self._forward_optim_index]:
+            # ----------- Optimize the forward weights -------------
+            forward_loss = self.forward_loss(x, y)
+            self.log(f"{phase}/b_loss", forward_loss, prog_bar=True, **self.log_kwargs)
+            loss += forward_loss
+
         return loss
 
-    def validation_step(  # type: ignore
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int
-    ) -> Union[Tensor, float]:
-        return self.shared_step(
-            batch=batch, batch_idx=batch_idx, optimizer_idx=None, phase="val"
-        )
+    def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
+        # NOTE: Could use the same exact forward loss as the sequential model, at the
+        # moment.
+        return super().forward_loss(x=x, y=y)
 
-    def test_step(  # type: ignore
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int
-    ) -> Union[Tensor, float]:
-        return self.shared_step(batch, batch_idx=batch_idx, phase="test")
+    def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
+        feedback_optimizer = self.feedback_optimizer
+
+        n_layers = len(self.backward_net)
+        # Reverse the backward net, just for ease of readability.
+        reversed_backward_net = self.backward_net[::-1]
+        # Also reverse these values so they stay aligned with the net above.
+        noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
+        # NOTE: Could also use a different number of samples per layer!
+        noise_samples_per_layer = [
+            self.hp.feedback_samples_per_iteration for _ in range(n_layers)
+        ]
+
+        # NOTE: We can compute all the ys for all the layers up-front, because we don't
+        # update the forward weights.
+        # 1- Compute the forward activations (no grad).
+        with torch.no_grad():
+            ys: List[Tensor] = forward_all(
+                self.forward_net, x, allow_grads_between_layers=False
+            )
+
+        # List of losses, distances, and angles for each layer (with multiple iterations per layer).
+        # NOTE: Skipping the first layer
+        # NOTE: Each of the loops below is independent. Would be nice to parallelize this somehow.
+        layer_losses: List[Tensor] = [
+            get_feedback_loss_parallel(
+                feedback_layer=reversed_backward_net[i],
+                forward_layer=self.forward_net[i],
+                input=ys[i - 1],
+                output=ys[i],
+                noise_scale=noise_scale_per_layer[i],
+                noise_samples=10,
+                # TODO: Not sure if using different streams really makes this faster. Need to check.
+                # use_separate_streams=True,
+                # synchronize=False,
+            )
+            for i in range(1, n_layers)
+            if is_trainable(reversed_backward_net[i])
+        ]
+        # Loss will now have shape [`n_layers`, `n_samples`]
+        loss = torch.stack(layer_losses, dim=0)
+        return loss.sum()
 
     def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
         """ Called with the results of each worker / replica's output.
@@ -92,108 +187,3 @@ class ParallelModel(BaseModel):
 
         assert self.automatic_optimization
         return merged_step_result
-
-    def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
-        # NOTE: Could use the same exact forward loss as the sequential model, at the
-        # moment.
-        pass
-
-    def feedback_loss(self, x, y):
-        raise NotImplementedError("Fix this, focusing on the SequentialModel for now.")
-
-        # Get the outputs for all layers.
-        # NOTE: no need for gradients w.r.t. forward parameters.
-        with torch.no_grad():
-            ys = self.forward_net.forward_all(x)
-
-        # Input of each intermediate layer
-        xs = ys[:-1]
-        # Inputs to each backward layer:
-        # NOTE: Using ys[1:] since we don't need the `r` of the first layer (`G(x_1)`)
-        yr = ys[1:]
-        # Reverse the backward net, just to make the code a bit easier to read:
-        reversed_backward_net = self.backward_net[::-1]
-        # NOTE: This saves one forward-pass, but makes the code a tiny bit uglier:
-
-        rs = reversed_backward_net[1:].forward_each(ys[1:])
-
-        noise_scale_vector = self.get_noise_scale_per_layer(reversed_backward_net[1:])
-        x_noise_distributions: List[Normal] = [
-            Normal(loc=torch.zeros_like(x_i), scale=noise_i)
-            for x_i, noise_i in zip(xs, noise_scale_vector)
-        ]
-
-        # NOTE: Notation for the tensor shapes below:
-        # I: number of training iterations
-        # S: number of noise samples
-        # N: number of layers
-        # B: batch dimension
-        # X_i: shape of the inputs to layer `i`
-
-        # List of losses, one per iteration.
-        # If this is called during training, and there is more than one iteration, then
-        # the losses in this list will be detached.
-        dr_losses_list: List[Tensor] = []  # [I]
-
-        n_layers = len(self.backward_net)
-        if not isinstance(self.hp.feedback_training_iterations, int):
-            assert len(set(self.hp.feedback_training_iterations)) == 1
-            self.hp.feedback_training_iterations = self.hp.feedback_training_iterations[
-                0
-            ]
-
-        iterations: int = self.hp.feedback_training_iterations
-        # Only do one iteration when evaluating or testing.
-        if self.phase != "train":
-            iterations = 1
-
-        noise_scale_per_layer = self._get_noise_scale_per_layer()
-
-        for iteration in range(iterations):
-            # List of losses, one per noise sample.
-            dr_losses_per_sample: List[Tensor] = []  # [S]
-
-            feedback_losses = [
-                get_feedback_loss(
-                    reversed_backward_net[i],
-                    self.forward_net[i],
-                    noise_scale=noise_scale_per_layer[i],
-                    noise_samples=self.hp.feedback_,
-                )
-                if is_trainable(reversed_backward_net[i])
-                else 0
-                for i in range(n_layers)
-            ]
-            loss = torch.stack(feedback_losses)
-            iteration_dr_loss = iteration_dr_loss.sum(1).mean()  # [1]
-
-            # TODO: Could perhaps do some sort of 'early stopping' here if the dr
-            # loss is sufficiently small?
-            if self.phase != "train":
-                assert not iteration_dr_loss.requires_grad
-            if not self.automatic_optimization and iteration_dr_loss.requires_grad:
-                optimizer = self.optimizers()[self._feedback_optim_index]
-                optimizer.zero_grad()
-                self.manual_backward(iteration_dr_loss)
-                optimizer.step()
-                iteration_dr_loss = iteration_dr_loss.detach()
-            self.log(
-                f"{self.phase}/dr_loss_{iteration}",
-                iteration_dr_loss,
-                prog_bar=False,
-                logger=True,
-            )
-
-            dr_losses_list.append(iteration_dr_loss)
-
-        dr_losses = torch.stack(dr_losses_list)
-        # TODO: Take the average, or the sum here?
-        dr_loss: Tensor = dr_losses.sum()
-        return dr_loss
-
-    def _get_iterations_per_layer(self) -> List[int]:
-        """ Returns the number of iterations to perform for each of the feedback layers.
-
-        NOTE: Returns it in the same order as the backward_net, i.e. [GN ... G0]
-        """
-        return [1 if is_trainable(layer) else 0 for layer in self.backward_net]

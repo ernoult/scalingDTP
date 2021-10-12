@@ -371,8 +371,19 @@ class BaseModel(LightningModule, ABC):
         layers in the backward net.
         The last layer of the backward net (G_0) is also never trained.
 
-        Inut: values=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], default=0
-        Output: [0, 1e-4, 3.5e-4, 8e-3, 8e-3, 0, 0.18]
+        Example: Using the default learning rate values for cifar10 as an example:
+        
+            `self.forward_net`: (conv, conv, conv, conv, reshape, linear)
+            `self.backward_net`:   (linear, reshape, conv, conv, conv, conv)
+            
+            forward-aligned values: [1e-4, 3.5e-4, 8e-3, 8e-3, 0.18]
+            
+            `values` (backward-aligned): [0.18, 8e-3, 8e-3, 3.5e-4, 1e-4]  (note: backward order)
+            
+            
+            `default`: 0
+
+            Output:  [0.18, 0 (default), 8e-3, 8e-3, 3.5e-4, 1e-4, 0 (never trained)]
 
         NOTE: Assumes that the input is given in the *backward* order Gn, Gn-1, ..., G0
         NOTE: Returns the values in the *backward* order (same as the backward_net: [Gn, ..., G0])
@@ -389,7 +400,6 @@ class BaseModel(LightningModule, ABC):
             )
 
         values_left = values.copy()
-
         values_per_layer: List[T] = []
         for layer in self.backward_net:
             if is_trainable(layer) and values_left:

@@ -28,23 +28,23 @@ def main(sample_hparams: bool = False):
 
     # Hard-set to use the Sequential model, for now.
     parser.set_defaults(model=SequentialModel)
-    parser.add_arguments(SequentialModel.HParams, "hparams")
-    parser.add_arguments(Config, "config")
+    # parser.add_arguments(SequentialModel.HParams, "hparams")
+    # parser.add_arguments(Config, "config")
 
-    ## TODO: Once the parallel model is usable (currently focussing on the Sequential model), then
-    ## use this to make it possible to swap between them.
-    # subparsers = parser.add_subparsers(
-    #     title="model", description="Type of model to use.", metavar="<model_type>", required=True
-    # )
-    # sequential_parser: ArgumentParser = subparsers.add_parser("sequential")
-    # sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
-    # sequential_parser.add_arguments(Config, dest="config")
-    # sequential_parser.set_defaults(model=SequentialModel)
+    # TODO: Once the parallel model is usable (currently focussing on the Sequential model), then
+    # use this to make it possible to swap between them.
+    subparsers = parser.add_subparsers(
+        title="model", description="Type of model to use.", metavar="<model_type>", required=True
+    )
+    sequential_parser: ArgumentParser = subparsers.add_parser("sequential")
+    sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
+    sequential_parser.add_arguments(Config, dest="config")
+    sequential_parser.set_defaults(model=SequentialModel)
 
-    # parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
-    # parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
-    # parallel_parser.add_arguments(Config, dest="config")
-    # parallel_parser.set_defaults(model=ParallelModel)
+    parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
+    parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
+    parallel_parser.add_arguments(Config, dest="config")
+    parallel_parser.set_defaults(model=ParallelModel)
 
     # NOTE: we unfortunately can't add the PL Trainer arguments directly atm, because they don't
     # play nice with simple-parsing.

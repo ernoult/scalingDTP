@@ -68,7 +68,9 @@ class Config(Serializable):
             train_transform = Compose(
                 [
                     RandomHorizontalFlip(0.5),
-                    RandomCrop(size=self.image_crop_size, padding=4, padding_mode="edge"),
+                    RandomCrop(
+                        size=self.image_crop_size, padding=4, padding_mode="edge"
+                    ),
                     ToTensor(),
                     normalization_transform(),
                     # Normalize(mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)),
@@ -88,7 +90,7 @@ class Config(Serializable):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             val_split=self.val_split,
-            seed=self.seed or 123, # NOTE: Seed here needs to be an int, not None!,
+            seed=self.seed or 123,  # NOTE: Seed here needs to be an int, not None!,
             shuffle=self.shuffle,
             train_transforms=train_transform,
             val_transforms=train_transform,

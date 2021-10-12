@@ -53,14 +53,18 @@ def invert(layer: Invertible) -> Any:
     NotImplementedError
         When we don't know what type of layer to use for the backward pass of `layer`.
     """
-    raise NotImplementedError(f"Don't know what the 'backward' equivalent of {layer} is!")
+    raise NotImplementedError(
+        f"Don't know what the 'backward' equivalent of {layer} is!"
+    )
 
 
 @invert.register
 def invert_linear(layer: nn.Linear) -> nn.Linear:
     # NOTE: Not sure how to handle the bias term
     backward = type(layer)(
-        in_features=layer.out_features, out_features=layer.in_features, bias=layer.bias is not None,
+        in_features=layer.out_features,
+        out_features=layer.in_features,
+        bias=layer.bias is not None,
     )
     return backward
 
@@ -75,7 +79,10 @@ def invert_sequential(module: nn.Sequential) -> nn.Sequential:
     """
     assert module.input_shape and module.output_shape, "Use the net before inverting."
     return type(module)(
-        OrderedDict((name, invert(module)) for name, module in list(module._modules.items())[::-1]),
+        OrderedDict(
+            (name, invert(module))
+            for name, module in list(module._modules.items())[::-1]
+        ),
     )
 
 
@@ -128,7 +135,9 @@ def _invert_elu(activation_layer: nn.ELU) -> nn.Module:
 
 
 def check_shapes_hook(
-    module: Invertible, inputs: Tensor | tuple[Tensor, ...], outputs: Tensor | tuple[Tensor, ...],
+    module: Invertible,
+    inputs: Tensor | tuple[Tensor, ...],
+    outputs: Tensor | tuple[Tensor, ...],
 ) -> None:
     """ Hook that sets the `input_shape` and `output_shape` attributes on the layers if not present.
     
@@ -184,7 +193,9 @@ def mark_as_invertible(module: nn.Module) -> Union[nn.Module, Invertible]:
 
 
 @mark_as_invertible.register
-def mark_sequential_as_invertible(module: nn.Sequential,) -> Union[nn.Sequential, Invertible]:
+def mark_sequential_as_invertible(
+    module: nn.Sequential,
+) -> Union[nn.Sequential, Invertible]:
     if check_shapes_hook not in module._forward_hooks.values():
         module.register_forward_hook(check_shapes_hook)
     for layer in module:

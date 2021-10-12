@@ -241,8 +241,8 @@ class SequentialModel(BaseModel):
                 )
                 # Get the loss (see `feedback_loss.py`)
                 loss = get_feedback_loss(
-                    G_i,
-                    F_i,
+                    feedback_layer=G_i,
+                    forward_layer=F_i,
                     input=x_i,
                     output=y_i,
                     noise_scale=noise_scale_i,
@@ -512,6 +512,6 @@ def make_stacked_feedback_training_figure(
         fig.update_yaxes(title_text=row_title, row=i + 1, col=1)
         # Set a fixed range on the y axis for that row:
         if "angle" in row_title.lower():
-            fig.update_yaxes(row=i+1, range=[0, 90], fixedrange=True)
+            fig.update_yaxes(row=i + 1, range=[0, 90], fixedrange=True)
 
     return fig
