@@ -512,6 +512,6 @@ def make_stacked_feedback_training_figure(
         fig.update_yaxes(title_text=row_title, row=i + 1, col=1)
         # Set a fixed range on the y axis for that row:
         if "angle" in row_title.lower():
-            fig.update_yaxes(row=plot_id+1, range=[0, 90], fixedrange=True)
+            fig.update_yaxes(row=i+1, range=[0, 90], fixedrange=True)
 
     return fig
