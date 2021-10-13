@@ -114,12 +114,12 @@ class ParallelModel(SequentialModel):
             # ----------- Optimize the feedback weights -------------
             feedback_loss = self.feedback_loss(x, y)
             loss += feedback_loss
-            self.log(f"{phase}/f_loss", feedback_loss, prog_bar=True, **self.log_kwargs)
+            self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
 
         if optimizer_idx in [None, self._forward_optim_index]:
             # ----------- Optimize the forward weights -------------
             forward_loss = self.forward_loss(x, y)
-            self.log(f"{phase}/b_loss", forward_loss, prog_bar=True, **self.log_kwargs)
+            self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
             loss += forward_loss
 
         return loss
