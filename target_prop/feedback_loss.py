@@ -124,7 +124,7 @@ def get_feedback_loss_parallel(
     batch_y = repeat_batch(y, n=n)
 
     r = feedback_layer(y)
-    batch_r = repeat_batch(x, n=n)
+    batch_r = repeat_batch(r, n=n)
 
     # IDEA: Could roll the noise vector, instead of sampling a truly different value for each index,
     # saving some memory.
@@ -156,18 +156,7 @@ def get_feedback_loss_parallel(
     batch_dr_loss = -2 * (batch_dx * batch_dr).flatten(1).sum(1).mean()
     batch_dy_loss = (batch_dr_y ** 2).flatten(1).sum(1).mean()
 
+    # TODO: Check that this gives the same result as the sequential version.
+    # TODO: BatchNorm will behave differently here, if we ever use it.
     batch_sample_loss = batch_dr_loss + batch_dy_loss
     return batch_sample_loss
-    # TODO: Check that this gives the same result as the sequential version.
-    # TODO: BatchNorm should have an impact here.
-    # noise_sample_losses = batch_sample_loss.reshape([n, -1])
-    return batch_sample_loss.reshape
-    return batch_sample_loss
-    # NOTE: Not sure if this makes things faster or not, but seems interesting to test out.
-
-    if use_separate_streams and synchronize:
-        # streams[0].
-        torch.cuda.synchronize()
-
-    feedback_losses = torch.stack(noise_sample_losses, dim=0)
-    return feedback_losses.mean(dim=0)

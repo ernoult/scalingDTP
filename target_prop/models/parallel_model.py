@@ -47,7 +47,6 @@ class ParallelModel(SequentialModel):
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True
         self.criterion = nn.CrossEntropyLoss(reduction="none")
-        # Set the number of feedback training iterations to 1.
 
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
@@ -124,7 +123,10 @@ class ParallelModel(SequentialModel):
 
         # List of losses, distances, and angles for each layer (with multiple iterations per layer).
         # NOTE: Skipping the first layer
-        # NOTE: Each of the loops below is independent. Would be nice to parallelize this somehow.
+        # NOTE: Each of the loops below is independent. Would be nice to also parallelize this
+        # somehow.
+        # NOTE: Could also use the `get_feedback_loss` as well, there should be no difference in
+        # the results.
         layer_losses: List[Tensor] = [
             get_feedback_loss_parallel(
                 feedback_layer=reversed_backward_net[i],
