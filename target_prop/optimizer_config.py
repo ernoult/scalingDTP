@@ -60,7 +60,7 @@ class OptimizerConfig(HyperParameters):
         if optimizer_class is torch.optim.SGD:
             optimizer_kwargs["momentum"] = self.momentum
 
-        logger.debug("optimizer kwargs:", optimizer_kwargs)
+        logger.debug(f"optimizer kwargs: {optimizer_kwargs}")
         return optimizer_class(  # type: ignore
             params, **optimizer_kwargs,
         )

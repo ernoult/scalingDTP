@@ -456,7 +456,7 @@ class SequentialModel(BaseModel):
 
 
 def make_stacked_feedback_training_figure(
-    all_values: Sequence[List[List[Union[Tensor, np.ndarray, float]]]],
+    all_values: Sequence[Sequence[Sequence[Union[Tensor, np.ndarray, float]]]],
     row_titles: Sequence[str],
     title_text: str,
     layer_names: List[str] = None,

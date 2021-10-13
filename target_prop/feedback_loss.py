@@ -82,20 +82,41 @@ def get_feedback_loss(
     return feedback_losses.mean(dim=0)
 
 
-def repeat_batch(v: Tensor, n: int, copy: bool = True) -> Tensor:
-    if copy:
-        return v.repeat([n, *[1 for _ in v.shape[1:]]])
-    else:
-        return torch.cat([v for _ in range(n)], dim=0)
+def repeat_batch(v: Tensor, n: int) -> Tensor:
+    """ Repeats the elements of tensor `v` `n` times along the batch dimension:
+    
+    Example:
+
+    input:  [[1, 2, 3], [4, 5, 6]] of shape=(2, 3), n = 2 
+    output: [[1, 2, 3], [1, 2, 3], [4, 5, 6], [4, 5, 6]] of shape=(4, 3)
+    
+    >>> import torch
+    >>> input = torch.as_tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    >>> repeat_batch(input, 2).tolist()
+    [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [4.0, 5.0, 6.0]]
+    """
+    b = v.shape[0]
+    batched_v = v.unsqueeze(1).expand([b, n, *v.shape[1:]])  # [B, N, ...]
+    flattened_batched_v = batched_v.reshape([b * n, *v.shape[1:]])  # [N*B, ...]
+    return flattened_batched_v
 
 
-def split_batch(batched_v: Tensor, n: int) -> List[Tensor]:
+def split_batch(batched_v: Tensor, n: int) -> Tensor:
+    """ Reshapes the output of `repeat_batch` from shape [B*N, ...] back to a shape of [B, N, ...]
+
+    Example:
+
+    input: [[1.0, 2.0, 3.0], [1.1, 2.1, 3.1], [4.0, 5.0, 6.0], [4.1, 5.1, 6.1]], shape=(4, 3)
+    output: [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1]]], shape=(2, 2, 3)
+    
+    >>> import numpy as np
+    >>> input = np.array([[1.0, 2.0, 3.0], [1.1, 2.1, 3.1], [4.0, 5.0, 6.0], [4.1, 5.1, 6.1]])
+    >>> split_batch(input, 2).tolist()
+    [[[1.0, 2.0, 3.0], [1.1, 2.1, 3.1]], [[4.0, 5.0, 6.0], [4.1, 5.1, 6.1]]]
+    """
     assert batched_v.shape[0] % n == 0
-    original_batch_size = batched_v.shape[0] // n
-    return [
-        batched_v[i * original_batch_size : (i + 1) * original_batch_size, ...]
-        for i in range(n)
-    ]
+    # [N*B, ...] -> [N, B, ...]
+    return batched_v.reshape([-1, n, *batched_v.shape[1:]])
 
 
 def get_feedback_loss_parallel(
@@ -113,11 +134,13 @@ def get_feedback_loss_parallel(
     Returns the loss for a single iteration.
     Can optionally use more than one noise sample per iteration.
     """
-    # QUESTION: TODO: Should we 'recurse' into the sequential blocks for getting the
-    # feedback loss? Or consider the whole block as a single "layer"?
+    # TODO: Check that this gives exactly the same result as the sequential version.
+    # NOTE: BatchNorm might behave differently here because of the larger batch, if we ever use it.
     x = input
     y = output
     n = noise_samples
+    # batch size
+    b = input.shape[0]
 
     # IDEA: Tile x and use a larger batch size for the forward and backward computation.
     batch_x = repeat_batch(x, n=n)
@@ -148,15 +171,18 @@ def get_feedback_loss_parallel(
     # NOTE: Original code:
     # (-2*(noise*dr).view(dr.size(0), -1).sum(1).mean()
     #  + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean())
+
+    # NOTE: The 'mean' term here would be a bit different, since it acts across samples too.
     # batch_dr_loss = -2 * (batch_dx * batch_dr).flatten(1).sum(1).mean()
     # batch_dy_loss = (batch_dr_y ** 2).flatten(1).sum(1).mean()
+    batch_dr_loss = -2 * (batch_dx * batch_dr).flatten(1).sum(1)
+    batch_dy_loss = (batch_dr_y ** 2).flatten(1).sum(1)
+    batch_sample_loss = batch_dr_loss + batch_dy_loss  # [B*N]
 
-    # TODO: The 'mean' term here is a bit different now, since it acts across samples too.
-    # Is that ok?
-    batch_dr_loss = -2 * (batch_dx * batch_dr).flatten(1).sum(1).mean()
-    batch_dy_loss = (batch_dr_y ** 2).flatten(1).sum(1).mean()
-
-    # TODO: Check that this gives the same result as the sequential version.
-    # TODO: BatchNorm will behave differently here, if we ever use it.
-    batch_sample_loss = batch_dr_loss + batch_dy_loss
-    return batch_sample_loss
+    # NOTE: Reshaping tensors here so that the indices match those from the original batch, i.e. the
+    # loss[0,0] is with respect to the same item in the batch as loss[0,1], but with a different
+    # noise sample.
+    sample_loss = split_batch(batch_sample_loss, n)  # [B, N]
+    # TODO: Should we take an average or a sum over the samples dimension?
+    loss = sample_loss.mean(1).mean(0)
+    return loss

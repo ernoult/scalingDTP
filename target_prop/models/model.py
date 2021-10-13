@@ -238,7 +238,7 @@ class BaseModel(LightningModule, ABC):
                 "hp": self.hp.to_dict(),
                 "datamodule": datamodule,
                 "config": self.config.to_dict(),
-                "model_type": type(self).__name__
+                "model_type": type(self).__name__,
             }
         )
         # kwargs that will get passed to all calls to `self.log()`, just to make things

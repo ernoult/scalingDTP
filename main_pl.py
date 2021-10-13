@@ -100,11 +100,10 @@ def main(sample_hparams: bool = False):
         gpus=torch.cuda.device_count(),
         track_grad_norm=False,
         accelerator=None,
-        # max_steps=10 if config.debug else None, # NOTE: Can be useful when generating a lot of plots.
         # accelerator="ddp",
         # profiler="simple",
         # callbacks=[],
-        # terminate_on_nan=True, # BUG: Would like to use this, but doesn't seem to work.
+        terminate_on_nan=True,
         logger=WandbLogger() if not config.debug else None,
     )
     trainer.fit(model, datamodule=datamodule)

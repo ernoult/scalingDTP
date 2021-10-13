@@ -1,3 +1,4 @@
+from pathlib import Path
 from target_prop.feedback_loss import get_feedback_loss, get_feedback_loss_parallel
 from .model import BaseModel
 from torch import Tensor
@@ -10,11 +11,19 @@ from target_prop.layers import forward_all
 from target_prop.utils import is_trainable
 from simple_parsing.helpers.hparams import uniform
 from simple_parsing.helpers import field, list_field
+from target_prop.optimizer_config import OptimizerConfig
+from target_prop.metrics import compute_dist_angle
+import numpy as np
 
 try:
     from typing import Final
 except ImportError:
     from typing_extensions import Final
+from .sequential_model import make_stacked_feedback_training_figure
+from logging import getLogger as get_logger
+import wandb
+
+logger = get_logger(__name__)
 
 
 class ParallelModel(SequentialModel):
@@ -37,9 +46,29 @@ class ParallelModel(SequentialModel):
         # NOTE: The loss used for each update is the average of these losses.
         feedback_samples_per_iteration: int = uniform(1, 20, default=10)
 
+        # Hyper-parameters for the "backward" optimizer
+        b_optim: OptimizerConfig = OptimizerConfig(
+            type="adam",
+            lr=[3e-4] * 5,
+            # type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+        )
+        # The scale of the gaussian random variable in the feedback loss calculation.
+        noise: List[float] = uniform(
+            0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
+        )
+        # Hyper-parameters for the forward optimizer
+        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
+        f_optim: OptimizerConfig = OptimizerConfig(
+            type="adam", lr=[3e-4], weight_decay=1e-4,  # momentum=0.9
+        )
+        # Use of a learning rate scheduler for the forward weights.
+        scheduler: bool = True
+        # nudging parameter: Used when calculating the first target.
+        beta: float = uniform(0.01, 1.0, default=0.7)
+
         def __post_init__(self):
             super().__post_init__()
-            self.feedback_training_iterations = [1 for _ in self.b_optim.lr]
+            self.feedback_training_iterations = [1 for _ in self.channels]
 
     def __init__(self, datamodule, hparams, config):
         super().__init__(datamodule, hparams, config)
@@ -125,16 +154,17 @@ class ParallelModel(SequentialModel):
         # NOTE: Skipping the first layer
         # NOTE: Each of the loops below is independent. Would be nice to also parallelize this
         # somehow.
-        # NOTE: Could also use the `get_feedback_loss` as well, there should be no difference in
-        # the results.
         layer_losses: List[Tensor] = [
+            # NOTE: Could also use the `get_feedback_loss` as well, there should be no difference in
+            # the results.
+            # get_feedback_loss(
             get_feedback_loss_parallel(
                 feedback_layer=reversed_backward_net[i],
                 forward_layer=self.forward_net[i],
                 input=ys[i - 1],
                 output=ys[i],
                 noise_scale=noise_scale_per_layer[i],
-                noise_samples=10,
+                noise_samples=self.hp.feedback_samples_per_iteration,
                 # TODO: Not sure if using different streams really makes this faster. Need to check.
                 # use_separate_streams=True,
                 # synchronize=False,
@@ -144,6 +174,59 @@ class ParallelModel(SequentialModel):
         ]
         # Loss will now have shape [`n_layers`, `n_samples`]
         loss = torch.stack(layer_losses, dim=0)
+
+        if self.training and self.global_step % self.hp.plot_every == 0:
+            # NOTE: This here gets calculated *before* the update. Would be nice to show the
+            # difference between before and after the update instead.
+            # TODO: Move this to something like `on_zero_grad` or something?
+            with torch.no_grad():
+                # Compute the angle and distance for debugging the training of the
+                # feedback weights:
+                layer_distance, layer_angle = zip(
+                    *[
+                        compute_dist_angle(
+                            self.forward_net[i], reversed_backward_net[i]
+                        )
+                        for i in range(1, n_layers)
+                        if is_trainable(reversed_backward_net[i])
+                    ]
+                )
+            # NOTE: Have to add the 'iterations' dimension, since it's used in the sequential model.
+            layer_distances = torch.as_tensor(layer_distance).reshape(
+                [len(layer_distance), 1]
+            )
+            layer_angles = torch.as_tensor(layer_angle).reshape(
+                [len(layer_distance), 1]
+            )
+            layer_losses_for_plot = (
+                torch.stack(layer_losses).detach().reshape(layer_distances.shape)
+            )
+            fig = make_stacked_feedback_training_figure(
+                all_values=[layer_angles, layer_distances, layer_losses_for_plot],
+                row_titles=["angles", "distances", "losses"],
+                title_text=(
+                    f"Evolution of various metrics during feedback weight training "
+                    f"(global_step={self.global_step})"
+                ),
+            )
+            fig_name = f"feedback_training_{self.global_step}"
+            figures_dir = Path(self.trainer.log_dir or ".") / "figures"
+            figures_dir.mkdir(exist_ok=True, parents=False)
+            save_path: Path = figures_dir / fig_name
+            fig.write_image(str(save_path.with_suffix(".png")))
+            logger.info(f"Figure saved at path {save_path.with_suffix('.png')}")
+            # TODO: Figure out why exactly logger.info isn't showing up.
+            print(f"Figure saved at path {save_path.with_suffix('.png')}")
+
+            if self.config.debug:
+                # Also save an HTML version when debugging.
+                fig.write_html(
+                    str(save_path.with_suffix(".html")), include_plotlyjs="cdn"
+                )
+
+            if wandb.run:
+                wandb.log({"feedback_training": fig})
+
         return loss.sum()
 
     def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
@@ -151,6 +234,7 @@ class ParallelModel(SequentialModel):
 
         See the `training_step_end` of pytorch-lightning for more info.
         """
+        # TODO: Actually debug it with DP/DDP. Used to work with DP, haven't tested it in a while.
         # TODO: For now we're kinda losing the logs and stuff that happens within the
         # workers in DP (they won't show up in the progress bar for instance).
         # merged_step_results = {
@@ -162,30 +246,6 @@ class ParallelModel(SequentialModel):
             if isinstance(step_results, (Tensor, float))
             else sum(step_results)
         )
-
-        # TODO: If NOT in automatic differentiation, but still in a scenario where we
-        # can do a single update, do it here.
         loss = merged_step_result
         self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
-
-        if (
-            not self.automatic_optimization
-            and isinstance(loss, Tensor)
-            and loss.requires_grad
-        ):
-            forward_optimizer = self.forward_optimizer
-            backward_optimizer = self.feedback_optimizer
-            forward_optimizer.zero_grad()
-            backward_optimizer.zero_grad()
-
-            self.manual_backward(loss)
-
-            forward_optimizer.step()
-            backward_optimizer.step()
-            return float(loss)
-
-        elif not self.automatic_optimization:
-            return float(merged_step_result)
-
-        assert self.automatic_optimization
-        return merged_step_result
+        return loss
