@@ -6,7 +6,6 @@ from typing import List, Optional, Tuple, Union
 from torch import nn
 import torch
 from dataclasses import dataclass
-from .sequential_model import SequentialModel
 from target_prop.layers import forward_all
 from target_prop.utils import is_trainable
 from simple_parsing.helpers.hparams import uniform
@@ -19,21 +18,31 @@ try:
     from typing import Final
 except ImportError:
     from typing_extensions import Final
-from .sequential_model import make_stacked_feedback_training_figure
+from .utils import make_stacked_feedback_training_figure
+from .dtp import DTP
+
 from logging import getLogger as get_logger
 import wandb
 
 logger = get_logger(__name__)
 
 
-class ParallelModel(SequentialModel):
-    """ "Parallel" version of the sequential model, uses more noise samples but a single
-    iteration for the training of the feedback weights, which makes it possible to use
-    the automatic optimization and distributed training features of PyTorch-Lightning.
-    """
+class ParallelDTP(DTP):
+    """ "Parallel" variant of the DTP algorithm.
+    
+    Performs a single fused update for all feedback weights (a single "iteration") but uses multiple
+    noise samples per "iteration".
 
+    By avoiding to have multiple sequential, layer-wise updates within a single step, it becomes
+    possible to use the automatic optimization and distributed training features of
+    PyTorch-Lightning.
+    
+    NOTE: The "sequential" version of DTP can also use multiple noise samples per iteration. The
+    default value for that parameter is set to 1 by default in DTP in order to reproduce @ernoult's
+    experiments exactly.
+    """
     @dataclass
-    class HParams(SequentialModel.HParams):
+    class HParams(DTP.HParams):
         """ HParams of the Parallel model. """
 
         # Number of training steps for the feedback weights per batch.

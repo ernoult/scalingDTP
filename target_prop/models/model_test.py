@@ -3,7 +3,7 @@ import logging
 from typing import ClassVar, Type
 
 from pytorch_lightning.utilities.seed import seed_everything
-from target_prop.models import BaseModel, SequentialModel, ParallelModel
+from target_prop.models import BaseModel, SequentialModel, ParallelDTP
 from target_prop.config import Config
 from simple_parsing import ArgumentParser
 import json

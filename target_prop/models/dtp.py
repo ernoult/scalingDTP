@@ -1,55 +1,51 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import (
-    Any,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+from pytorch_lightning.core.optimizer import LightningOptimizer
 
-import numpy as np
-import plotly.graph_objects as go
 import torch
 import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from plotly.graph_objects import Figure
-from plotly.subplots import make_subplots
+from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
+from target_prop._weight_operations import init_symetric_weights
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
-from target_prop.layers import forward_all
+from target_prop.layers import forward_all, MaxPool2d, Reshape
+from torch.optim.optimizer import Optimizer
+import textwrap
 from target_prop.metrics import compute_dist_angle
 from target_prop.models.model import BaseModel
 from target_prop.optimizer_config import OptimizerConfig
+from target_prop.utils import is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torchmetrics.classification import Accuracy
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.backward_layers import mark_as_invertible
+from torch import nn
+from target_prop.backward_layers import invert
+from collections import OrderedDict
+
+from .utils import make_stacked_feedback_training_figure
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class SequentialModel(BaseModel):
-    """ Model that trains the forward weights and feedback weights sequentially.
+class DTP(LightningModule):
+    """ Differential Target Propagation algorithm, implemented as a LightningModule.
 
-    NOTE: This is basically the same as @ernoult's implementation.
-    """
+    This is (as far as I know) exactly equivalent with @ernoult's implementation.
+    The default values for the hyper-parameters are equivalent to what they would be when
+    running the following command:
 
-    @dataclass
-    class HParams(BaseModel.HParams):
-        """ Hyper-Parameters of the model.
-
-        TODO: Set these values as default (cifar10)
-        ```console
-        python main.py --batch-size 128 \
+    ```console
+    python main.py --batch-size 128 \
         --C 128 128 256 256 512 \
         --iter 20 30 35 55 20 \
         --epochs 90 \
@@ -60,7 +56,21 @@ class SequentialModel(BaseModel):
         --path CIFAR-10 \
         --scheduler \
         --wdecay 1e-4 \
-        ```
+    ```
+
+    In other words, to reproduce @ernoult's results on Cifar-10, there is no need to change
+    anything here or pass any custom values from the command-line.
+    """
+
+    @dataclass
+    class HParams(HyperParameters):
+        """ Hyper-Parameters of the model.
+
+        The number of noise samples to use per iteration is set by `feedback_samples_per_iteration`.
+
+        NOTE: By increasing the value of `feedback_samples_per_iteration` and setting the value of
+        `feedback_training_iterations` to 1 for all layers, we could get something close to a
+        "parallel" version of DTP, however the feedback layers still need to be updated in sequence.
         """
 
         # batch size
@@ -77,8 +87,6 @@ class SequentialModel(BaseModel):
         max_epochs: int = 90
 
         # Hyper-parameters for the "backward" optimizer
-        # BUG: The default values of the arguments don't reflect the values that are
-        # passed to `mutable_field`
         b_optim: OptimizerConfig = OptimizerConfig(
             type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
         )
@@ -104,41 +112,179 @@ class SequentialModel(BaseModel):
         # accuracy before the training is stopped. When 0, no early stopping is used.
         early_stopping_patience: int = 0
 
-        # Sets symmetric weight initialization
+        # Sets symmetric weight initialization. Useful for debugging.
         init_symetric_weights: bool = False
 
+        # TODO: Add a Callback class to compute and plot jacobians, if that's interesting.
         # jacobian: bool = False  # compute jacobians
 
-        activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default="elu"
-        )
+        # Type of activation to use.
+        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default="elu")
 
         # Step interval for creating and logging plots.
         plot_every: int = 10
 
     def __init__(
-        self,
-        datamodule: VisionDataModule,
-        hparams: "SequentialModel.HParams",
-        config: Config,
+        self, datamodule: VisionDataModule, hparams: "DTP.HParams", config: Config,
     ):
-        super().__init__(datamodule, hparams, config)
+        super().__init__()
+        self.hp: DTP.HParams = hparams
+        self.datamodule = datamodule
+        self.config = config
+        if self.config.seed is not None:
+            # NOTE: This is currently being done twice: Once in main_pl and once again here.
+            seed_everything(seed=self.config.seed, workers=True)
+
+        self.in_channels, self.img_h, self.img_w = datamodule.dims
+        self.n_classes = datamodule.num_classes
+
+        # NOTE: Setting this property allows PL to infer the shapes and number of params.
+        self.example_input_array = torch.rand(  # type: ignore
+            [datamodule.batch_size, *datamodule.dims], device=self.device
+        )
+
+        ## Create the forward and backward nets.
+        self.forward_net = self.create_forward_net()
+        self.backward_net = self.create_backward_net()
+
+        if self.hp.init_symetric_weights:
+            logger.info(f"Initializing the backward net with symetric weights.")
+            init_symetric_weights(self.forward_net, self.backward_net)
+
+        # The number of iterations to perform for each of the layers in `self.backward_net`.
+        self.feedback_iterations = self._align_values_with_backward_net(
+            self.hp.feedback_training_iterations, default=0, forward_ordering=True,
+        )
+        # The noise scale for each feedback layer.
+        self.feedback_noise_scales = self._align_values_with_backward_net(
+            self.hp.noise, default=0.0, forward_ordering=True,
+        )
+        # The learning rate for each feedback layer.
+        self.feedback_lrs = self._align_values_with_backward_net(self.hp.b_optim.lr, default=0.0, forward_ordering=True)
+        
+        if self.config.debug:
+            print(f"Forward net: ")
+            print(self.forward_net)
+            print(f"Feedback net:")
+            print(self.backward_net)
+
+            N = len(self.backward_net)
+            for i, (layer, lr, noise, iterations) in list(
+                enumerate(
+                    zip(
+                        self.backward_net,
+                        self.feedback_lrs,
+                        self.feedback_noise_scales,
+                        self.feedback_iterations,
+                    )
+                )
+            ):
+                print(f"self.backward_net[{i}]: (G[{N-i-1}]): LR: {lr}, noise: {noise}, iterations: {iterations}")
+                if i == N - 1:
+                    # The last layer of the backward_net (the layer closest to the input) is not
+                    # currently being trained, so we expect it to not have these parameters.
+                    assert lr == 0
+                    assert noise == 0
+                    assert iterations == 0
+                    continue
+                if any(p.requires_grad for p in layer.parameters()):
+                    # For any of the trainable layers in the backward net (except the last one), we
+                    # expect to have positive values:
+                    assert lr > 0
+                    assert noise > 0
+                    assert iterations > 0
+                else:
+                    # Non-Trainable layers (e.g. Reshape) are not trained.
+                    assert lr == 0
+                    assert noise == 0
+                    assert iterations == 0
+        # Metrics:
+        self.accuracy = Accuracy()
+
+        self.save_hyperparameters(
+            {
+                "hp": self.hp.to_dict(),
+                "datamodule": datamodule,
+                "config": self.config.to_dict(),
+                "model_type": type(self).__name__,
+            }
+        )
+
+        # NOTE: These properties below are in the backward ordering, while those in the hparams are
+        # in the forward order.
+
+        self.trainer: Trainer  # type: ignore
         # Can't do automatic optimization here, since we do multiple sequential updates
         # per batch.
         self.automatic_optimization = False
         self.criterion = nn.CrossEntropyLoss(reduction="none")
         print("Hyper-Parameters:")
         print(self.hp.dumps_json(indent="\t"))
-        # TODO: Use something like this:
+        # TODO: Could use a list of metrics from torchmetrics instead of just accuracy:
         # self.supervised_metrics: List[Metrics]
 
-    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
+    def create_forward_net(self) -> nn.Sequential:
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        
+        activation_type = self.hp.activation
+
+        channels = [self.in_channels] + self.hp.channels
+        # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
+        # iterable is exhausted. This gives us the right number of blocks.
+        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
+            block = nn.Sequential(
+                OrderedDict(
+                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
+                    rho=activation_type(),
+                    # NOTE: Even though `return_indices` is `False` here, we're actually passing
+                    # the indices to the backward net for this layer through a "magic bridge".
+                    # We use `return_indices=False` here just so the layer doesn't also return
+                    # the indices in its forward pass.
+                    pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
+                    # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
+                    # pool=nn.AvgPool2d(kernel_size=2),
+                )
+            )
+            layers[f"conv_{i}"] = block
+        layers["reshape"] = Reshape(target_shape=(-1,))
+        # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
+        layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
+        return nn.Sequential(layers)
+
+    def create_backward_net(self) -> nn.Sequential:
+        # Pass an example input through the forward net so that we know the input/output shapes for
+        # each layer. This makes it easier to then create the feedback (a.k.a backward) net.
+        mark_as_invertible(self.forward_net)
+        example_out: Tensor = self.forward_net(self.example_input_array)
+
+        assert example_out.requires_grad
+        # Get the "pseudo-inverse" of the forward network:
+        backward_net: nn.Sequential = invert(self.forward_net)  # type: ignore
+
+        # Pass the output of the forward net for the `example_input_array` through the
+        # backward net, to check that the backward net is indeed able to recover the
+        # inputs (at least in terms of their shape for now).
+        example_in_hat: Tensor = backward_net(example_out)
+        assert example_in_hat.requires_grad
+        assert example_in_hat.shape == self.example_input_array.shape
+        assert example_in_hat.dtype == self.example_input_array.dtype
+
+        return backward_net
+
+    def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
+        # Dummy forward pass, not used in practice. We just implement it so that PL can
+        # display the input/output shapes of our networks.
+        y = self.forward_net(input)
+        r = self.backward_net(y)
+        return y, r
+
+    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="train")
 
-    def validation_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
+    def validation_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
-    def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:
+    def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
@@ -151,7 +297,7 @@ class SequentialModel(BaseModel):
         # ----------- Optimize the feedback weights -------------
         # NOTE: feedback_loss here returns a dict for now, since I think that makes things easier to
         # inspect.
-        feedback_training_outputs: Dict = self.feedback_loss(x, y)
+        feedback_training_outputs: Dict = self.feedback_loss(x, y, phase=phase)
 
         feedback_loss: Tensor = feedback_training_outputs["loss"]
         self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
@@ -160,12 +306,15 @@ class SequentialModel(BaseModel):
         assert not feedback_loss.requires_grad
 
         # ----------- Optimize the forward weights -------------
-        forward_loss = self.forward_loss(x, y)
+        forward_loss = self.forward_loss(x, y, phase=phase)
         self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
 
         # During training, the forward loss will be a 'live' loss tensor, since we
         # gather the losses for each layer. Here we perform only one step.
-        if forward_loss.requires_grad and not self.automatic_optimization:
+        assert not self.automatic_optimization
+        assert forward_loss.requires_grad == (phase == "train")
+
+        if forward_loss.requires_grad:
             f_optimizer = self.forward_optimizer
             self.manual_backward(forward_loss)
             f_optimizer.step()
@@ -177,11 +326,10 @@ class SequentialModel(BaseModel):
                 lr_scheduler.step()
 
         # Since here we do manual optimization, we just return a float. This tells PL that we've
-        # already performed the optimization steps.
+        # already performed the optimization steps, if needed.
         return float(forward_loss + feedback_loss)
 
-    def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
-        feedback_optimizer = self.feedback_optimizer
+    def feedback_loss(self, x: Tensor, y: Tensor, phase: str) -> Dict[str, Any]:
 
         n_layers = len(self.backward_net)
         # Reverse the backward net, just for ease of readability.
@@ -198,9 +346,7 @@ class SequentialModel(BaseModel):
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
         with torch.no_grad():
-            ys: List[Tensor] = forward_all(
-                self.forward_net, x, allow_grads_between_layers=False
-            )
+            ys: List[Tensor] = forward_all(self.forward_net, x, allow_grads_between_layers=False)
 
         # List of losses, distances, and angles for each layer (with multiple iterations per layer).
         layer_losses: List[List[Tensor]] = []
@@ -218,7 +364,7 @@ class SequentialModel(BaseModel):
             y_i = ys[layer_index]
             # Number of feedback training iterations to perform for this layer.
             iterations_i = iterations_per_layer[layer_index]
-            if iterations_i and self.phase != "train":
+            if iterations_i and not self.training:
                 # NOTE: Only perform one iteration per layer when not training.
                 iterations_i = 1
             # The scale of noise to use for thist layer.
@@ -255,11 +401,11 @@ class SequentialModel(BaseModel):
                     distance, angle = compute_dist_angle(F_i, G_i)
 
                 # perform the optimization step for that layer when training.
-                if self.phase == "train":
+                if self.training:
                     assert isinstance(loss, Tensor) and loss.requires_grad
-                    feedback_optimizer.zero_grad()
+                    self.feedback_optimizer.zero_grad()
                     self.manual_backward(loss)
-                    feedback_optimizer.step()
+                    self.feedback_optimizer.step()
                     loss = loss.detach()
                 else:
                     assert isinstance(loss, Tensor) and not loss.requires_grad
@@ -285,8 +431,8 @@ class SequentialModel(BaseModel):
 
             # IDEA: Logging the number of iterations could be useful if we add some kind of early
             # stopping for the feedback training, since the number of iterations might vary.
-            self.log(f"{self.phase}/B_total_loss[{layer_index}]", sum(iteration_losses))
-            self.log(f"{self.phase}/B_iterations[{layer_index}]", iterations_i)
+            self.log(f"{phase}/B_total_loss[{layer_index}]", sum(iteration_losses))
+            self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
             # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
             # What would be nicer would be to log this as a small, light-weight plot showing the
             # evolution of the distances / angles for each layer.
@@ -313,9 +459,7 @@ class SequentialModel(BaseModel):
 
             if self.config.debug:
                 # Also save an HTML version when debugging.
-                fig.write_html(
-                    str(save_path.with_suffix(".html")), include_plotlyjs="cdn"
-                )
+                fig.write_html(str(save_path.with_suffix(".html")), include_plotlyjs="cdn")
 
             if wandb.run:
                 wandb.log({"feedback_training": fig})
@@ -329,7 +473,7 @@ class SequentialModel(BaseModel):
             "layer_distances": layer_distances,
         }
 
-    def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
+    def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
         """ Get the loss used to train the forward net. 
 
         NOTE: Unlike `feedback_loss`, this actually returns the 'live' loss tensor.
@@ -350,7 +494,7 @@ class SequentialModel(BaseModel):
         # target during validation / testing.
         with torch.set_grad_enabled(True):
             accuracy = self.accuracy(torch.softmax(logits, -1), labels)
-            self.log(f"{self.phase}/accuracy", accuracy, prog_bar=True)
+            self.log(f"{phase}/accuracy", accuracy, prog_bar=True)
 
             temp_logits = logits.detach().clone()
             temp_logits.requires_grad_(True)
@@ -367,7 +511,7 @@ class SequentialModel(BaseModel):
 
         delta = -self.hp.beta * y_n_grad
 
-        self.log(f"{self.phase}/delta.norm()", delta.norm())
+        self.log(f"{phase}/delta.norm()", delta.norm())
         # Compute the first target (for the last layer of the forward network):
         last_layer_target = logits.detach() + delta
 
@@ -392,9 +536,7 @@ class SequentialModel(BaseModel):
                 G = reordered_feedback_net[i]
                 # G = feedback_net[-1 - i]
 
-                assert (
-                    targets[i - 1] is None
-                )  # Make sure we're not overwriting anything.
+                assert targets[i - 1] is None  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
                 targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
@@ -404,9 +546,7 @@ class SequentialModel(BaseModel):
 
         # NOTE: targets[0] is the targets for the output of the first layer, not for x.
         # Make sure that all targets have been computed and that they are fixed (don't require grad)
-        assert all(
-            target is not None and not target.requires_grad for target in targets
-        )
+        assert all(target is not None and not target.requires_grad for target in targets)
         target_tensors = cast(List[Tensor], targets)  # Rename just for typing purposes.
 
         # Calculate the losses for each layer:
@@ -416,16 +556,10 @@ class SequentialModel(BaseModel):
             # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
             for i in range(0, N)
         ]
-        assert (
-            len(ys)
-            == len(targets)
-            == len(forward_loss_per_layer)
-            == len(self.forward_net)
-            == N
-        )
+        assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(self.forward_net) == N
 
         for i, layer_loss in enumerate(forward_loss_per_layer):
-            self.log(f"{self.phase}/F_loss[{i}]", layer_loss)
+            self.log(f"{phase}/F_loss[{i}]", layer_loss)
 
         loss_tensor = torch.stack(forward_loss_per_layer, dim=0)
         # TODO: Use 'sum' or 'mean' as the reduction between layers?
@@ -433,11 +567,8 @@ class SequentialModel(BaseModel):
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:
-        lrs_per_feedback_layer = self._get_learning_rate_per_feedback_layer(
-            forward_ordering=False
-        )
         feedback_optimizer = self.hp.b_optim.make_optimizer(
-            self.backward_net, learning_rates_per_layer=lrs_per_feedback_layer
+            self.backward_net, learning_rates_per_layer=self.feedback_lrs
         )
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
 
@@ -454,64 +585,68 @@ class SequentialModel(BaseModel):
             forward_optim_config,
         ]
 
+    @property
+    def feedback_optimizer(self) -> Union[Optimizer, LightningOptimizer]:
+        """Returns The optimizer of the feedback/backward net. """
+        optimizers = self.optimizers()
+        assert isinstance(optimizers, list)
+        feedback_optimizer = optimizers[0]
+        return feedback_optimizer
 
-def make_stacked_feedback_training_figure(
-    all_values: Sequence[Sequence[Sequence[Union[Tensor, np.ndarray, float]]]],
-    row_titles: Sequence[str],
-    title_text: str,
-    layer_names: List[str] = None,
-) -> Figure:
-    """Creates a stacked plot that shows the evolution of different values during a step of
-    feedback training.
-    
-    `all_values` should contain a sequence of list of lists. (a list of "metric_values").
-    Each "metric_values" should contain the value of a metric, for each layer, for each iteration.
-    `row_titles` should contain the name associated with each item in `all_values`.
-    `title_text` is the name of the overall figure.
-    """
-    all_values = [
-        [
-            [v.cpu().numpy() if isinstance(v, Tensor) else v for v in layer_values]
-            for layer_values in values
-        ]
-        for values in all_values
-    ]
+    @property
+    def forward_optimizer(self) -> Union[Optimizer, LightningOptimizer]:
+        """Returns The optimizer of the forward net. """
+        optimizers = self.optimizers()
+        assert isinstance(optimizers, list)
+        forward_optimizer = optimizers[1]
+        return forward_optimizer
 
-    n_layers = len(all_values[0])
-    n_plots = len(all_values)
-    layer_names = layer_names or [f"layer {i}" for i in range(n_layers)]
-    assert len(row_titles) == n_plots
-    # Each list needs to have the same number of items (i.e. same number of layers)
-    assert all(len(values) == n_layers for values in all_values)
+    def _align_values_with_backward_net(
+        self, values: List[T], default: T, forward_ordering: bool = False
+    ) -> List[T]:
+        """ Aligns the values in `values` so that they are aligned with the trainable
+        layers in the backward net.
+        The last layer of the backward net (G_0) is also never trained.
 
-    fig: Figure = make_subplots(
-        rows=n_plots,
-        cols=n_layers,
-        x_title="# of feedback training iterations",
-        column_titles=layer_names,
-        row_titles=[row_title for row_title in row_titles],
-    )
+        This assumes that `forward_ordering` is True, then `values` are forward-ordered.
+        Otherwise, assumes that the input is given in the *backward* order Gn, Gn-1, ..., G0.
+        
+        NOTE: Outputs are *always* aligned with `self.backward_net` ([Gn, ..., G0]). 
+        
+        Example: Using the default learning rate values for cifar10 as an example:
+        
+            `self.forward_net`: (conv, conv, conv, conv, reshape, linear)
+            `self.backward_net`:   (linear, reshape, conv, conv, conv, conv)
+            
+            forward-aligned values: [1e-4, 3.5e-4, 8e-3, 8e-3, 0.18]
+            
+            `values` (backward-aligned): [0.18, 8e-3, 8e-3, 3.5e-4, 1e-4]  (note: backward order)
+            
+            
+            `default`: 0
 
-    # Add traces
-    for plot_id, values in enumerate(all_values):
-        for layer_id in range(n_layers):
-            layer_values = values[layer_id]
-            x = np.arange(len(layer_values))
-            trace = go.Scatter(x=x, y=layer_values)
-            fig.add_trace(
-                trace, row=plot_id + 1, col=layer_id + 1,
+            Output:  [0.18, 0 (default), 8e-3, 8e-3, 3.5e-4, 1e-4, 0 (never trained)]
+        """
+        backward_ordered_input = list(reversed(values)) if forward_ordering else values
+
+        n_layers_that_need_a_value = sum(map(is_trainable, self.backward_net))
+        # Don't count the last layer of the backward net (i.e. G_0), since we don't
+        # train it.
+        n_layers_that_need_a_value -= 1
+        if len(values) != n_layers_that_need_a_value:
+            raise ValueError(
+                f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+                f"given {len(values)} values! (values={values})\n "
             )
 
-    # Add figure title
-    fig.update_layout(
-        title_text=title_text, showlegend=False,
-    )
+        values_left = backward_ordered_input.copy()
+        values_per_layer: List[T] = []
+        for layer in self.backward_net:
+            if is_trainable(layer) and values_left:
+                values_per_layer.append(values_left.pop(0))
+            else:
+                values_per_layer.append(default)
+        assert values_per_layer[-1] == default
 
-    for i, row_title in enumerate(row_titles):
-        # Set y-axes titles (only for the first column)
-        fig.update_yaxes(title_text=row_title, row=i + 1, col=1)
-        # Set a fixed range on the y axis for that row:
-        if "angle" in row_title.lower():
-            fig.update_yaxes(row=i + 1, range=[0, 90], fixedrange=True)
-
-    return fig
+        backward_ordered_output = values_per_layer
+        return backward_ordered_output

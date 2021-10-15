@@ -24,7 +24,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchmetrics.classification import Accuracy
-
+from torch.optim.optimizer import Optimizer
 
 T = TypeVar("T")
 logger = getLogger(__name__)
@@ -173,6 +173,7 @@ class BaselineModel(LightningModule, ABC):
                 "frequency": 1,
             }
         return optim_config
+
 
     def configure_callbacks(self) -> List[Callback]:
         callbacks: List[Callback] = []

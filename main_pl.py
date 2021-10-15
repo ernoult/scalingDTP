@@ -5,11 +5,13 @@ Use `python main.py --help` for a list of all available arguments,
     or (even better), take a look at the [`Config`](target_prop/config.py) and the
     [`Model.HParams`](target_prop/model.py) classes to see their definition.
 """
+import dataclasses
 import logging
-from typing import Type
+from typing import Type, Union
+from pytorch_lightning.core.lightning import LightningModule
 
 from pytorch_lightning.utilities.seed import seed_everything
-from target_prop.models import BaseModel, SequentialModel, ParallelModel, BaselineModel
+from target_prop.models import DTP, ParallelDTP, BaselineModel
 from target_prop.config import Config
 from simple_parsing import ArgumentParser
 import json
@@ -28,19 +30,19 @@ def main(running_sweep: bool = False):
     parser = ArgumentParser(description=__doc__)
 
     # Hard-set to use the Sequential model, for now.
-    parser.set_defaults(model=SequentialModel)
+    parser.set_defaults(model=DTP)
     parser.add_arguments(Config, dest="config")
 
     subparsers = parser.add_subparsers(
         title="model", description="Type of model to use.", metavar="<model_type>", required=True
     )
-    sequential_parser: ArgumentParser = subparsers.add_parser("sequential")
-    sequential_parser.add_arguments(SequentialModel.HParams, "hparams")
-    sequential_parser.set_defaults(model_type=SequentialModel)
+    sequential_parser: ArgumentParser = subparsers.add_parser("dtp")
+    sequential_parser.add_arguments(DTP.HParams, "hparams")
+    sequential_parser.set_defaults(model_type=DTP)
 
     parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
-    parallel_parser.add_arguments(ParallelModel.HParams, "hparams")
-    parallel_parser.set_defaults(model_type=ParallelModel)
+    parallel_parser.add_arguments(ParallelDTP.HParams, "hparams")
+    parallel_parser.set_defaults(model_type=ParallelDTP)
 
     baseline_parser: ArgumentParser = subparsers.add_parser("baseline")
     baseline_parser.add_arguments(BaselineModel.HParams, "hparams")
@@ -50,23 +52,12 @@ def main(running_sweep: bool = False):
     args = parser.parse_args()
 
     config: Config = args.config
-    hparams: BaseModel.HParams = args.hparams
+    hparams: HyperParameters = args.hparams
 
     if running_sweep:
-        # Sample some hyper-parameters from the prior, and overwrite the sampled values with those
-        # passed through the command-line.
-        sampled_hparams = BaseModel.HParams.sample()
-        default_hparams_dict = BaseModel.HParams().to_dict()
-        custom_hparams = {
-            k: v for k, v in hparams.to_dict().items() if v != default_hparams_dict[k]
-        }
-        if custom_hparams:
-            print(f"Overwriting sampled values for entries {custom_hparams}")
-            hparams_dict = sampled_hparams.to_dict()
-            hparams_dict.update(custom_hparams)
-            hparams = BaseModel.HParams.from_dict(hparams_dict)
+        hparams = sample_hparams(base_hparams=hparams)
 
-    model_class: Type[BaseModel] = args.model_type
+    model_class: Union[Type[DTP], Type[BaselineModel]] = args.model_type
     print(f"Type of model used: {model_class}")
 
     print("HParams:")
@@ -89,7 +80,7 @@ def main(running_sweep: bool = False):
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
     # Create the model
-    model = model_class(datamodule=datamodule, hparams=hparams, config=config)
+    model: LightningModule = model_class(datamodule=datamodule, hparams=hparams, config=config)
 
     # --- Create the trainer.. ---
     # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc. 
@@ -103,10 +94,10 @@ def main(running_sweep: bool = False):
         # accelerator="ddp",
         # profiler="simple",
         # callbacks=[],
-        terminate_on_nan=True,
+        terminate_on_nan=model.automatic_optimization, # BUG: Can't use this with sequential DTP.
         logger=WandbLogger() if not config.debug else None,
     )
-    
+
     # --- Run the experiment. ---
     trainer.fit(model, datamodule=datamodule)
 
@@ -117,6 +108,38 @@ def main(running_sweep: bool = False):
     print(test_results)
     test_accuracy: float = test_results[0]["test/accuracy"]
     return test_accuracy
+
+from dataclasses import asdict
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from typing import TypeVar
+from typing import List
+
+HParams = TypeVar("HParams", bound=HyperParameters)
+
+
+def sample_hparams(base_hparams: HParams) -> HParams:
+    # Sample some hyper-parameters from the prior, and overwrite the sampled values with those
+    # passed through the command-line.
+    hparams_type = type(base_hparams)
+    sampled_hparams = hparams_type.sample()
+
+    default_hparams = hparams_type()
+    default_hparams_dict = asdict(default_hparams)
+
+    # FIXME (later): Because we don't check for equality between nested dicts here, this means that,
+    # for example, we won't sample a learning rate if a type of optimizer to use is passed from the
+    # command-line. 
+    nondefault_hparams: List[str] = [
+        k for k, v in asdict(base_hparams).items() if v != default_hparams_dict[k]
+    ]
+    fixed_hparams = {
+        k: getattr(sampled_hparams, k) for k in nondefault_hparams
+    }
+    if fixed_hparams:
+        print(f"These hparams won't be sampled from their priors: {fixed_hparams}")
+        return dataclasses.replace(sampled_hparams, **fixed_hparams)
+    return sampled_hparams
+
 
 if __name__ == "__main__":
     main()
