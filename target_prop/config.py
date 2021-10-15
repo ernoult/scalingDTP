@@ -14,7 +14,7 @@ from simple_parsing.helpers import choice
 from simple_parsing.helpers.serialization import Serializable
 from torch import Tensor
 from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, ToTensor
-
+from simple_parsing.helpers import flag
 Transform = Callable[[Tensor], Tensor]
 
 
@@ -50,11 +50,19 @@ class Config(Serializable):
 
     # Debug mode: enables more verbose logging, and turns off logging to wandb.
     # NOTE: Currently also limits the max epochs to 1.
-    debug: bool = False
+    debug: bool = flag(False)
 
     # Size of the random crop for training.
     # TODO: Might have to use a different value for imagenet.
     image_crop_size: int = 32
+
+    # Which device to use.
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def __post_init__(self):
+        if self.seed is None:
+            g = torch.Generator(device=self.device)
+            self.seed = g.seed()
 
     def make_datamodule(self, batch_size: int) -> VisionDataModule:
 
