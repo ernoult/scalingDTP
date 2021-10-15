@@ -1,9 +1,6 @@
-""" Script that runs Pytorch lightning version of the prototype DTP model.
+""" Script that runs Pytorch lightning version of the DTP models.
 
-Use `python main.py --help` for a list of all available arguments,
-    
-    or (even better), take a look at the [`Config`](target_prop/config.py) and the
-    [`Model.HParams`](target_prop/model.py) classes to see their definition.
+Use `python main_pl.py --help` to see a list of all available arguments.
 """
 import dataclasses
 import logging
@@ -21,6 +18,7 @@ import wandb
 import torch
 import textwrap
 
+
 def main(running_sweep: bool = False):
     """ Main script. If `running_sweep` is True, then the hyper-parameters are sampled
     from their corresponding priors, else they take their default value (or the value
@@ -31,22 +29,38 @@ def main(running_sweep: bool = False):
 
     # Hard-set to use the Sequential model, for now.
     parser.set_defaults(model=DTP)
-    parser.add_arguments(Config, dest="config")
+
+    # NOTE: if args for config are added here, then command becomes
+    # python main.py (config args) [dtp|parallel_dtp] (model ags)
+    # parser.add_arguments(Config, dest="config")
 
     subparsers = parser.add_subparsers(
-        title="model", description="Type of model to use.", metavar="<model_type>", required=True
+        title="model", description="Type of model to use.", required=True
     )
-    sequential_parser: ArgumentParser = subparsers.add_parser("dtp")
+    sequential_parser: ArgumentParser = subparsers.add_parser(
+        "dtp", help="Use DTP", description=DTP.__doc__
+    )
+    sequential_parser.add_arguments(Config, dest="config")
     sequential_parser.add_arguments(DTP.HParams, "hparams")
     sequential_parser.set_defaults(model_type=DTP)
 
-    parallel_parser: ArgumentParser = subparsers.add_parser("parallel")
+    parallel_parser: ArgumentParser = subparsers.add_parser(
+        "parallel_dtp",
+        help="Use the parallel variant of DTP",
+        description=ParallelDTP.__doc__,
+    )
+    parallel_parser.add_arguments(Config, dest="config")
     parallel_parser.add_arguments(ParallelDTP.HParams, "hparams")
     parallel_parser.set_defaults(model_type=ParallelDTP)
 
-    baseline_parser: ArgumentParser = subparsers.add_parser("baseline")
+    baseline_parser: ArgumentParser = subparsers.add_parser(
+        "backprop", help="Use regular backprop", description=BaselineModel.__doc__
+    )
+    baseline_parser.add_arguments(Config, dest="config")
     baseline_parser.add_arguments(BaselineModel.HParams, "hparams")
     baseline_parser.set_defaults(model_type=BaselineModel)
+
+    subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
 
     # Parse the arguments
     args = parser.parse_args()
@@ -80,10 +94,12 @@ def main(running_sweep: bool = False):
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
     # Create the model
-    model: LightningModule = model_class(datamodule=datamodule, hparams=hparams, config=config)
+    model: LightningModule = model_class(
+        datamodule=datamodule, hparams=hparams, config=config
+    )
 
     # --- Create the trainer.. ---
-    # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc. 
+    # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
     trainer = Trainer(
         max_epochs=hparams.max_epochs,
         gpus=torch.cuda.device_count(),
@@ -94,7 +110,7 @@ def main(running_sweep: bool = False):
         # accelerator="ddp",
         # profiler="simple",
         # callbacks=[],
-        terminate_on_nan=model.automatic_optimization, # BUG: Can't use this with sequential DTP.
+        terminate_on_nan=model.automatic_optimization,  # BUG: Can't use this with sequential DTP.
         logger=WandbLogger() if not config.debug else None,
     )
 
@@ -108,6 +124,7 @@ def main(running_sweep: bool = False):
     print(test_results)
     test_accuracy: float = test_results[0]["test/accuracy"]
     return test_accuracy
+
 
 from dataclasses import asdict
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
@@ -128,13 +145,11 @@ def sample_hparams(base_hparams: HParams) -> HParams:
 
     # FIXME (later): Because we don't check for equality between nested dicts here, this means that,
     # for example, we won't sample a learning rate if a type of optimizer to use is passed from the
-    # command-line. 
+    # command-line.
     nondefault_hparams: List[str] = [
         k for k, v in asdict(base_hparams).items() if v != default_hparams_dict[k]
     ]
-    fixed_hparams = {
-        k: getattr(sampled_hparams, k) for k in nondefault_hparams
-    }
+    fixed_hparams = {k: getattr(sampled_hparams, k) for k in nondefault_hparams}
     if fixed_hparams:
         print(f"These hparams won't be sampled from their priors: {fixed_hparams}")
         return dataclasses.replace(sampled_hparams, **fixed_hparams)

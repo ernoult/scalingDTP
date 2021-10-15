@@ -15,6 +15,7 @@ from simple_parsing.helpers.serialization import Serializable
 from torch import Tensor
 from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, ToTensor
 from simple_parsing.helpers import flag
+
 Transform = Callable[[Tensor], Tensor]
 
 

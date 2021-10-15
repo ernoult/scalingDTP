@@ -34,6 +34,7 @@ class ParallelDTP(DTP):
     default value for that parameter is set to 1 by default in DTP in order to reproduce @ernoult's
     experiments exactly.
     """
+
     @dataclass
     class HParams(DTP.HParams):
         """ HParams of the Parallel model. """
