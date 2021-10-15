@@ -1,35 +1,31 @@
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
-from pytorch_lightning.core.optimizer import LightningOptimizer
 
 import torch
 import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning.core.optimizer import LightningOptimizer
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
+from target_prop.backward_layers import invert, mark_as_invertible
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
-from target_prop.layers import forward_all, MaxPool2d, Reshape
-from torch.optim.optimizer import Optimizer
-import textwrap
+from target_prop.layers import MaxPool2d, Reshape, forward_all
 from target_prop.metrics import compute_dist_angle
-from target_prop.models.model import BaseModel
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from target_prop.backward_layers import mark_as_invertible
-from torch import nn
-from target_prop.backward_layers import invert
-from collections import OrderedDict
 
 from .utils import make_stacked_feedback_training_figure
 
@@ -119,7 +115,7 @@ class DTP(LightningModule):
         # jacobian: bool = False  # compute jacobians
 
         # Type of activation to use.
-        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default="elu")
+        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU)
 
         # Step interval for creating and logging plots.
         plot_every: int = 10
@@ -160,8 +156,12 @@ class DTP(LightningModule):
             self.hp.noise, default=0.0, forward_ordering=True,
         )
         # The learning rate for each feedback layer.
-        self.feedback_lrs = self._align_values_with_backward_net(self.hp.b_optim.lr, default=0.0, forward_ordering=True)
-        
+        lrs_per_layer = self.hp.b_optim.lr
+        assert isinstance(lrs_per_layer, list)
+        self.feedback_lrs = self._align_values_with_backward_net(
+            lrs_per_layer, default=0.0, forward_ordering=True
+        )
+
         if self.config.debug:
             print(f"Forward net: ")
             print(self.forward_net)
@@ -179,7 +179,10 @@ class DTP(LightningModule):
                     )
                 )
             ):
-                print(f"self.backward_net[{i}]: (G[{N-i-1}]): LR: {lr}, noise: {noise}, iterations: {iterations}")
+                print(
+                    f"self.backward_net[{i}]: (G[{N-i-1}]" + (", *unused*") + f"): LR: {lr}, "
+                    f"noise: {noise}, iterations: {iterations}"
+                )
                 if i == N - 1:
                     # The last layer of the backward_net (the layer closest to the input) is not
                     # currently being trained, so we expect it to not have these parameters.
@@ -225,7 +228,7 @@ class DTP(LightningModule):
 
     def create_forward_net(self) -> nn.Sequential:
         layers: OrderedDict[str, nn.Module] = OrderedDict()
-        
+
         activation_type = self.hp.activation
 
         channels = [self.in_channels] + self.hp.channels

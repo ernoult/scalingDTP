@@ -1,28 +1,21 @@
-from pathlib import Path
-from target_prop.feedback_loss import get_feedback_loss, get_feedback_loss_parallel
-from .model import BaseModel
-from torch import Tensor
-from typing import List, Optional, Tuple, Union
-from torch import nn
-import torch
 from dataclasses import dataclass
-from target_prop.layers import forward_all
-from target_prop.utils import is_trainable
-from simple_parsing.helpers.hparams import uniform
-from simple_parsing.helpers import field, list_field
-from target_prop.optimizer_config import OptimizerConfig
-from target_prop.metrics import compute_dist_angle
-import numpy as np
-
-try:
-    from typing import Final
-except ImportError:
-    from typing_extensions import Final
-from .utils import make_stacked_feedback_training_figure
-from .dtp import DTP
-
 from logging import getLogger as get_logger
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
+
+import torch
 import wandb
+from simple_parsing.helpers import list_field
+from simple_parsing.helpers.hparams import uniform
+from target_prop.feedback_loss import get_feedback_loss_parallel
+from target_prop.layers import forward_all
+from target_prop.metrics import compute_dist_angle
+from target_prop.optimizer_config import OptimizerConfig
+from target_prop.utils import is_trainable
+from torch import Tensor, nn
+
+from .dtp import DTP
+from .utils import make_stacked_feedback_training_figure
 
 logger = get_logger(__name__)
 
@@ -108,10 +101,6 @@ class ParallelDTP(DTP):
         manually.
         """
         x, y = batch
-        # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
-        # and `feedback_loss` below.
-        assert self.phase == phase, (self.phase, phase)
-        # self.phase = phase
 
         dtype: Optional[torch.dtype] = self.dtype if isinstance(
             self.dtype, torch.dtype
@@ -119,26 +108,26 @@ class ParallelDTP(DTP):
         # The total loss to be returned.
         loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
 
-        if optimizer_idx in [None, self._feedback_optim_index]:
+        if optimizer_idx in [None, 0]:
             # ----------- Optimize the feedback weights -------------
-            feedback_loss = self.feedback_loss(x, y)
+            feedback_loss = self.feedback_loss(x, y, phase=phase)
             loss += feedback_loss
             self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
 
-        if optimizer_idx in [None, self._forward_optim_index]:
+        if optimizer_idx in [None, 1]:
             # ----------- Optimize the forward weights -------------
-            forward_loss = self.forward_loss(x, y)
+            forward_loss = self.forward_loss(x, y, phase=phase)
             self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
             loss += forward_loss
 
         return loss
 
-    def forward_loss(self, x: Tensor, y: Tensor) -> Tensor:
+    def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
         # NOTE: Could use the same exact forward loss as the sequential model, at the
         # moment.
-        return super().forward_loss(x=x, y=y)
+        return super().forward_loss(x=x, y=y, phase=phase)
 
-    def feedback_loss(self, x: Tensor, y: Tensor) -> Tensor:
+    def feedback_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
         feedback_optimizer = self.feedback_optimizer
 
         n_layers = len(self.backward_net)
@@ -256,5 +245,6 @@ class ParallelDTP(DTP):
             else sum(step_results)
         )
         loss = merged_step_result
-        self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
+        # TODO: Move all the logs to this once we used DDP.
+        # self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
         return loss
