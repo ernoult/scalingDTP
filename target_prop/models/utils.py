@@ -1,4 +1,4 @@
-from typing import Sequence, Union, List
+from typing import Any, Sequence, Union, List
 import numpy as np
 from torch import Tensor
 import plotly.graph_objects as go
@@ -7,8 +7,8 @@ from plotly.subplots import make_subplots
 
 
 def make_stacked_feedback_training_figure(
-    all_values: Sequence[Sequence[Sequence[Union[Tensor, np.ndarray, float]]]],
-    row_titles: Sequence[str],
+    all_values: List[Union[Tensor, np.ndarray, Sequence[Sequence[Any]]]],
+    row_titles: List[str],
     title_text: str,
     layer_names: List[str] = None,
 ) -> Figure:

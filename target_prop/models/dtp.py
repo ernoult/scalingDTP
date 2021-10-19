@@ -25,6 +25,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
+from pytorch_lightning.loggers import WandbLogger
 from torchmetrics.classification import Accuracy
 
 from .utils import make_stacked_feedback_training_figure
@@ -127,7 +128,7 @@ class DTP(LightningModule):
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
-        self.datamodule = datamodule
+        self.datamodule = datamodule  # type: ignore
         self.config = config
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.
@@ -281,6 +282,22 @@ class DTP(LightningModule):
         assert example_in_hat.dtype == self.example_input_array.dtype
 
         return backward_net
+
+    def create_trainer(self) -> Trainer:
+        # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
+        return Trainer(
+            max_epochs=self.hp.max_epochs,
+            gpus=torch.cuda.device_count(),
+            track_grad_norm=False,
+            accelerator=None,
+            # NOTE: Not sure why but seems like they are still reloading them after each epoch!
+            reload_dataloaders_every_epoch=False,
+            # accelerator="ddp",
+            # profiler="simple",
+            # callbacks=[],
+            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
+            logger=WandbLogger() if not self.config.debug else None,
+        )
 
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
         # Dummy forward pass, not used in practice. We just implement it so that PL can
@@ -444,7 +461,8 @@ class DTP(LightningModule):
 
             # IDEA: Logging the number of iterations could be useful if we add some kind of early
             # stopping for the feedback training, since the number of iterations might vary.
-            self.log(f"{phase}/B_total_loss[{layer_index}]", sum(iteration_losses))
+            total_iter_loss = sum(iteration_losses)
+            self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
             self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
             # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
             # What would be nicer would be to log this as a small, light-weight plot showing the
@@ -611,19 +629,21 @@ class DTP(LightningModule):
         ]
 
     @property
-    def feedback_optimizer(self) -> Union[Optimizer, LightningOptimizer]:
+    def feedback_optimizer(self) -> Optimizer:
         """Returns The optimizer of the feedback/backward net. """
         optimizers = self.optimizers()
         assert isinstance(optimizers, list)
         feedback_optimizer = optimizers[0]
+        assert isinstance(feedback_optimizer, Optimizer)
         return feedback_optimizer
 
     @property
-    def forward_optimizer(self) -> Union[Optimizer, LightningOptimizer]:
+    def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net. """
         optimizers = self.optimizers()
         assert isinstance(optimizers, list)
         forward_optimizer = optimizers[1]
+        assert isinstance(forward_optimizer, Optimizer)
         return forward_optimizer
 
     def _align_values_with_backward_net(

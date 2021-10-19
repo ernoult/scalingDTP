@@ -183,7 +183,7 @@ def check_shapes_hook(
 
 
 @singledispatch
-def mark_as_invertible(module: nn.Module) -> Union[nn.Module, Invertible]:
+def mark_as_invertible(module: ModuleType) -> Union[ModuleType, Invertible]:
     """ Makes the module easier to "invert" by adding hooks that set the
     `input_shape` and `output_shape` attributes. Modifies the module in-place.
     """

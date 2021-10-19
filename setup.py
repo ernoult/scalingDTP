@@ -11,7 +11,7 @@ setuptools.setup(
     name="target_prop",
     version="0.0.1",
     author="Fabrice Normandin",  # TODO: Replace with Maxence's full name
-    author_email="fabrice.normandin@gmail.com", # TODO: Replace with Maxence's email
+    author_email="fabrice.normandin@gmail.com",  # TODO: Replace with Maxence's email
     description="Revisiting Differential Target Propagation",
     long_description=long_description,
     long_description_content_type="text/markdown",

@@ -94,31 +94,19 @@ def main(running_sweep: bool = False):
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
     # Create the model
-    model: LightningModule = model_class(
+    model: Union[BaselineModel, DTP, ParallelDTP] = model_class(
         datamodule=datamodule, hparams=hparams, config=config
     )
 
     # --- Create the trainer.. ---
-    # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
-    trainer = Trainer(
-        max_epochs=hparams.max_epochs,
-        gpus=torch.cuda.device_count(),
-        track_grad_norm=False,
-        accelerator=None,
-        # NOTE: Not sure why but seems like they are still reloading them after each epoch!
-        reload_dataloaders_every_epoch=False,
-        # accelerator="ddp",
-        # profiler="simple",
-        # callbacks=[],
-        terminate_on_nan=model.automatic_optimization,  # BUG: Can't use this with sequential DTP.
-        logger=WandbLogger() if not config.debug else None,
-    )
+    # NOTE: Now each algo can customize how the Trainer gets created.
+    trainer = model.create_trainer()
 
     # --- Run the experiment. ---
     trainer.fit(model, datamodule=datamodule)
 
     # Run on the test set:
-    test_results = trainer.test(model, datamodule=datamodule)
+    test_results = trainer.test(model, datamodule=datamodule, verbose=True)
 
     wandb.finish()
     print(test_results)

@@ -13,6 +13,8 @@ from target_prop.metrics import compute_dist_angle
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import WandbLogger
 
 from .dtp import DTP
 from .utils import make_stacked_feedback_training_figure
@@ -79,6 +81,21 @@ class ParallelDTP(DTP):
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True
         self.criterion = nn.CrossEntropyLoss(reduction="none")
+
+    def create_trainer(self) -> Trainer:
+        # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
+        return Trainer(
+            max_epochs=self.hp.max_epochs,
+            gpus=torch.cuda.device_count(),
+            track_grad_norm=False,
+            accelerator="ddp",
+            # NOTE: Not sure why but seems like they are still reloading them after each epoch!
+            reload_dataloaders_every_epoch=False,
+            # profiler="simple",
+            # callbacks=[],
+            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
+            logger=WandbLogger() if not self.config.debug else None,
+        )
 
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None

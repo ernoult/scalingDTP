@@ -22,6 +22,7 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchmetrics.classification import Accuracy
 from torch.optim.optimizer import Optimizer
+from pytorch_lightning.loggers import WandbLogger
 
 T = TypeVar("T")
 logger = getLogger(__name__)
@@ -62,7 +63,7 @@ class BaselineModel(LightningModule, ABC):
         super().__init__()
         # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp: BaselineModel.HParams = hparams
-        self.datamodule = datamodule
+        self.datamodule = datamodule  # type: ignore
         self.config = config
         if self.config.seed is not None:
             seed_everything(seed=self.config.seed, workers=True)
@@ -130,7 +131,23 @@ class BaselineModel(LightningModule, ABC):
         layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
         return nn.Sequential(layers)
 
-    def forward(self, input: Tensor) -> Tensor:
+    def create_trainer(self) -> Trainer:
+        # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
+        return Trainer(
+            max_epochs=self.hp.max_epochs,
+            gpus=torch.cuda.device_count(),
+            track_grad_norm=False,
+            accelerator=None,
+            # NOTE: Not sure why but seems like they are still reloading them after each epoch!
+            reload_dataloaders_every_epoch=False,
+            # accelerator="ddp",
+            # profiler="simple",
+            # callbacks=[],
+            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
+            logger=WandbLogger() if not self.config.debug else None,
+        )
+
+    def forward(self, input: Tensor) -> Tensor:  # type: ignore
         # Dummy forward pass, not used in practice. We just implement it so that PL can
         # display the input/output shapes of our networks.
         logits = self.forward_net(input)

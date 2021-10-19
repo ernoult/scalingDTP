@@ -67,7 +67,6 @@ class TestDTP:
         assert test_accuracy > 0
 
 
-
 def named_trainable_parameters(module: nn.Module) -> Iterable[Tuple[str, nn.Parameter]]:
     for name, param in module.named_parameters():
         if param.requires_grad:
