@@ -74,11 +74,7 @@ def named_trainable_parameters(module: nn.Module) -> Iterable[Tuple[str, nn.Para
 
 
 def get_forward_weight_losses(
-    forward_net: nn.Sequential,
-    feedback_net: nn.Sequential,
-    x: Tensor,
-    y: Tensor,
-    beta: float,
+    forward_net: nn.Sequential, feedback_net: nn.Sequential, x: Tensor, y: Tensor, beta: float,
 ) -> List[Tensor]:
     # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
     ## --------
@@ -327,8 +323,7 @@ def test_losses_of_each_layer_are_independent(
     total_loss = sum(dtp_losses, start=torch.zeros(1))
     total_loss.backward()
     dtp_grads_v1 = {
-        name: p.grad.clone().detach()
-        for name, p in named_trainable_parameters(forward_net)
+        name: p.grad.clone().detach() for name, p in named_trainable_parameters(forward_net)
     }
 
     for parameter_name, grad_v0 in dtp_grads_v0.items():
@@ -366,14 +361,11 @@ def test_grads_are_similar(forward_net: nn.Sequential, beta: float):
 
     # Get the normal backprop loss and gradients:
     forward_net.zero_grad()
-    logits = forward_all(
-        forward_net, example_input_array, allow_grads_between_layers=True
-    )[-1]
+    logits = forward_all(forward_net, example_input_array, allow_grads_between_layers=True)[-1]
     true_backprop_loss = F.cross_entropy(logits, example_labels)
     true_backprop_loss.backward()
     true_backprop_grads = {
-        name: p.grad.clone().detach()
-        for name, p in named_trainable_parameters(forward_net)
+        name: p.grad.clone().detach() for name, p in named_trainable_parameters(forward_net)
     }
 
     # Calculate the gradients obtained with DTP (the function above).
@@ -391,8 +383,7 @@ def test_grads_are_similar(forward_net: nn.Sequential, beta: float):
     total_loss = sum(dtp_losses, start=torch.zeros(1))
     total_loss.backward()
     dtp_grads = {
-        name: p.grad.clone().detach()
-        for name, p in named_trainable_parameters(forward_net)
+        name: p.grad.clone().detach() for name, p in named_trainable_parameters(forward_net)
     }
     dtp_grads = {key: (1 / beta) * grad for key, grad in dtp_grads.items()}
 
@@ -413,9 +404,7 @@ def test_grads_are_similar(forward_net: nn.Sequential, beta: float):
 
         if backprop_grad.dim() > 1:
             distance, angle = compute_dist_angle(backprop_grad, dtp_grad)
-            print(
-                f"\tDistance between grads: {distance:.3f}, angle between grads: {angle:.3f}"
-            )
+            print(f"\tDistance between grads: {distance:.3f}, angle between grads: {angle:.3f}")
         # l1_distance_between_grads = (backprop_grad - dtp_grad).abs().sum().item()
         # l2_distance_between_grads = F.mse_loss(backprop_grad, dtp_grad).item()
         # print(f"\tDistance between grads: {l1_distance_between_grads=}, {l2_distance_between_grads=}")

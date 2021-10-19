@@ -43,9 +43,7 @@ class ParallelDTP(DTP):
 
         # Number of training steps for the feedback weights per batch.
         # In the case of this parallel model, this parameter can't be changed and is fixed to 1.
-        feedback_training_iterations: List[int] = list_field(
-            default_factory=[1].copy, cmd=False
-        )
+        feedback_training_iterations: List[int] = list_field(default_factory=[1].copy, cmd=False)
 
         # Number of noise samples to use to get the feedback loss in a single iteration.
         # NOTE: The loss used for each update is the average of these losses.
@@ -120,9 +118,7 @@ class ParallelDTP(DTP):
         """
         x, y = batch
 
-        dtype: Optional[torch.dtype] = self.dtype if isinstance(
-            self.dtype, torch.dtype
-        ) else None
+        dtype: Optional[torch.dtype] = self.dtype if isinstance(self.dtype, torch.dtype) else None
         # The total loss to be returned.
         loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
 
@@ -154,17 +150,13 @@ class ParallelDTP(DTP):
         # Also reverse these values so they stay aligned with the net above.
         noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
         # NOTE: Could also use a different number of samples per layer!
-        noise_samples_per_layer = [
-            self.hp.feedback_samples_per_iteration for _ in range(n_layers)
-        ]
+        noise_samples_per_layer = [self.hp.feedback_samples_per_iteration for _ in range(n_layers)]
 
         # NOTE: We can compute all the ys for all the layers up-front, because we don't
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
         with torch.no_grad():
-            ys: List[Tensor] = forward_all(
-                self.forward_net, x, allow_grads_between_layers=False
-            )
+            ys: List[Tensor] = forward_all(self.forward_net, x, allow_grads_between_layers=False)
 
         # List of losses, distances, and angles for each layer (with multiple iterations per layer).
         # NOTE: Skipping the first layer
@@ -200,20 +192,14 @@ class ParallelDTP(DTP):
                 # feedback weights:
                 layer_distance, layer_angle = zip(
                     *[
-                        compute_dist_angle(
-                            self.forward_net[i], reversed_backward_net[i]
-                        )
+                        compute_dist_angle(self.forward_net[i], reversed_backward_net[i])
                         for i in range(1, n_layers)
                         if is_trainable(reversed_backward_net[i])
                     ]
                 )
             # NOTE: Have to add the 'iterations' dimension, since it's used in the sequential model.
-            layer_distances = torch.as_tensor(layer_distance).reshape(
-                [len(layer_distance), 1]
-            )
-            layer_angles = torch.as_tensor(layer_angle).reshape(
-                [len(layer_distance), 1]
-            )
+            layer_distances = torch.as_tensor(layer_distance).reshape([len(layer_distance), 1])
+            layer_angles = torch.as_tensor(layer_angle).reshape([len(layer_distance), 1])
             layer_losses_for_plot = (
                 torch.stack(layer_losses).detach().reshape(layer_distances.shape)
             )
@@ -236,9 +222,7 @@ class ParallelDTP(DTP):
 
             if self.config.debug:
                 # Also save an HTML version when debugging.
-                fig.write_html(
-                    str(save_path.with_suffix(".html")), include_plotlyjs="cdn"
-                )
+                fig.write_html(str(save_path.with_suffix(".html")), include_plotlyjs="cdn")
 
             if wandb.run:
                 wandb.log({"feedback_training": fig})
@@ -258,9 +242,7 @@ class ParallelDTP(DTP):
         #     for k, v in step_results
         # }
         merged_step_result = (
-            step_results
-            if isinstance(step_results, (Tensor, float))
-            else sum(step_results)
+            step_results if isinstance(step_results, (Tensor, float)) else sum(step_results)
         )
         loss = merged_step_result
         # TODO: Move all the logs to this once we used DDP.

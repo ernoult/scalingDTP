@@ -133,9 +133,7 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
         self, input: Tensor, indices: Tensor = None, output_size: list[int] = None
     ) -> Tensor:
         if indices is None:
-            assert (
-                self.magic_bridge is not None
-            ), "Need to pass indices or use a magic bridge!"
+            assert self.magic_bridge is not None, "Need to pass indices or use a magic bridge!"
             # Only inspect rather than pop the item out, because of how the feedback
             # loss uses this backward layer twice in a row (once with y and again with y+noise)
             indices = self.magic_bridge[0]
@@ -195,9 +193,7 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
 
 
 @invert.register
-def invert_maxpool2d(
-    module: MaxPool2d, init_symetric_weights: bool = False
-) -> MaxUnpool2d:
+def invert_maxpool2d(module: MaxPool2d, init_symetric_weights: bool = False) -> MaxUnpool2d:
     return MaxUnpool2d(
         kernel_size=module.kernel_size,
         stride=None,  # todo: Not sure waht to do with this value here.
@@ -215,13 +211,9 @@ class BatchUnNormalize(nn.Module):
 
     def __init__(self, num_features: int, dtype=torch.float32):
         super().__init__()
-        self.scale = nn.Parameter(
-            torch.ones(num_features, dtype=dtype), requires_grad=True
-        )
+        self.scale = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
         torch.nn.init.xavier_uniform_(self.scale)
-        self.offset = nn.Parameter(
-            torch.zeros(num_features, dtype=dtype), requires_grad=True
-        )
+        self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
 
     def forward(self, input: Tensor) -> Tensor:
         return input * self.scale + self.offset
@@ -243,10 +235,7 @@ class ConvPoolBlock(nn.Sequential, Invertible):
     """
 
     def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        activation_type: Type[nn.Module] = nn.ELU,
+        self, in_channels: int, out_channels: int, activation_type: Type[nn.Module] = nn.ELU,
     ):
         self.in_channels = in_channels
         self.out_channels = out_channels

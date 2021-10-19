@@ -8,9 +8,7 @@ from torch import nn, Tensor
 
 @singledispatch
 @torch.no_grad()
-def compute_dist_angle(
-    forward_module: Any, backward_module: Any
-) -> tuple[float, float]:
+def compute_dist_angle(forward_module: Any, backward_module: Any) -> tuple[float, float]:
     """
     Computes distance and angle between the feedforward and feedback weights
     """
@@ -67,9 +65,7 @@ from target_prop.layers import ConvPoolBlock
 
 @compute_dist_angle.register(ConvPoolBlock)
 @compute_dist_angle.register(nn.Sequential)
-def _(
-    forward_module: ConvPoolBlock, backward_module: nn.Sequential
-) -> tuple[Tensor, Tensor]:
+def _(forward_module: ConvPoolBlock, backward_module: nn.Sequential) -> tuple[Tensor, Tensor]:
     # NOTE: For now, assume that if we're passed a `Sequential`, it will have a
     # nn.Conv2d layer at key 'conv' and that the backward_module will have a
     # `nn.ConvTranspose2d` at key `conv`.

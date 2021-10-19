@@ -55,9 +55,7 @@ class BaselineModel(LightningModule, ABC):
 
         # Choice of activation function.
         # NOTE: Only using elu for now in practice.
-        activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default="elu"
-        )
+        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default="elu")
 
     def __init__(self, datamodule: VisionDataModule, hparams: HParams, config: Config):
         super().__init__()
@@ -106,14 +104,10 @@ class BaselineModel(LightningModule, ABC):
         channels = [self.in_channels] + self.hp.channels
         # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
         # iterable is exhausted. This gives us the right number of blocks.
-        for i, (in_channels, out_channels) in enumerate(
-            zip(channels[0:], channels[1:])
-        ):
+        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
             block = nn.Sequential(
                 OrderedDict(
-                    conv=nn.Conv2d(
-                        in_channels, out_channels, kernel_size=3, stride=1, padding=1,
-                    ),
+                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
                     rho=activation_type(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
                     # the indices to the backward net for this layer through a "magic bridge".
@@ -153,9 +147,7 @@ class BaselineModel(LightningModule, ABC):
         logits = self.forward_net(input)
         return logits
 
-    def shared_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
-    ) -> Tensor:
+    def shared_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,) -> Tensor:
         """ Main step, used by the `[training/valid/test]_step` methods.
         """
         x, y = batch

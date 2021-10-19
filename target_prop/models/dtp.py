@@ -116,9 +116,7 @@ class DTP(LightningModule):
         # jacobian: bool = False  # compute jacobians
 
         # Type of activation to use.
-        activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU
-        )
+        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU)
 
         # Step interval for creating and logging plots.
         plot_every: int = 10
@@ -183,9 +181,7 @@ class DTP(LightningModule):
                 )
             ):
                 print(
-                    f"self.backward_net[{i}]: (G[{N-i-1}]"
-                    + (", *unused*")
-                    + f"): LR: {lr}, "
+                    f"self.backward_net[{i}]: (G[{N-i-1}]" + (", *unused*") + f"): LR: {lr}, "
                     f"noise: {noise}, iterations: {iterations}"
                 )
                 if i == N - 1:
@@ -239,14 +235,10 @@ class DTP(LightningModule):
         channels = [self.in_channels] + self.hp.channels
         # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
         # iterable is exhausted. This gives us the right number of blocks.
-        for i, (in_channels, out_channels) in enumerate(
-            zip(channels[0:], channels[1:])
-        ):
+        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
             block = nn.Sequential(
                 OrderedDict(
-                    conv=nn.Conv2d(
-                        in_channels, out_channels, kernel_size=3, stride=1, padding=1,
-                    ),
+                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
                     rho=activation_type(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
                     # the indices to the backward net for this layer through a "magic bridge".
@@ -374,9 +366,7 @@ class DTP(LightningModule):
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
         with torch.no_grad():
-            ys: List[Tensor] = forward_all(
-                self.forward_net, x, allow_grads_between_layers=False
-            )
+            ys: List[Tensor] = forward_all(self.forward_net, x, allow_grads_between_layers=False)
 
         # List of losses, distances, and angles for each layer (with multiple iterations per layer).
         layer_losses: List[List[Tensor]] = []
@@ -490,9 +480,7 @@ class DTP(LightningModule):
 
             if self.config.debug:
                 # Also save an HTML version when debugging.
-                fig.write_html(
-                    str(save_path.with_suffix(".html")), include_plotlyjs="cdn"
-                )
+                fig.write_html(str(save_path.with_suffix(".html")), include_plotlyjs="cdn")
 
             if wandb.run:
                 wandb.log({"feedback_training": fig})
@@ -569,9 +557,7 @@ class DTP(LightningModule):
                 G = reordered_feedback_net[i]
                 # G = feedback_net[-1 - i]
 
-                assert (
-                    targets[i - 1] is None
-                )  # Make sure we're not overwriting anything.
+                assert targets[i - 1] is None  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
                 targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
@@ -581,9 +567,7 @@ class DTP(LightningModule):
 
         # NOTE: targets[0] is the targets for the output of the first layer, not for x.
         # Make sure that all targets have been computed and that they are fixed (don't require grad)
-        assert all(
-            target is not None and not target.requires_grad for target in targets
-        )
+        assert all(target is not None and not target.requires_grad for target in targets)
         target_tensors = cast(List[Tensor], targets)  # Rename just for typing purposes.
 
         # Calculate the losses for each layer:
@@ -593,13 +577,7 @@ class DTP(LightningModule):
             # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
             for i in range(0, N)
         ]
-        assert (
-            len(ys)
-            == len(targets)
-            == len(forward_loss_per_layer)
-            == len(self.forward_net)
-            == N
-        )
+        assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(self.forward_net) == N
 
         for i, layer_loss in enumerate(forward_loss_per_layer):
             self.log(f"{phase}/F_loss[{i}]", layer_loss)

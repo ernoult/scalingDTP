@@ -77,9 +77,7 @@ class Config(Serializable):
             train_transform = Compose(
                 [
                     RandomHorizontalFlip(0.5),
-                    RandomCrop(
-                        size=self.image_crop_size, padding=4, padding_mode="edge"
-                    ),
+                    RandomCrop(size=self.image_crop_size, padding=4, padding_mode="edge"),
                     ToTensor(),
                     normalization_transform(),
                     # Normalize(mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)),

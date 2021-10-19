@@ -14,17 +14,13 @@ def init_symetric_weights(forward_layer: nn.Module, backward_layer: nn.Module) -
 
 
 @init_symetric_weights.register
-def weight_b_sym_linear(
-    forward_layer: nn.Sequential, backward_layer: nn.Sequential
-) -> None:
+def weight_b_sym_linear(forward_layer: nn.Sequential, backward_layer: nn.Sequential) -> None:
     for f_layer, b_layer in zip(forward_layer, backward_layer[::-1]):
         init_symetric_weights(f_layer, b_layer)
 
 
 @init_symetric_weights.register(nn.Conv2d)
-def weight_b_sym_conv2d(
-    forward_layer: nn.Conv2d, backward_layer: nn.ConvTranspose2d
-) -> None:
+def weight_b_sym_conv2d(forward_layer: nn.Conv2d, backward_layer: nn.ConvTranspose2d) -> None:
     assert forward_layer.weight.shape == backward_layer.weight.shape
     with torch.no_grad():
         # NOTE: I guess the transposition isn't needed here?
@@ -46,9 +42,7 @@ def weight_b_sym_linear(forward_layer: nn.Linear, backward_layer: nn.Linear) -> 
 
 
 @singledispatch
-def weight_b_normalize(
-    backward_layer: nn.Module, dx: Tensor, dy: Tensor, dr: Tensor
-) -> None:
+def weight_b_normalize(backward_layer: nn.Module, dx: Tensor, dy: Tensor, dr: Tensor) -> None:
     """ TODO: I don't yet understand what this is supposed to do. """
     return
     # raise NotImplementedError(f"No idea what this means atm.")
