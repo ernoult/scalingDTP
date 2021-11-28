@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from functools import singledispatch
+from typing_extensions import Protocol, runtime_checkable
 from typing import (
     Any,
     OrderedDict,
-    Protocol,
+#    Protocol,
     Tuple,
     TypeVar,
     Union,
-    runtime_checkable,
+ #   runtime_checkable,
 )
 
 from torch import Tensor, nn

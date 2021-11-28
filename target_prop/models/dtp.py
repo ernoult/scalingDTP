@@ -280,7 +280,7 @@ class DTP(LightningModule):
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=torch.cuda.device_count(),
-            track_grad_norm=False,
+            track_grad_norm=-1,
             accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
@@ -299,13 +299,13 @@ class DTP(LightningModule):
         return y, r
 
     def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="train")
+        self.shared_step(batch, batch_idx=batch_idx, phase="train")
 
     def validation_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="val")
+        self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
     def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="test")
+        self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,

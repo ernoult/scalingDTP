@@ -5,6 +5,7 @@ Use `python main_pl.py --help` to see a list of all available arguments.
 import dataclasses
 import logging
 from typing import Type, Union
+from typing_extensions import *
 from pytorch_lightning.core.lightning import LightningModule
 
 from pytorch_lightning.utilities.seed import seed_everything

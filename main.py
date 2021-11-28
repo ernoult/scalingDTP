@@ -94,10 +94,12 @@ if __name__ == '__main__':
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
             train_accuracy = correct / total
-            pbar.set_postfix({
-                "Loss": f"{loss.item():.3f}",
-                "Train Acc": f"{train_accuracy:.2%}",
-            })
+            #pbar.set_postfix({
+            #    "Loss": f"{loss.item():.3f}",
+            #    "Train Acc": f"{train_accuracy:.2%}",
+            #})
+            print({"Loss": f"{loss.item():.3f}",
+                "Train Acc": f"{train_accuracy:.2%}"})
             # progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
         train_acc.append(100.*correct/total)
