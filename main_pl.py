@@ -63,6 +63,13 @@ def main(running_sweep: bool = False):
 
     subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
 
+    # Compute Canada params (probably temporary)
+    parser.add_argument('--array', type=int, default=0,
+                        help='Array number returned from SLURM.')
+
+    parser.add_argument('--running_sweep', type=bool, default=False,
+                        help='Whether or not to overwrite hparams with sampled priors.')
+
     # Parse the arguments
     args = parser.parse_args()
 
