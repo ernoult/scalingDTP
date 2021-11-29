@@ -153,4 +153,4 @@ def sample_hparams(base_hparams: HParams) -> HParams:
 
 
 if __name__ == "__main__":
-    main()
+    main(True)
