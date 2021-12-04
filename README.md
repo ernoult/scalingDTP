@@ -9,12 +9,12 @@ pip install -e .
 ## Running the code
 To run the pytorch-lightning re-implementation of DTP on CIFAR-10, use the following command:
 ```console
-python main_pl.py sequential
+python main_pl.py dtp
 ```
 
 To use the modified version of the above DTP model, with "parallel" feedback weight training on CIFAR-10, use the following command:
 ```console
-python main_pl.py parallel
+python main_pl.py parallel_dtp
 ```
 
 
