@@ -302,7 +302,7 @@ class DTP(LightningModule):
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
         return Trainer(
             max_epochs=self.hp.max_epochs,
-            gpus=torch.cuda.device_count(),
+            gpus=1,
             track_grad_norm=False,
             accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
