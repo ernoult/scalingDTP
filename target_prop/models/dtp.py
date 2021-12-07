@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import torch
+import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.core.optimizer import LightningOptimizer
@@ -611,7 +612,9 @@ class DTP(LightningModule):
         # Calculate the losses for each layer:
         forward_loss_per_layer = []
         for i in range(0, N):
-            if ys[i].requires_grad:  # Removes duplicate reshape layer loss from total loss estimate
+            if (
+                ys[i].requires_grad or phase != "train"
+            ):  # Removes duplicate reshape layer loss from total loss estimate
                 layer_loss = 0.5 * ((ys[i] - targets[i]) ** 2).view(ys[i].size(0), -1).sum(1).mean()
                 # NOTE: Apprently NOT Equivalent to the following!
                 # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
