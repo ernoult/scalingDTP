@@ -54,7 +54,7 @@ def train_forward(net, data, target, criterion, optimizer_f, args):
     NOTE 1: the flag ind_layer specifies where the forward pass stops (default: None)
     NOTE 2: if ind_layer=n, layer n-1 is detached from the computational graph
     """
-
+    optimizer_f.zero_grad()
     y, r = net(data, ind_layer=len(net.layers))
 
     # 2- Compute the loss
@@ -90,6 +90,7 @@ def train_forward(net, data, target, criterion, optimizer_f, args):
         if id_layer == 0:
             loss = loss_f
 
+    optimizer_f.step()
     return loss, layer_losses
 
 

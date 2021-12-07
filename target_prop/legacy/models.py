@@ -120,11 +120,12 @@ class layer_fc(nn.Module):
         # 1- Compute MSE between feedforward prediction and associated target
         loss_f = 0.5 * ((y - t) ** 2).view(y.size(0), -1).sum(1)
         loss_f = loss_f.mean()
-        optimizer.zero_grad()
+        # optimizer.zero_grad()
 
         # 2- Update feedforward weights
+        # loss_f.backward(retain_graph=True)
+        # optimizer.step()
         loss_f.backward(retain_graph=True)
-        optimizer.step()
 
         return loss_f
 
@@ -267,12 +268,12 @@ class layer_convpool(nn.Module):
         # 1- Compute MSE between feedforward prediction and associated target
         loss_f = 0.5 * ((y - t) ** 2).view(y.size(0), -1).sum(1)
         loss_f = loss_f.mean()
-        optimizer.zero_grad()
+        # optimizer.zero_grad()
 
         # 2- Update forward weights
+        # loss_f.backward(retain_graph=True)
+        # optimizer.step()
         loss_f.backward(retain_graph=True)
-        optimizer.step()
-
         return loss_f
 
     def propagateError(self, r_tab, t):
