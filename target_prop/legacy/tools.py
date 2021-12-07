@@ -66,7 +66,7 @@ def train_forward(net, data, target, criterion, optimizer_f, args):
     )
     grads = torch.autograd.grad(L, y, grad_outputs=init_grads, create_graph=True)
     delta = -args.beta * grads[0]
-    t = y + delta
+    t = (y + delta).detach()
 
     # 4- Layer-wise feedforward training begins
     layer_losses = [torch.tensor(0.0)] * len(net.layers)
