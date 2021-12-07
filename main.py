@@ -1,10 +1,13 @@
 # coding=utf-8
 import argparse
+import os
+import pickle
+import sys
+
+import torch
 from tqdm import tqdm
 
-from plotFunctions import *
-from tools import *
-from models import *
+from target_prop.legacy import *
 
 parser = argparse.ArgumentParser(description="Testing idea of Yoshua")
 
