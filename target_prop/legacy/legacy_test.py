@@ -174,9 +174,6 @@ class TestLegacyCompatibility:
     ):
         seed_everything(seed=123, workers=True)
 
-        # Save random state so that sample exact same noise vectors for both the models
-        rng_state = torch.get_rng_state()
-
         # Initialize both the models with same weights
         forward_mapping, backward_mapping = self._initialize_pl_from_legacy(legacy_model, pl_model)
 
@@ -190,6 +187,8 @@ class TestLegacyCompatibility:
         example_labels = torch.randint(0, num_classes, [batch_size])
 
         # Do feedback updates in legacy model
+        # Save random state so that sample exact same noise vectors for both the models
+        rng_state = torch.get_rng_state()
         optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
         _, optimizer_b = optimizers
         train_backward(legacy_model, example_inputs, optimizer_b)
