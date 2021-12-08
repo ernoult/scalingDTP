@@ -165,6 +165,66 @@ class TestLegacyCompatibility:
             print(check_mark) if error < 1e-5 else print(cross_mark)
         assert sum(errors) < 1e-4
 
+    def test_feedback_updates_are_same(
+        self,
+        pl_model: nn.Module,
+        legacy_model: nn.Module,
+        pl_hparams: HyperParameters,
+        legacy_hparams: HyperParameters,
+    ):
+        seed_everything(seed=123, workers=True)
+
+        # Save random state so that sample exact same noise vectors for both the models
+        rng_state = torch.get_rng_state()
+
+        # Initialize both the models with same weights
+        forward_mapping, backward_mapping = self._initialize_pl_from_legacy(legacy_model, pl_model)
+
+        # Generate random inputs and labels
+        batch_size = 16
+        num_classes = 10
+        check_mark = "\u2705"
+        cross_mark = "\u274C"
+
+        example_inputs = torch.rand([batch_size, 3, 32, 32])
+        example_labels = torch.randint(0, num_classes, [batch_size])
+
+        # Do feedback updates in legacy model
+        optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
+        _, optimizer_b = optimizers
+        train_backward(legacy_model, example_inputs, optimizer_b)
+
+        # Do feedback updates in PL model
+        torch.set_rng_state(rng_state)
+        # pl_model.trainer = Trainer()  # Fit a dummy trainer object
+        feedback_optimizer = pl_hparams.b_optim.make_optimizer(
+            pl_model.backward_net, learning_rates_per_layer=pl_model.feedback_lrs
+        )
+        # forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
+        # pl_model.trainer.optimizers = [feedback_optimizer, forward_optimizer]
+        # Now pl_model.feedback_optimizer property method works!
+        pl_model.feedback_optimizer = feedback_optimizer
+        pl_model.feedback_loss(example_inputs, example_labels, phase="train")
+
+        # Compare weights
+        pl_dict = pl_model.state_dict()
+        legacy_dict = legacy_model.state_dict()
+        errors = []
+        for pl_key, legacy_key in backward_mapping.items():
+            pl_param = pl_dict[pl_key]
+            legacy_param = legacy_dict[legacy_key]
+            assert pl_param.shape == legacy_param.shape
+            error = torch.abs((pl_param - legacy_param).sum()).item()
+            errors.append(error)
+            print(
+                f"[Param: {pl_key}] L1 error between legacy and PL param after backward update: {error} ",
+                end="",
+                flush=True,
+            )
+            # If params match closely, display check mark otherwise cross mark for easy inspection
+            print(check_mark) if error < 1e-5 else print(cross_mark)
+        assert sum(errors) < 1e-4
+
     def _initialize_pl_from_legacy(self, legacy_model, pl_model):
         # Get state dict mapping PL -> legacy
         forward_mapping, backward_mapping = self._get_pl_legacy_dict_mapping(

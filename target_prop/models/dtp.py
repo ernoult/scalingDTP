@@ -458,7 +458,9 @@ class DTP(LightningModule):
                 if self.training:
                     assert isinstance(loss, Tensor) and loss.requires_grad
                     self.feedback_optimizer.zero_grad()
-                    self.manual_backward(loss)
+                    # self.manual_backward(loss) won't work if self.trainer is None
+                    # self.trainer is None in legacy unit tests
+                    self.manual_backward(loss) if self.trainer is not None else loss.backward()
                     self.feedback_optimizer.step()
                     loss = loss.detach()
                 else:
@@ -486,15 +488,21 @@ class DTP(LightningModule):
             # IDEA: Logging the number of iterations could be useful if we add some kind of early
             # stopping for the feedback training, since the number of iterations might vary.
             total_iter_loss = sum(iteration_losses)
-            self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
-            self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
+
+            if self.trainer is not None:
+                self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
+                self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
             # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
             # What would be nicer would be to log this as a small, light-weight plot showing the
             # evolution of the distances / angles for each layer.
             # self.log(f"{self.phase}/B_angles[{layer_index}]", iteration_angles)
             # self.log(f"{self.phase}/B_distances[{layer_index}]", iteration_distances)
 
-        if self.training and self.global_step % self.hp.plot_every == 0:
+        if (
+            self.training
+            and self.global_step % self.hp.plot_every == 0
+            and self.trainer is not None
+        ):
             fig = make_stacked_feedback_training_figure(
                 all_values=[layer_angles, layer_distances, layer_losses],
                 row_titles=["angles", "distances", "losses"],
@@ -653,23 +661,35 @@ class DTP(LightningModule):
             forward_optim_config,
         ]
 
-    @property
-    def feedback_optimizer(self) -> Optimizer:
-        """Returns The optimizer of the feedback/backward net."""
+    def on_fit_start(self):
         optimizers = self.optimizers()
         assert isinstance(optimizers, list)
+
         feedback_optimizer = optimizers[0]
         assert isinstance(feedback_optimizer, Optimizer)
-        return feedback_optimizer
+        self.feedback_optimizer = feedback_optimizer
 
-    @property
-    def forward_optimizer(self) -> Optimizer:
-        """Returns The optimizer of the forward net."""
-        optimizers = self.optimizers()
-        assert isinstance(optimizers, list)
         forward_optimizer = optimizers[1]
         assert isinstance(forward_optimizer, Optimizer)
-        return forward_optimizer
+        self.forward_optimizer = forward_optimizer
+
+    # @property
+    # def feedback_optimizer(self) -> Optimizer:
+    #     """Returns The optimizer of the feedback/backward net."""
+    #     optimizers = self.optimizers()
+    #     assert isinstance(optimizers, list)
+    #     feedback_optimizer = optimizers[0]
+    #     assert isinstance(feedback_optimizer, Optimizer)
+    #     return feedback_optimizer
+
+    # @property
+    # def forward_optimizer(self) -> Optimizer:
+    #     """Returns The optimizer of the forward net."""
+    #     optimizers = self.optimizers()
+    #     assert isinstance(optimizers, list)
+    #     forward_optimizer = optimizers[1]
+    #     assert isinstance(forward_optimizer, Optimizer)
+    #     return forward_optimizer
 
     def _align_values_with_backward_net(
         self, values: List[T], default: T, forward_ordering: bool = False
