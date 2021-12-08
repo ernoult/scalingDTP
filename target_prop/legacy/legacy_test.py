@@ -187,7 +187,7 @@ class TestLegacyCompatibility:
         example_labels = torch.randint(0, num_classes, [batch_size])
 
         # Do feedback updates in legacy model
-        # Save random state so that sample exact same noise vectors for both the models
+        # Save random state for sampling same noise vectors in both the models
         rng_state = torch.get_rng_state()
         optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
         _, optimizer_b = optimizers
