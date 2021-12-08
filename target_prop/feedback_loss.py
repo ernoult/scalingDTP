@@ -1,11 +1,13 @@
 from __future__ import annotations
-from functools import singledispatch
-from torch import nn, Tensor
-import torch
-from torch.optim.optimizer import Optimizer
+
 from contextlib import nullcontext
+from functools import singledispatch
 from logging import getLogger
-from typing import Union, List
+from typing import List, Union
+
+import torch
+from torch import Tensor, nn
+from torch.optim.optimizer import Optimizer
 
 logger = getLogger(__name__)
 import torch
@@ -22,9 +24,9 @@ def get_feedback_loss(
     use_separate_streams: bool = False,
     synchronize: bool = False,
 ) -> Tensor:
-    """ Computes the loss for the feedback weights, given the feedback layer and its
+    """Computes the loss for the feedback weights, given the feedback layer and its
     accompanying forward module.
-    
+
     Returns the loss for a single iteration.
     Can optionally use more than one noise sample per iteration.
     """
@@ -47,19 +49,20 @@ def get_feedback_loss(
 
             # 2- Perturbate x <-- x + noise and redo x--> y --> r
             dx = noise_scale * torch.randn_like(x)
-
             with torch.no_grad():
                 y_noise = forward_layer(x + dx)
-
             r_noise = feedback_layer(y_noise)
 
-            # Distance between `r` and the reconstructed `r`.
+            # Distance between `r` and the reconstructed `r` after x perturbation.
             dr = r_noise - r
 
             # 3- Perturbate y <-- y + noise and redo y --> r
             dy = noise_scale * torch.randn_like(y)
+            with torch.no_grad():
+                y = forward_layer(x)
             r_noise_y = feedback_layer(y + dy)
 
+            # Distance between `r` and the reconstructed `r` after y perturbation.
             dr_y = r_noise_y - r
 
             # 4- Compute the loss
@@ -83,13 +86,13 @@ def get_feedback_loss(
 
 
 def repeat_batch(v: Tensor, n: int) -> Tensor:
-    """ Repeats the elements of tensor `v` `n` times along the batch dimension:
-    
+    """Repeats the elements of tensor `v` `n` times along the batch dimension:
+
     Example:
 
-    input:  [[1, 2, 3], [4, 5, 6]] of shape=(2, 3), n = 2 
+    input:  [[1, 2, 3], [4, 5, 6]] of shape=(2, 3), n = 2
     output: [[1, 2, 3], [1, 2, 3], [4, 5, 6], [4, 5, 6]] of shape=(4, 3)
-    
+
     >>> import torch
     >>> input = torch.as_tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     >>> repeat_batch(input, 2).tolist()
@@ -102,13 +105,13 @@ def repeat_batch(v: Tensor, n: int) -> Tensor:
 
 
 def split_batch(batched_v: Tensor, n: int) -> Tensor:
-    """ Reshapes the output of `repeat_batch` from shape [B*N, ...] back to a shape of [B, N, ...]
+    """Reshapes the output of `repeat_batch` from shape [B*N, ...] back to a shape of [B, N, ...]
 
     Example:
 
     input: [[1.0, 2.0, 3.0], [1.1, 2.1, 3.1], [4.0, 5.0, 6.0], [4.1, 5.1, 6.1]], shape=(4, 3)
     output: [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1]]], shape=(2, 2, 3)
-    
+
     >>> import numpy as np
     >>> input = np.array([[1.0, 2.0, 3.0], [1.1, 2.1, 3.1], [4.0, 5.0, 6.0], [4.1, 5.1, 6.1]])
     >>> split_batch(input, 2).tolist()
@@ -128,9 +131,9 @@ def get_feedback_loss_parallel(
     noise_scale: float | Tensor,
     noise_samples: int = 1,
 ) -> Tensor:
-    """ Computes the loss for the feedback weights, given the feedback layer and its
+    """Computes the loss for the feedback weights, given the feedback layer and its
     accompanying forward module.
-    
+
     Returns the loss for a single iteration.
     Can optionally use more than one noise sample per iteration.
     """
