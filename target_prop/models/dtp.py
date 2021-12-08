@@ -673,24 +673,6 @@ class DTP(LightningModule):
         assert isinstance(forward_optimizer, Optimizer)
         self.forward_optimizer = forward_optimizer
 
-    # @property
-    # def feedback_optimizer(self) -> Optimizer:
-    #     """Returns The optimizer of the feedback/backward net."""
-    #     optimizers = self.optimizers()
-    #     assert isinstance(optimizers, list)
-    #     feedback_optimizer = optimizers[0]
-    #     assert isinstance(feedback_optimizer, Optimizer)
-    #     return feedback_optimizer
-
-    # @property
-    # def forward_optimizer(self) -> Optimizer:
-    #     """Returns The optimizer of the forward net."""
-    #     optimizers = self.optimizers()
-    #     assert isinstance(optimizers, list)
-    #     forward_optimizer = optimizers[1]
-    #     assert isinstance(forward_optimizer, Optimizer)
-    #     return forward_optimizer
-
     def _align_values_with_backward_net(
         self, values: List[T], default: T, forward_ordering: bool = False
     ) -> List[T]:

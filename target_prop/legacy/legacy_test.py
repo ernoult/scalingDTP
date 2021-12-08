@@ -196,13 +196,9 @@ class TestLegacyCompatibility:
 
         # Do feedback updates in PL model
         torch.set_rng_state(rng_state)
-        # pl_model.trainer = Trainer()  # Fit a dummy trainer object
         feedback_optimizer = pl_hparams.b_optim.make_optimizer(
             pl_model.backward_net, learning_rates_per_layer=pl_model.feedback_lrs
         )
-        # forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
-        # pl_model.trainer.optimizers = [feedback_optimizer, forward_optimizer]
-        # Now pl_model.feedback_optimizer property method works!
         pl_model.feedback_optimizer = feedback_optimizer
         pl_model.feedback_loss(example_inputs, example_labels, phase="train")
 
