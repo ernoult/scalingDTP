@@ -661,17 +661,41 @@ class DTP(LightningModule):
             forward_optim_config,
         ]
 
-    def on_fit_start(self):
-        optimizers = self.optimizers()
-        assert isinstance(optimizers, list)
+    @property
+    def feedback_optimizer(self) -> Optimizer:
+        """Returns the optimizer of the feedback/backward net."""
+        if self.trainer is not None:  # self.trainer is None during testing
+            optimizers = self.optimizers()
+            assert isinstance(optimizers, list)
+            feedback_optimizer = optimizers[0]
+            assert isinstance(feedback_optimizer, Optimizer)
+            return feedback_optimizer
+        else:
+            return self._feedback_optimizer
 
-        feedback_optimizer = optimizers[0]
-        assert isinstance(feedback_optimizer, Optimizer)
-        self.feedback_optimizer = feedback_optimizer
+    @feedback_optimizer.setter
+    def feedback_optimizer(self, optimizer: Optimizer):
+        """Sets the optimizer of the feedback/backward net. Only
+        used during testing."""
+        self._feedback_optimizer = optimizer
 
-        forward_optimizer = optimizers[1]
-        assert isinstance(forward_optimizer, Optimizer)
-        self.forward_optimizer = forward_optimizer
+    @property
+    def forward_optimizer(self) -> Optimizer:
+        """Returns The optimizer of the forward net."""
+        if self.trainer is not None:  # self.trainer is None during testing
+            optimizers = self.optimizers()
+            assert isinstance(optimizers, list)
+            forward_optimizer = optimizers[1]
+            assert isinstance(forward_optimizer, Optimizer)
+            return forward_optimizer
+        else:
+            return self._forward_optimizer
+
+    @forward_optimizer.setter
+    def forward_optimizer(self, optimizer: Optimizer):
+        """Sets the optimizer of the forward net. Only
+        used during testing."""
+        self._forward_optimizer = optimizer
 
     def _align_values_with_backward_net(
         self, values: List[T], default: T, forward_ordering: bool = False
