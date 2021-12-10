@@ -365,25 +365,6 @@ class DTP(LightningModule):
         if self.trainer is not None:
             self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
 
-        # During training, the forward loss will be a 'live' loss tensor, since we
-        # gather the losses for each layer. Here we perform only one step.
-        assert not self.automatic_optimization
-        assert forward_loss.requires_grad == (phase == "train")
-
-        if forward_loss.requires_grad:
-            f_optimizer = self.forward_optimizer
-            self.manual_backward(
-                forward_loss
-            ) if self.trainer is not None else forward_loss.backward()
-            f_optimizer.step()
-            f_optimizer.zero_grad()
-            forward_loss = forward_loss.detach()
-            if self.trainer is not None:
-                lr_scheduler = self.lr_schedulers()
-                if lr_scheduler:
-                    assert not isinstance(lr_scheduler, list)
-                    lr_scheduler.step()
-
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps, if needed.
         return float(forward_loss + feedback_loss)
@@ -641,6 +622,25 @@ class DTP(LightningModule):
         loss_tensor = torch.stack(forward_loss_per_layer, dim=0)
         forward_loss = loss_tensor.sum(dim=0)
         # TODO: Use 'sum' or 'mean' as the reduction between layers?
+
+        # During training, the forward loss will be a 'live' loss tensor, since we
+        # gather the losses for each layer. Here we perform only one step.
+        assert not self.automatic_optimization
+        assert forward_loss.requires_grad == (phase == "train")
+
+        if forward_loss.requires_grad:
+            self.forward_optimizer.zero_grad()
+            self.manual_backward(
+                forward_loss
+            ) if self.trainer is not None else forward_loss.backward()
+            self.forward_optimizer.step()
+            forward_loss = forward_loss.detach()
+            if self.trainer is not None:
+                lr_scheduler = self.lr_schedulers()
+                if lr_scheduler:
+                    assert not isinstance(lr_scheduler, list)
+                    lr_scheduler.step()
+
         return {
             "loss": forward_loss,
             "layer_losses": forward_loss_per_layer,

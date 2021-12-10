@@ -114,19 +114,20 @@ class TestLegacyCompatibility:
         num_classes = 10
         check_mark = "\u2705"
         cross_mark = "\u274C"
-
         example_inputs = torch.rand([batch_size, 3, 32, 32])
         example_labels = torch.randint(0, num_classes, [batch_size])
 
         # Compute forward layer losses in both the models
         criterion = torch.nn.CrossEntropyLoss(reduction="none")
         optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
+        forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
+        pl_model.forward_optimizer = forward_optimizer
         optimizer_f, _ = optimizers
         _, legacy_layer_losses = train_forward(
             legacy_model, example_inputs, example_labels, criterion, optimizer_f, legacy_hparams
         )
         pl_output = pl_model.forward_loss(example_inputs, example_labels, phase="train")
-        pl_loss, pl_layer_losses = pl_output["loss"], pl_output["layer_losses"]
+        _, pl_layer_losses = pl_output["loss"], pl_output["layer_losses"]
 
         # Ensure that layer losses are equal
         for i, (legacy_layer_loss, pl_layer_loss) in enumerate(
@@ -149,11 +150,6 @@ class TestLegacyCompatibility:
         # NOTE: We don't check if gradients are equal since legacy model clears gradients
         # after each layer backward pass. However, if layer losses are equal, gradients
         # should be equal given that weights are initialized same in both the models
-        pl_loss.backward()
-        forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
-        forward_optimizer.step()
-
-        # Compare weights
         errors = self._compare_weights(legacy_model, pl_model, forward_mapping)
         assert sum(errors) < 1e-4
 
@@ -172,8 +168,6 @@ class TestLegacyCompatibility:
         # Generate random inputs and labels
         batch_size = 16
         num_classes = 10
-        check_mark = "\u2705"
-        cross_mark = "\u274C"
         if torch.cuda.is_available():
             device = torch.device("cuda")
         else:
@@ -224,8 +218,6 @@ class TestLegacyCompatibility:
         # Build dataset
         batch_size = 16
         num_iterations = 5
-        check_mark = "\u2705"
-        cross_mark = "\u274C"
         legacy_hparams.batch_size = batch_size
         if torch.cuda.is_available():
             device = torch.device("cuda")
