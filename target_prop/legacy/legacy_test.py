@@ -15,7 +15,14 @@ from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
 from target_prop.layers import Reshape, forward_all, invert
-from target_prop.legacy import VGG, createOptimizers, train_backward, train_forward
+from target_prop.legacy import (
+    VGG,
+    createDataset,
+    createOptimizers,
+    train_backward,
+    train_batch,
+    train_forward,
+)
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from torch import Tensor, nn
@@ -147,22 +154,7 @@ class TestLegacyCompatibility:
         forward_optimizer.step()
 
         # Compare weights
-        pl_dict = pl_model.state_dict()
-        legacy_dict = legacy_model.state_dict()
-        errors = []
-        for pl_key, legacy_key in forward_mapping.items():
-            pl_param = pl_dict[pl_key]
-            legacy_param = legacy_dict[legacy_key]
-            assert pl_param.shape == legacy_param.shape
-            error = torch.abs((pl_param - legacy_param).sum()).item()
-            errors.append(error)
-            print(
-                f"[Param: {pl_key}] L1 error between legacy and PL param after forward update: {error} ",
-                end="",
-                flush=True,
-            )
-            # If params match closely, display check mark otherwise cross mark for easy inspection
-            print(check_mark) if error < 1e-5 else print(cross_mark)
+        errors = self._compare_weights(legacy_model, pl_model, forward_mapping)
         assert sum(errors) < 1e-4
 
     def test_feedback_updates_are_same(
@@ -182,19 +174,31 @@ class TestLegacyCompatibility:
         num_classes = 10
         check_mark = "\u2705"
         cross_mark = "\u274C"
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
 
-        example_inputs = torch.rand([batch_size, 3, 32, 32])
-        example_labels = torch.randint(0, num_classes, [batch_size])
+        example_inputs = torch.rand([batch_size, 3, 32, 32]).to(device)
+        example_labels = torch.randint(0, num_classes, [batch_size]).to(device)
+        legacy_model = legacy_model.to(device)
+        pl_model = pl_model.to(device)
 
         # Do feedback updates in legacy model
         # Save random state for sampling same noise vectors in both the models
-        rng_state = torch.get_rng_state()
+        if torch.cuda.is_available():
+            rng_state = torch.cuda.get_rng_state(device)
+        else:
+            rng_state = torch.get_rng_state()
         optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
         _, optimizer_b = optimizers
         train_backward(legacy_model, example_inputs, optimizer_b)
 
         # Do feedback updates in PL model
-        torch.set_rng_state(rng_state)
+        if torch.cuda.is_available():
+            torch.cuda.set_rng_state(rng_state, device)
+        else:
+            torch.set_rng_state(rng_state)
         feedback_optimizer = pl_hparams.b_optim.make_optimizer(
             pl_model.backward_net, learning_rates_per_layer=pl_model.feedback_lrs
         )
@@ -202,23 +206,75 @@ class TestLegacyCompatibility:
         pl_model.feedback_loss(example_inputs, example_labels, phase="train")
 
         # Compare weights
-        pl_dict = pl_model.state_dict()
-        legacy_dict = legacy_model.state_dict()
-        errors = []
-        for pl_key, legacy_key in backward_mapping.items():
-            pl_param = pl_dict[pl_key]
-            legacy_param = legacy_dict[legacy_key]
-            assert pl_param.shape == legacy_param.shape
-            error = torch.abs((pl_param - legacy_param).sum()).item()
-            errors.append(error)
-            print(
-                f"[Param: {pl_key}] L1 error between legacy and PL param after backward update: {error} ",
-                end="",
-                flush=True,
-            )
-            # If params match closely, display check mark otherwise cross mark for easy inspection
-            print(check_mark) if error < 1e-5 else print(cross_mark)
+        errors = self._compare_weights(legacy_model, pl_model, backward_mapping)
         assert sum(errors) < 1e-4
+
+    def test_step_updates_are_same(
+        self,
+        pl_model: nn.Module,
+        legacy_model: nn.Module,
+        pl_hparams: HyperParameters,
+        legacy_hparams: HyperParameters,
+    ):
+        seed_everything(seed=123, workers=True)
+
+        # Initialize both the models with same weights
+        forward_mapping, backward_mapping = self._initialize_pl_from_legacy(legacy_model, pl_model)
+
+        # Build dataset
+        batch_size = 16
+        num_iterations = 5
+        check_mark = "\u2705"
+        cross_mark = "\u274C"
+        legacy_hparams.batch_size = batch_size
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+        legacy_model = legacy_model.to(device)
+        pl_model = pl_model.to(device)
+
+        # Do updates in legacy model
+        if torch.cuda.is_available():
+            rng_state = torch.cuda.get_rng_state(device)
+        else:
+            rng_state = torch.get_rng_state()
+        train_loader, test_loader = createDataset(legacy_hparams)
+        generator = iter(test_loader)
+        criterion = torch.nn.CrossEntropyLoss(reduction="none")
+        optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
+        print(f"Training legacy model for {num_iterations} steps...")
+        for i in range(num_iterations):
+            batch = next(generator)
+            data, target = batch
+            data = data.to(device)
+            target = target.to(device)
+            train_batch(legacy_hparams, legacy_model, data, optimizers, target, criterion)
+
+        # Do updates in PL model
+        if torch.cuda.is_available():
+            torch.cuda.set_rng_state(rng_state, device)
+        else:
+            torch.set_rng_state(rng_state)
+        train_loader, test_loader = createDataset(legacy_hparams)
+        generator = iter(test_loader)
+        feedback_optimizer = pl_hparams.b_optim.make_optimizer(
+            pl_model.backward_net, learning_rates_per_layer=pl_model.feedback_lrs
+        )
+        forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
+        pl_model.forward_optimizer = forward_optimizer
+        pl_model.feedback_optimizer = feedback_optimizer
+        print(f"Training PL model for {num_iterations} steps...")
+        for i in range(num_iterations):
+            batch = next(generator)
+            batch = (batch[0].to(device), batch[1].to(device))
+            pl_model.shared_step(batch, i, phase="train")
+
+        # Compare weights
+        feedback_errors = self._compare_weights(legacy_model, pl_model, backward_mapping)
+        forward_errors = self._compare_weights(legacy_model, pl_model, forward_mapping)
+        assert sum(forward_errors) < 1e-4
+        assert sum(feedback_errors) < 1e-4
 
     def _initialize_pl_from_legacy(self, legacy_model, pl_model):
         # Get state dict mapping PL -> legacy
@@ -236,6 +292,27 @@ class TestLegacyCompatibility:
             pl_dict[pl_key] = legacy_dict[legacy_key].clone()
         pl_model.load_state_dict(pl_dict)
         return forward_mapping, backward_mapping
+
+    def _compare_weights(self, legacy_model, pl_model, mapping):
+        check_mark = "\u2705"
+        cross_mark = "\u274C"
+        pl_dict = pl_model.state_dict()
+        legacy_dict = legacy_model.state_dict()
+        errors = []
+        for pl_key, legacy_key in mapping.items():
+            pl_param = pl_dict[pl_key]
+            legacy_param = legacy_dict[legacy_key]
+            assert pl_param.shape == legacy_param.shape
+            error = torch.abs((pl_param - legacy_param).sum()).item()
+            errors.append(error)
+            print(
+                f"[Param: {pl_key}] L1 error between legacy and PL param after update: {error} ",
+                end="",
+                flush=True,
+            )
+            # If params match closely, display check mark otherwise cross mark for easy inspection
+            print(check_mark) if error < 1e-5 else print(cross_mark)
+        return errors
 
     def _get_pl_legacy_dict_mapping(self, legacy_model, pl_model):
         forward_mapping = {}

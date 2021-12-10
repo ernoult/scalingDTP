@@ -353,7 +353,8 @@ class DTP(LightningModule):
         feedback_training_outputs: Dict = self.feedback_loss(x, y, phase=phase)
 
         feedback_loss: Tensor = feedback_training_outputs["loss"]
-        self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
+        if self.trainer is not None:
+            self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
         # This is never a 'live' loss, since we do the optimization steps sequentially
         # inside `feedback_loss`.
         assert not feedback_loss.requires_grad
@@ -361,7 +362,8 @@ class DTP(LightningModule):
         # ----------- Optimize the forward weights -------------
         forward_training_outputs: Dict = self.forward_loss(x, y, phase=phase)
         forward_loss: Tensor = forward_training_outputs["loss"]
-        self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
+        if self.trainer is not None:
+            self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
 
         # During training, the forward loss will be a 'live' loss tensor, since we
         # gather the losses for each layer. Here we perform only one step.
@@ -370,14 +372,17 @@ class DTP(LightningModule):
 
         if forward_loss.requires_grad:
             f_optimizer = self.forward_optimizer
-            self.manual_backward(forward_loss)
+            self.manual_backward(
+                forward_loss
+            ) if self.trainer is not None else forward_loss.backward()
             f_optimizer.step()
             f_optimizer.zero_grad()
             forward_loss = forward_loss.detach()
-            lr_scheduler = self.lr_schedulers()
-            if lr_scheduler:
-                assert not isinstance(lr_scheduler, list)
-                lr_scheduler.step()
+            if self.trainer is not None:
+                lr_scheduler = self.lr_schedulers()
+                if lr_scheduler:
+                    assert not isinstance(lr_scheduler, list)
+                    lr_scheduler.step()
 
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps, if needed.
