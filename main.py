@@ -68,7 +68,6 @@ parser.add_argument("--wdecay", type=float, default=None, help="Weight decay (de
 
 args = parser.parse_args()
 
-
 train_loader, test_loader = createDataset(args)
 
 
@@ -125,7 +124,9 @@ if __name__ == "__main__":
             data, target = data.to(device), target.to(device)
 
             # compute DTP gradient on the current batch
-            pred, loss = train_batch(args, net, data, optimizers, target, criterion)
+            pred, loss, layer_losses_b, layer_losses_f = train_batch(
+                args, net, data, optimizers, target, criterion
+            )
 
             train_loss += loss.item()
             _, predicted = pred.max(1)
@@ -133,10 +134,15 @@ if __name__ == "__main__":
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
             train_accuracy = correct / total
+            loss_f = sum(layer_losses_f) / len(layer_losses_f)
+            loss_b = sum(layer_losses_b) / len(layer_losses_b)
+
             pbar.set_postfix(
                 {
                     "Loss": f"{loss.item():.3f}",
                     "Train Acc": f"{train_accuracy:.2%}",
+                    "F_loss": f"{loss_f:.3f}",
+                    "B_loss": f"{loss_b:.3f}",
                 }
             )
             # progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))

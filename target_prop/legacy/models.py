@@ -82,6 +82,7 @@ class layer_fc(nn.Module):
 
         nb_iter = self.iter
         sigma = self.noise
+        losses = []
 
         for iter in range(1, nb_iter + 1):
             # 1- Compute y = F(input) and r=G(y)
@@ -102,14 +103,15 @@ class layer_fc(nn.Module):
                 -2 * (noise * dr).view(dr.size(0), -1).sum(1).mean()
                 + (dr_y ** 2).view(dr_y.size(0), -1).sum(1).mean()
             )
-            optimizer.zero_grad()
 
             # 5- Update the feedback weights
+            optimizer.zero_grad()
             loss_b.backward()
             optimizer.step()
+            losses.append(loss_b.detach())
 
         if arg_return:
-            return loss_b
+            return sum(losses) / self.iter
 
     def weight_f_train(self, y, t, optimizer):
         """
@@ -230,6 +232,7 @@ class layer_convpool(nn.Module):
 
         nb_iter = self.iter
         sigma = self.noise
+        losses = []
 
         for iter in range(1, nb_iter + 1):
 
@@ -256,9 +259,10 @@ class layer_convpool(nn.Module):
             optimizer.zero_grad()
             loss_b.backward()
             optimizer.step()
+            losses.append(loss_b.detach())
 
         if arg_return:
-            return loss_b
+            return sum(losses) / self.iter
 
     def weight_f_train(self, y, t, optimizer):
         """

@@ -25,11 +25,11 @@ def train_batch(args, net, data, optimizers, target=None, criterion=None, **kwar
     optimizer_f, optimizer_b = optimizers
 
     # ****FEEDBACK WEIGHTS TRAINING****#
-    pred = train_backward(net, data, optimizer_b)
+    pred, layer_losses_b = train_backward(net, data, optimizer_b)
 
     # *********FORWARD WEIGHTS TRAINING********#
-    loss, _ = train_forward(net, data, target, criterion, optimizer_f, args)
-    return pred, loss
+    loss, layer_losses_f = train_forward(net, data, target, criterion, optimizer_f, args)
+    return pred, loss, layer_losses_b, layer_losses_f
 
 
 def train_backward(net, data, optimizer_b):
@@ -37,15 +37,17 @@ def train_backward(net, data, optimizer_b):
     y = net.layers[0](data).detach()
 
     # 2- Layer-wise autoencoder training begins:
+    losses = []
     for id_layer in range(len(net.layers) - 1):
         # 3- Train the current autoencoder (NOTE: there is no feedback operator paired to the first layer net.layers[0])
-        net.layers[id_layer + 1].weight_b_train(y, optimizer_b)
+        loss_b = net.layers[id_layer + 1].weight_b_train(y, optimizer_b, True)
+        losses.append(loss_b)
 
         # 4- Compute the next hidden layer
         y = net.layers[id_layer + 1](y).detach()
 
     pred = torch.exp(net.logsoft(y))
-    return pred
+    return pred, losses
 
 
 def train_forward(net, data, target, criterion, optimizer_f, args):
