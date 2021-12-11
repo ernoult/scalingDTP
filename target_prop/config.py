@@ -10,18 +10,23 @@ from pl_bolts.datamodules import CIFAR10DataModule, ImagenetDataModule, MNISTDat
 from pl_bolts.datamodules.cifar10_datamodule import cifar10_normalization
 from pl_bolts.datamodules.imagenet_datamodule import imagenet_normalization
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from simple_parsing.helpers import choice
+from simple_parsing.helpers import choice, flag
 from simple_parsing.helpers.serialization import Serializable
 from torch import Tensor
-from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, ToTensor
-from simple_parsing.helpers import flag
+from torchvision.transforms import (
+    Compose,
+    Normalize,
+    RandomCrop,
+    RandomHorizontalFlip,
+    ToTensor,
+)
 
 Transform = Callable[[Tensor], Tensor]
 
 
 @dataclass
 class Config(Serializable):
-    """ Configuration options for the experiment (not hyper-parameters). """
+    """Configuration options for the experiment (not hyper-parameters)."""
 
     available_datasets: ClassVar[Dict[str, Type[VisionDataModule]]] = {
         "mnist": MNISTDataModule,
@@ -39,13 +44,13 @@ class Config(Serializable):
     # variable, if present, else a local "data" directory.
     data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))
     # Number of workers to use in the dataloader.
-    num_workers: int = 16
+    num_workers: int = 1
     # Wether to pin the memory, which is good when using CUDA tensors.
     pin_memory: bool = True
     # Random seed.
     seed: Optional[int] = 123
     # Portion of the dataset to reserve for validation
-    val_split: float = 0.2
+    val_split: float = 0.003
     # Wether to shuffle the dataset or not.
     shuffle: bool = True
 
@@ -79,16 +84,20 @@ class Config(Serializable):
                     RandomHorizontalFlip(0.5),
                     RandomCrop(size=self.image_crop_size, padding=4, padding_mode="edge"),
                     ToTensor(),
-                    normalization_transform(),
-                    # Normalize(mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)),
+                    # normalization_transform(),
+                    Normalize(
+                        mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)
+                    ),
                 ]
             )
 
             test_transform = Compose(
                 [
                     ToTensor(),
-                    normalization_transform(),
-                    # Normalize(mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)),
+                    # normalization_transform(),
+                    Normalize(
+                        mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)
+                    ),
                 ]
             )
         return datamodule_class(
