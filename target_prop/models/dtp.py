@@ -129,7 +129,7 @@ class DTP(LightningModule):
         )
 
         # Step interval for creating and logging plots.
-        plot_every: int = 10
+        plot_every: int = 1000
 
     def __init__(
         self,
@@ -353,8 +353,10 @@ class DTP(LightningModule):
         feedback_training_outputs: Dict = self.feedback_loss(x, y, phase=phase)
 
         feedback_loss: Tensor = feedback_training_outputs["loss"]
+        avg_feedback_loss: Tensor = feedback_training_outputs["avg_loss"]
         if self.trainer is not None:
-            self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
+            self.log(f"{phase}/B_loss", feedback_loss)
+            self.log(f"{phase}/B_avg_loss", avg_feedback_loss, prog_bar=phase == "train")
         # This is never a 'live' loss, since we do the optimization steps sequentially
         # inside `feedback_loss`.
         assert not feedback_loss.requires_grad
@@ -362,8 +364,10 @@ class DTP(LightningModule):
         # ----------- Optimize the forward weights -------------
         forward_training_outputs: Dict = self.forward_loss(x, y, phase=phase)
         forward_loss: Tensor = forward_training_outputs["loss"]
+        last_layer_loss: Tensor = forward_training_outputs["layer_losses"][-1].detach()
         if self.trainer is not None:
-            self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
+            self.log(f"{phase}/F_loss", forward_loss)
+            self.log(f"{phase}/Loss", last_layer_loss, prog_bar=phase == "train")
 
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps, if needed.
@@ -392,6 +396,7 @@ class DTP(LightningModule):
         layer_losses: List[List[Tensor]] = []
         layer_angles: List[List[float]] = []
         layer_distances: List[List[float]] = []
+        layer_avg_losses: List[List[float]] = []
 
         # Layer-wise autoencoder training begins:
         # NOTE: Skipping the first layer
@@ -474,9 +479,14 @@ class DTP(LightningModule):
             # IDEA: Logging the number of iterations could be useful if we add some kind of early
             # stopping for the feedback training, since the number of iterations might vary.
             total_iter_loss = sum(iteration_losses)
+            if iterations_i > 0:
+                avg_iter_loss = total_iter_loss / iterations_i
+                layer_avg_losses.append(avg_iter_loss)
 
             if self.trainer is not None:
                 self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
+                if iterations_i > 0:
+                    self.log(f"{phase}/B_avg_loss[{layer_index}]", avg_iter_loss)
                 self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
             # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
             # What would be nicer would be to log this as a small, light-weight plot showing the
@@ -515,8 +525,10 @@ class DTP(LightningModule):
 
         # NOTE: Need to return something.
         total_b_loss = sum(sum(iteration_losses) for iteration_losses in layer_losses)
+        avg_b_loss = sum(layer_avg_losses) / len(layer_avg_losses)
         return {
             "loss": total_b_loss,
+            "avg_loss": avg_b_loss,
             "layer_losses": layer_losses,
             "layer_angles": layer_angles,
             "layer_distances": layer_distances,
