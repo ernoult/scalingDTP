@@ -54,11 +54,14 @@ def legacy_hparams():
         # Type of activation to use.
         activation: str = "elu"
 
-        # nudging parameter: Used when calculating the first target.
+        # Nudging parameter: Used when calculating the first target.
         beta: float = 0.7
 
-        # weight decay for optimizer
+        # Weight decay for optimizer
         wdecay: float = 1e-4
+
+        # Batch size
+        batch_size = 128
 
     hparams = LegacyHparams()
     return hparams
@@ -84,6 +87,54 @@ def pl_model(pl_hparams: HyperParameters):
 
 
 class TestLegacyCompatibility:
+    def test_input_batches_are_same(
+        self, pl_hparams: HyperParameters, legacy_hparams: HyperParameters
+    ):
+        check_mark = "\u2705"
+        cross_mark = "\u274C"
+        num_iterations = 5
+        pdb.set_trace()
+        legacy_hparams.batch_size = 200
+        pl_hparams.batch_size = 200
+
+        # Get legacy dataloaders
+        legacy_train_loader, legacy_test_loader = createDataset(legacy_hparams)
+
+        # Get PL dataloaders
+        config = Config(dataset="cifar10", num_workers=1, debug=False, pin_memory=False)
+        datamodule = config.make_datamodule(
+            batch_size=pl_hparams.batch_size,
+        )
+        datamodule.setup()
+        pl_train_loader, pl_test_loader = (
+            datamodule.train_dataloader(),
+            datamodule.test_dataloader(),
+        )
+
+        # Ensure that number of batches in each split are equal
+        assert len(legacy_train_loader) == len(pl_train_loader)
+        assert len(legacy_test_loader) == len(pl_test_loader)
+
+        # Compare data and labels
+        # NOTE: We only compare `test` baches here because they are not shuffled in dataloader
+        data_errors = []
+        label_errors = []
+        for i, (legacy_batch, pl_batch) in enumerate(zip(legacy_test_loader, pl_test_loader)):
+            data_error = torch.abs((legacy_batch[0] - pl_batch[0]).sum()).item()
+            label_error = torch.abs((legacy_batch[1] - pl_batch[1]).sum()).item()
+            print(
+                f"[Batch {i}] L1 error between legacy and PL batch (data, label): {data_error}, {label_error} ",
+                end="",
+                flush=True,
+            )
+            print(check_mark) if data_error + label_error < 1e-5 else print(cross_mark)
+            data_errors.append(data_error)
+            label_errors.append(label_error)
+            if i == num_iterations:
+                break
+        assert (sum(data_errors)) == 0
+        assert (sum(label_errors)) == 0
+
     def test_forward_passes_are_same(self, pl_model: nn.Module, legacy_model: nn.Module):
         seed_everything(seed=123, workers=True)
 
