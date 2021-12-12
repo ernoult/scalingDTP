@@ -89,7 +89,6 @@ class CIFAR10DataModule(LightningDataModule):
                 if self.train_transforms is None
                 else self.train_transforms
             )
-
             test_transforms = (
                 self.default_transforms() if self.test_transforms is None else self.test_transforms
             )
@@ -104,6 +103,9 @@ class CIFAR10DataModule(LightningDataModule):
             self.dataset_val = dataset_test
 
         if stage == "test" or stage is None:
+            test_transforms = (
+                self.default_transforms() if self.test_transforms is None else self.test_transforms
+            )
             dataset_test = self.dataset_cls(
                 self.data_dir, train=False, transform=test_transforms, **self.EXTRA_ARGS
             )
