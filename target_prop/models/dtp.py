@@ -647,16 +647,17 @@ class DTP(LightningModule):
             ) if self.trainer is not None else forward_loss.backward()
             self.forward_optimizer.step()
             forward_loss = forward_loss.detach()
-            if self.trainer is not None:
-                lr_scheduler = self.lr_schedulers()
-                if lr_scheduler:
-                    assert not isinstance(lr_scheduler, list)
-                    lr_scheduler.step()
 
         return {
             "loss": forward_loss,
             "layer_losses": forward_loss_per_layer,
         }
+
+    def on_train_epoch_end(self):
+        lr_scheduler = self.lr_schedulers()
+        if lr_scheduler:
+            assert not isinstance(lr_scheduler, list)
+            lr_scheduler.step()
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:
