@@ -6,8 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import torch
 import wandb
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.core.optimizer import LightningOptimizer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
@@ -133,7 +132,7 @@ class DTP(LightningModule):
 
     def __init__(
         self,
-        datamodule: VisionDataModule,
+        datamodule: LightningDataModule,
         hparams: "DTP.HParams",
         config: Config,
     ):
