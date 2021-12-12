@@ -1,5 +1,4 @@
 import logging
-import pdb
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import ClassVar, Iterable, List, Optional, Tuple, Type
@@ -93,7 +92,6 @@ class TestLegacyCompatibility:
         check_mark = "\u2705"
         cross_mark = "\u274C"
         num_iterations = 5
-        pdb.set_trace()
         legacy_hparams.batch_size = 200
         pl_hparams.batch_size = 200
 
