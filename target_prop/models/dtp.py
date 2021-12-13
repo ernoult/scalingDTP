@@ -600,7 +600,11 @@ class DTP(LightningModule):
         if self.hp.scheduler:
             # Using the same LR scheduler as the original code:
             lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
-            forward_optim_config["lr_scheduler"] = lr_scheduler
+            forward_optim_config["lr_scheduler"] = {
+                "scheduler": lr_scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            }
         return [
             feedback_optim_config,
             forward_optim_config,
