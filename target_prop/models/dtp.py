@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import torch
 import wandb
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.core.optimizer import LightningOptimizer
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
@@ -25,7 +25,6 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
-from pytorch_lightning.loggers import WandbLogger
 from torchmetrics.classification import Accuracy
 
 from .utils import make_stacked_feedback_training_figure
@@ -61,7 +60,7 @@ class DTP(LightningModule):
 
     @dataclass
     class HParams(HyperParameters):
-        """ Hyper-Parameters of the model.
+        """Hyper-Parameters of the model.
 
         The number of noise samples to use per iteration is set by `feedback_samples_per_iteration`.
 
@@ -83,6 +82,9 @@ class DTP(LightningModule):
         # Max number of training epochs in total.
         max_epochs: int = 90
 
+        # Weight decay for forward optimizer
+        weight_decay: float = 1e-4
+
         # Hyper-parameters for the "backward" optimizer
         b_optim: OptimizerConfig = OptimizerConfig(
             type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
@@ -91,10 +93,11 @@ class DTP(LightningModule):
         noise: List[float] = uniform(
             0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
         )
+
         # Hyper-parameters for the forward optimizer
         # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
         f_optim: OptimizerConfig = OptimizerConfig(
-            type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
+            type="sgd", lr=0.08, weight_decay=weight_decay, momentum=0.9
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
@@ -116,13 +119,22 @@ class DTP(LightningModule):
         # jacobian: bool = False  # compute jacobians
 
         # Type of activation to use.
-        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU)
+        activation: Type[nn.Module] = choice(
+            {
+                "relu": nn.ReLU,
+                "elu": nn.ELU,
+            },
+            default=nn.ELU,
+        )
 
         # Step interval for creating and logging plots.
-        plot_every: int = 10
+        plot_every: int = 1000
 
     def __init__(
-        self, datamodule: VisionDataModule, hparams: "DTP.HParams", config: Config,
+        self,
+        datamodule: LightningDataModule,
+        hparams: "DTP.HParams",
+        config: Config,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
@@ -150,11 +162,15 @@ class DTP(LightningModule):
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations, default=0, forward_ordering=True,
+            self.hp.feedback_training_iterations,
+            default=0,
+            forward_ordering=True,
         )
         # The noise scale for each feedback layer.
         self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise, default=0.0, forward_ordering=True,
+            self.hp.noise,
+            default=0.0,
+            forward_ordering=True,
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
@@ -238,7 +254,13 @@ class DTP(LightningModule):
         for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
             block = nn.Sequential(
                 OrderedDict(
-                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
+                    conv=nn.Conv2d(
+                        in_channels,
+                        out_channels,
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                    ),
                     rho=activation_type(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
                     # the indices to the backward net for this layer through a "magic bridge".
@@ -279,8 +301,8 @@ class DTP(LightningModule):
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
         return Trainer(
             max_epochs=self.hp.max_epochs,
-            gpus=torch.cuda.device_count(),
-            track_grad_norm=-1,
+            gpus=1,
+            track_grad_norm=False,
             accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
@@ -298,20 +320,30 @@ class DTP(LightningModule):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        self.shared_step(batch, batch_idx=batch_idx, phase="train")
+    def training_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+    ) -> float:  # type: ignore
+        return self.shared_step(batch, batch_idx=batch_idx, phase="train")
 
-    def validation_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        self.shared_step(batch, batch_idx=batch_idx, phase="val")
+    def validation_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+    ) -> float:  # type: ignore
+        return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
-    def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        self.shared_step(batch, batch_idx=batch_idx, phase="test")
+    def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int) -> float:  # type: ignore
+        return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
     ):
-        """ Main step, used by the `[training/valid/test]_step` methods.
-        """
+        """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
 
         # ----------- Optimize the feedback weights -------------
@@ -320,30 +352,21 @@ class DTP(LightningModule):
         feedback_training_outputs: Dict = self.feedback_loss(x, y, phase=phase)
 
         feedback_loss: Tensor = feedback_training_outputs["loss"]
-        self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
+        avg_feedback_loss: Tensor = feedback_training_outputs["avg_loss"]
+        if self.trainer is not None:
+            self.log(f"{phase}/B_loss", feedback_loss)
+            self.log(f"{phase}/B_avg_loss", avg_feedback_loss, prog_bar=phase == "train")
         # This is never a 'live' loss, since we do the optimization steps sequentially
         # inside `feedback_loss`.
         assert not feedback_loss.requires_grad
 
         # ----------- Optimize the forward weights -------------
-        forward_loss = self.forward_loss(x, y, phase=phase)
-        self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
-
-        # During training, the forward loss will be a 'live' loss tensor, since we
-        # gather the losses for each layer. Here we perform only one step.
-        assert not self.automatic_optimization
-        assert forward_loss.requires_grad == (phase == "train")
-
-        if forward_loss.requires_grad:
-            f_optimizer = self.forward_optimizer
-            self.manual_backward(forward_loss)
-            f_optimizer.step()
-            f_optimizer.zero_grad()
-            forward_loss = forward_loss.detach()
-            lr_scheduler = self.lr_schedulers()
-            if lr_scheduler:
-                assert not isinstance(lr_scheduler, list)
-                lr_scheduler.step()
+        forward_training_outputs: Dict = self.forward_loss(x, y, phase=phase)
+        forward_loss: Tensor = forward_training_outputs["loss"]
+        last_layer_loss: Tensor = forward_training_outputs["layer_losses"][-1].detach()
+        if self.trainer is not None:
+            self.log(f"{phase}/F_loss", forward_loss)
+            self.log(f"{phase}/Loss", last_layer_loss, prog_bar=phase == "train")
 
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps, if needed.
@@ -372,6 +395,7 @@ class DTP(LightningModule):
         layer_losses: List[List[Tensor]] = []
         layer_angles: List[List[float]] = []
         layer_distances: List[List[float]] = []
+        layer_avg_losses: List[List[float]] = []
 
         # Layer-wise autoencoder training begins:
         # NOTE: Skipping the first layer
@@ -424,7 +448,9 @@ class DTP(LightningModule):
                 if self.training:
                     assert isinstance(loss, Tensor) and loss.requires_grad
                     self.feedback_optimizer.zero_grad()
-                    self.manual_backward(loss)
+                    # self.manual_backward(loss) won't work if self.trainer is None
+                    # self.trainer is None in legacy unit tests
+                    self.manual_backward(loss) if self.trainer is not None else loss.backward()
                     self.feedback_optimizer.step()
                     loss = loss.detach()
                 else:
@@ -452,15 +478,26 @@ class DTP(LightningModule):
             # IDEA: Logging the number of iterations could be useful if we add some kind of early
             # stopping for the feedback training, since the number of iterations might vary.
             total_iter_loss = sum(iteration_losses)
-            self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
-            self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
+            if iterations_i > 0:
+                avg_iter_loss = total_iter_loss / iterations_i
+                layer_avg_losses.append(avg_iter_loss)
+
+            if self.trainer is not None:
+                self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
+                if iterations_i > 0:
+                    self.log(f"{phase}/B_avg_loss[{layer_index}]", avg_iter_loss)
+                self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
             # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
             # What would be nicer would be to log this as a small, light-weight plot showing the
             # evolution of the distances / angles for each layer.
             # self.log(f"{self.phase}/B_angles[{layer_index}]", iteration_angles)
             # self.log(f"{self.phase}/B_distances[{layer_index}]", iteration_distances)
 
-        if self.training and self.global_step % self.hp.plot_every == 0:
+        if (
+            self.training
+            and self.global_step % self.hp.plot_every == 0
+            and self.trainer is not None
+        ):
             fig = make_stacked_feedback_training_figure(
                 all_values=[layer_angles, layer_distances, layer_losses],
                 row_titles=["angles", "distances", "losses"],
@@ -487,15 +524,17 @@ class DTP(LightningModule):
 
         # NOTE: Need to return something.
         total_b_loss = sum(sum(iteration_losses) for iteration_losses in layer_losses)
+        avg_b_loss = sum(layer_avg_losses) / len(layer_avg_losses)
         return {
             "loss": total_b_loss,
+            "avg_loss": avg_b_loss,
             "layer_losses": layer_losses,
             "layer_angles": layer_angles,
             "layer_distances": layer_distances,
         }
 
     def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
-        """ Get the loss used to train the forward net. 
+        """Get the loss used to train the forward net.
 
         NOTE: Unlike `feedback_loss`, this actually returns the 'live' loss tensor.
         """
@@ -505,7 +544,9 @@ class DTP(LightningModule):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net, x, allow_grads_between_layers=False,
+            self.forward_net,
+            x,
+            allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y
@@ -514,8 +555,11 @@ class DTP(LightningModule):
         # NOTE: Need to manually enable grad here so that we can also compute the first
         # target during validation / testing.
         with torch.set_grad_enabled(True):
-            accuracy = self.accuracy(torch.softmax(logits, -1), labels)
-            self.log(f"{phase}/accuracy", accuracy, prog_bar=True)
+
+            # self.trainer is None in some unit tests which only use PL module
+            if self.trainer is not None:
+                accuracy = self.accuracy(torch.softmax(logits, -1), labels)
+                self.log(f"{phase}/accuracy", accuracy, prog_bar=True)
 
             temp_logits = logits.detach().clone()
             temp_logits.requires_grad_(True)
@@ -529,10 +573,10 @@ class DTP(LightningModule):
             assert len(grads) == 1
 
         y_n_grad = grads[0]
-
         delta = -self.hp.beta * y_n_grad
 
-        self.log(f"{phase}/delta.norm()", delta.norm())
+        if self.trainer is not None:
+            self.log(f"{phase}/delta.norm()", delta.norm())
         # Compute the first target (for the last layer of the forward network):
         last_layer_target = logits.detach() + delta
 
@@ -571,20 +615,48 @@ class DTP(LightningModule):
         target_tensors = cast(List[Tensor], targets)  # Rename just for typing purposes.
 
         # Calculate the losses for each layer:
-        forward_loss_per_layer = [
-            0.5 * ((ys[i] - targets[i]) ** 2).view(ys[i].size(0), -1).sum(1).mean()
-            # NOTE: Apprently NOT Equivalent to the following!
-            # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
-            for i in range(0, N)
-        ]
-        assert len(ys) == len(targets) == len(forward_loss_per_layer) == len(self.forward_net) == N
+        forward_loss_per_layer = []
+        for i in range(0, N):
+            if (
+                ys[i].requires_grad or phase != "train"
+            ):  # Removes duplicate reshape layer loss from total loss estimate
+                layer_loss = 0.5 * ((ys[i] - targets[i]) ** 2).view(ys[i].size(0), -1).sum(1).mean()
+                # NOTE: Apprently NOT Equivalent to the following!
+                # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
+                forward_loss_per_layer.append(layer_loss)
 
-        for i, layer_loss in enumerate(forward_loss_per_layer):
-            self.log(f"{phase}/F_loss[{i}]", layer_loss)
+        # self.trainer is None in some unit tests which only use PL module
+        if self.trainer is not None:
+            for i, layer_loss in enumerate(forward_loss_per_layer):
+                self.log(f"{phase}/F_loss[{i}]", layer_loss)
 
         loss_tensor = torch.stack(forward_loss_per_layer, dim=0)
+        forward_loss = loss_tensor.sum(dim=0)
         # TODO: Use 'sum' or 'mean' as the reduction between layers?
-        return loss_tensor.sum(dim=0)
+
+        # During training, the forward loss will be a 'live' loss tensor, since we
+        # gather the losses for each layer. Here we perform only one step.
+        assert not self.automatic_optimization
+        assert forward_loss.requires_grad == (phase == "train")
+
+        if forward_loss.requires_grad:
+            self.forward_optimizer.zero_grad()
+            self.manual_backward(
+                forward_loss
+            ) if self.trainer is not None else forward_loss.backward()
+            self.forward_optimizer.step()
+            forward_loss = forward_loss.detach()
+
+        return {
+            "loss": forward_loss,
+            "layer_losses": forward_loss_per_layer,
+        }
+
+    def on_train_epoch_end(self):
+        lr_scheduler = self.lr_schedulers()
+        if lr_scheduler:
+            assert not isinstance(lr_scheduler, list)
+            lr_scheduler.step()
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:
@@ -608,44 +680,62 @@ class DTP(LightningModule):
 
     @property
     def feedback_optimizer(self) -> Optimizer:
-        """Returns The optimizer of the feedback/backward net. """
-        optimizers = self.optimizers()
-        assert isinstance(optimizers, list)
-        feedback_optimizer = optimizers[0]
-        assert isinstance(feedback_optimizer, Optimizer)
-        return feedback_optimizer
+        """Returns the optimizer of the feedback/backward net."""
+        if self.trainer is not None:  # self.trainer is None during testing
+            optimizers = self.optimizers()
+            assert isinstance(optimizers, list)
+            feedback_optimizer = optimizers[0]
+            assert isinstance(feedback_optimizer, Optimizer)
+            return feedback_optimizer
+        else:
+            return self._feedback_optimizer
+
+    @feedback_optimizer.setter
+    def feedback_optimizer(self, optimizer: Optimizer):
+        """Sets the optimizer of the feedback/backward net. Only
+        used during testing."""
+        self._feedback_optimizer = optimizer
 
     @property
     def forward_optimizer(self) -> Optimizer:
-        """Returns The optimizer of the forward net. """
-        optimizers = self.optimizers()
-        assert isinstance(optimizers, list)
-        forward_optimizer = optimizers[1]
-        assert isinstance(forward_optimizer, Optimizer)
-        return forward_optimizer
+        """Returns The optimizer of the forward net."""
+        if self.trainer is not None:  # self.trainer is None during testing
+            optimizers = self.optimizers()
+            assert isinstance(optimizers, list)
+            forward_optimizer = optimizers[1]
+            assert isinstance(forward_optimizer, Optimizer)
+            return forward_optimizer
+        else:
+            return self._forward_optimizer
+
+    @forward_optimizer.setter
+    def forward_optimizer(self, optimizer: Optimizer):
+        """Sets the optimizer of the forward net. Only
+        used during testing."""
+        self._forward_optimizer = optimizer
 
     def _align_values_with_backward_net(
         self, values: List[T], default: T, forward_ordering: bool = False
     ) -> List[T]:
-        """ Aligns the values in `values` so that they are aligned with the trainable
+        """Aligns the values in `values` so that they are aligned with the trainable
         layers in the backward net.
         The last layer of the backward net (G_0) is also never trained.
 
         This assumes that `forward_ordering` is True, then `values` are forward-ordered.
         Otherwise, assumes that the input is given in the *backward* order Gn, Gn-1, ..., G0.
-        
-        NOTE: Outputs are *always* aligned with `self.backward_net` ([Gn, ..., G0]). 
-        
+
+        NOTE: Outputs are *always* aligned with `self.backward_net` ([Gn, ..., G0]).
+
         Example: Using the default learning rate values for cifar10 as an example:
-        
+
             `self.forward_net`: (conv, conv, conv, conv, reshape, linear)
             `self.backward_net`:   (linear, reshape, conv, conv, conv, conv)
-            
+
             forward-aligned values: [1e-4, 3.5e-4, 8e-3, 8e-3, 0.18]
-            
+
             `values` (backward-aligned): [0.18, 8e-3, 8e-3, 3.5e-4, 1e-4]  (note: backward order)
-            
-            
+
+
             `default`: 0
 
             Output:  [0.18, 0 (default), 8e-3, 8e-3, 3.5e-4, 1e-4, 0 (never trained)]
