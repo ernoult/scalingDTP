@@ -351,6 +351,7 @@ class DTP(LightningModule):
         n_layers = len(self.backward_net)
         # Reverse the backward net, just for ease of readability.
         reversed_backward_net = self.backward_net[::-1]
+        reversed_feedback_optimizers = self.feedback_optimizers[::-1]
         # Also reverse these values so they stay aligned with the net above.
         noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
         iterations_per_layer = list(reversed(self.feedback_iterations))
@@ -378,8 +379,13 @@ class DTP(LightningModule):
             F_i = self.forward_net[layer_index]
             # Feedback layer
             G_i = reversed_backward_net[layer_index]
+            layer_optimizer =  reversed_feedback_optimizers[layer_index] 
+            assert (layer_optimizer is not None) == (is_trainable(G_i))
+
             x_i = ys[layer_index - 1]
             y_i = ys[layer_index]
+
+
             # Number of feedback training iterations to perform for this layer.
             iterations_i = iterations_per_layer[layer_index]
             if iterations_i and not self.training:
@@ -419,13 +425,13 @@ class DTP(LightningModule):
                     distance, angle = compute_dist_angle(F_i, G_i)
 
                 # perform the optimization step for that layer when training.
-                if self.training:
+                if self.training and layer_optimizer:
                     assert isinstance(loss, Tensor) and loss.requires_grad
-                    self.feedback_optimizer.zero_grad()
+                    layer_optimizer.zero_grad()
                     # self.manual_backward(loss) won't work if self.trainer is None
                     # self.trainer is None in legacy unit tests
                     self.manual_backward(loss) if self.trainer is not None else loss.backward()
-                    self.feedback_optimizer.step()
+                    layer_optimizer.step()
                     loss = loss.detach()
                 else:
                     assert isinstance(loss, Tensor) and not loss.requires_grad
@@ -677,12 +683,26 @@ class DTP(LightningModule):
 
     def configure_optimizers(self):
         # NOTE: We pass the learning rates in the same order as the feedback net:
-        feedback_optimizer = self.hp.b_optim.make_optimizer(
-            self.backward_net, learning_rates_per_layer=self.feedback_lrs
-        )
-        forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
+        # NOTE: Here when we have one optimizer per feedback layer, we will put the forward optim at
+        # the last index.
+        configs: List[Dict] = []
 
-        feedback_optim_config = {"optimizer": feedback_optimizer}
+        # NOTE: The first feedback layer isn't trained, so this becomes a bit confusing.
+        for i, (feedback_layer, lr) in enumerate(zip(self.backward_net, self.feedback_lrs)):
+            # TODO: Test that the optimizers line up with the learning rates.
+            if i == 0 or not is_trainable(feedback_layer):
+                # NOTE: No learning rate for the first feedback layer atm, although we very well
+                # could train it, it wouldn't change anything about the forward weights.
+                # Non-trainable layers also don't have an optimizer.
+                assert lr == 0.0
+                continue
+            feedback_layer_optimizer = self.hp.b_optim.make_optimizer(
+                feedback_layer, lr=lr
+            )
+            feedback_layer_optim_config = {"optimizer": feedback_layer_optimizer}
+            configs.append(feedback_layer_optim_config)
+
+        forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
         forward_optim_config = {
             "optimizer": forward_optimizer,
         }
@@ -690,46 +710,39 @@ class DTP(LightningModule):
             # Using the same LR scheduler as the original code:
             lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
             forward_optim_config["lr_scheduler"] = lr_scheduler
-        return [
-            feedback_optim_config,
-            forward_optim_config,
-        ]
+        configs.append(forward_optim_config)
+        return configs
 
     @property
-    def feedback_optimizer(self) -> Optimizer:
-        """Returns the optimizer of the feedback/backward net."""
-        if self.trainer is not None:  # self.trainer is None during testing
-            optimizers = self.optimizers()
-            assert isinstance(optimizers, list)
-            feedback_optimizer = optimizers[0]
-            assert isinstance(feedback_optimizer, Optimizer)
-            return feedback_optimizer
-        else:
-            return self._feedback_optimizer
+    def feedback_optimizers(self) -> List[Optional[Optimizer]]:
+        """Returns the list of optimizers, one per (trainable) layer of the feedback/backward net.
+        
+        When a layer has no trainable weights, the entry will be `None`.
+        """
+        if self._feedback_optimizers is not None:
+            return self._feedback_optimizers
+        self._feedback_optimizers: List[Optional[Optimizer]] = []
+        optimizers: List[Optimizer] = list(self.optimizers())
+        for i, layer in enumerate(self.backward_net):
+            if i == 0:
+                # First feedback layer is not currently trained (although it could eventually).
+                self._feedback_optimizers.append(None)
+            elif is_trainable(layer):
+                self._feedback_optimizers.append(optimizers.pop(0))
+            else:
+                self._feedback_optimizers.append(None)
 
-    @feedback_optimizer.setter
-    def feedback_optimizer(self, optimizer: Optimizer):
-        """Sets the optimizer of the feedback/backward net. Only
-        used during testing."""
-        self._feedback_optimizer = optimizer
+        assert len(optimizers) == 1
+        assert optimizers[-1] is self.forward_optimizer 
+        return self._feedback_optimizers
 
     @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
-        if self.trainer is not None:  # self.trainer is None during testing
-            optimizers = self.optimizers()
-            assert isinstance(optimizers, list)
-            forward_optimizer = optimizers[1]
-            assert isinstance(forward_optimizer, Optimizer)
-            return forward_optimizer
-        else:
+        if self._forward_optimizer is not None:
             return self._forward_optimizer
-
-    @forward_optimizer.setter
-    def forward_optimizer(self, optimizer: Optimizer):
-        """Sets the optimizer of the forward net. Only
-        used during testing."""
-        self._forward_optimizer = optimizer
+        self._forward_optimizer = self.optimizers()[-1]
+        return self._forward_optimizer
 
     def _align_values_with_backward_net(
         self, values: List[T], default: T, forward_ordering: bool = False

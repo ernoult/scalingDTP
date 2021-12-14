@@ -37,24 +37,34 @@ class OptimizerConfig(HyperParameters):
     momentum: float = 0.9
 
     def make_optimizer(
-        self, network: nn.Sequential, learning_rates_per_layer: List[float] = None
+        self, network: nn.Sequential, lr: float = None, learning_rates_per_layer: List[float] = None
     ) -> Optimizer:
         """ Create the optimizer, using the options set in this object """
         optimizer_class = self.available_optimizers[self.type]
         # List of learning rates for each layer.
         n_layers = len(network)
-        if learning_rates_per_layer:
-            assert len(learning_rates_per_layer) == n_layers
-        lrs: List[float] = learning_rates_per_layer or get_list_of_values(
-            self.lr, out_length=n_layers, name="lr"
-        )
-        assert len(lrs) == n_layers
-        params: List[Dict] = []
-        for i, (layer, lr) in enumerate(zip(network, lrs)):
-            logger.debug(f"Layer at index {i} (of type {type(layer)}) has lr of {lr}")
-            params.append({"params": layer.parameters(), "lr": lr})
 
         optimizer_kwargs: Dict[str, Any] = {}
+        params = network.parameters()
+        if lr is not None:
+            assert learning_rates_per_layer is None
+            optimizer_kwargs["lr"] = lr
+        elif learning_rates_per_layer:
+            assert len(learning_rates_per_layer) == n_layers
+            params = []
+            for i, (layer, lr) in enumerate(zip(network, learning_rates_per_layer)):
+                logger.debug(f"Layer at index {i} (of type {type(layer)}) has lr of {lr}")
+                params.append({"params": layer.parameters(), "lr": lr})
+        elif isinstance(self.lr, list):
+            assert len(self.lr) == n_layers
+            params = []
+            for i, (layer, lr) in enumerate(zip(network, self.lr)):
+                logger.debug(f"Layer at index {i} (of type {type(layer)}) has lr of {lr}")
+                params.append({"params": layer.parameters(), "lr": lr})
+        else:
+            assert isinstance(self.lr, float)
+            optimizer_kwargs["lr"] = self.lr
+
         if self.weight_decay is not None:
             optimizer_kwargs["weight_decay"] = self.weight_decay
         if optimizer_class is torch.optim.SGD:
