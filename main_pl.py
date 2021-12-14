@@ -3,24 +3,25 @@
 Use `python main_pl.py --help` to see a list of all available arguments.
 """
 import dataclasses
-import logging
-from typing import Type, Union
-from pytorch_lightning.core.lightning import LightningModule
-
-from pytorch_lightning.utilities.seed import seed_everything
-from target_prop.models import DTP, ParallelDTP, BaselineModel
-from target_prop.config import Config
-from simple_parsing import ArgumentParser
 import json
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers.wandb import WandbLogger
-import wandb
-import torch
+import logging
 import textwrap
+from typing import Type, Union
+
+import torch
+from pytorch_lightning import Trainer
+from pytorch_lightning.core.lightning import LightningModule
+from pytorch_lightning.loggers.wandb import WandbLogger
+from pytorch_lightning.utilities.seed import seed_everything
+from simple_parsing import ArgumentParser
+
+import wandb
+from target_prop.config import Config
+from target_prop.models import DTP, BaselineModel, ParallelDTP
 
 
 def main(running_sweep: bool = False):
-    """ Main script. If `running_sweep` is True, then the hyper-parameters are sampled
+    """Main script. If `running_sweep` is True, then the hyper-parameters are sampled
     from their corresponding priors, else they take their default value (or the value
     passed from the command-line, if present).
     """
@@ -115,9 +116,9 @@ def main(running_sweep: bool = False):
 
 
 from dataclasses import asdict
+from typing import List, TypeVar
+
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from typing import TypeVar
-from typing import List
 
 HParams = TypeVar("HParams", bound=HyperParameters)
 
