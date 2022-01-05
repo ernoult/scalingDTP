@@ -576,7 +576,10 @@ class DTP(LightningModule):
                 assert targets[i - 1] is None  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
-                targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
+                # targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
+                prev_target = targets[i]
+                assert prev_target is not None
+                targets[i - 1] = self.compute_target(i=i, G=G, hs=ys, prev_target=prev_target)
 
                 # NOTE: Alternatively, just target propagation:
                 # targets[i - 1] = G(targets[i])
@@ -623,6 +626,29 @@ class DTP(LightningModule):
             "loss": forward_loss,
             "layer_losses": forward_loss_per_layer,
         }
+
+    def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
+        """Compute the target of the previous forward layer. given ,
+        the associated feedback layer, the activations for each layer, and the target of the current
+        layer.
+
+        Parameters
+        ----------
+        i : int
+            the index of the forward layer for which we want to compute a target
+        G : nn.Module
+            the associated feedback layer
+        hs : List[Tensor]
+            the activations for each layer
+        prev_target : Tensor
+            The target of the next forward layer.
+
+        Returns
+        -------
+        Tensor
+            The target to use to train the forward layer at index `i`.
+        """
+        return hs[i - 1] + G(prev_target) - G(hs[i])
 
     def get_feedback_loss(
         self,
