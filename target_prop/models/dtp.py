@@ -404,7 +404,7 @@ class DTP(LightningModule):
                     iterations_i,
                 )
                 # Get the loss (see `feedback_loss.py`)
-                loss = self.get_feedback_loss(
+                loss = self.layer_feedback_loss(
                     feedback_layer=G_i,
                     forward_layer=F_i,
                     input=x_i,
@@ -650,8 +650,9 @@ class DTP(LightningModule):
         """
         return hs[i - 1] + G(prev_target) - G(hs[i])
 
-    def get_feedback_loss(
+    def layer_feedback_loss(
         self,
+        *,
         feedback_layer: nn.Module,
         forward_layer: nn.Module,
         input: Tensor,
