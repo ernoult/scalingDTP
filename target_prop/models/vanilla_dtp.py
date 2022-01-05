@@ -129,8 +129,7 @@ class VanillaDTP(DTP):
         noise_scale: Union[float, Tensor],
         noise_samples: int = 1,
     ) -> Tensor:
-        # NOTE: The feedback loss in DTP is the same as in DP (as far as I can tell.)
-        # TODO: Confirm this with @ernoult.
+        """The feedback loss calculation is a bit different in (Vanilla) DTP vs DTP-J."""
         return vanilla_DTP_feedback_loss(
             feedback_layer=feedback_layer,
             forward_layer=forward_layer,

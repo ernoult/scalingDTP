@@ -611,10 +611,10 @@ class DTP(LightningModule):
 
         # During training, the forward loss will be a 'live' loss tensor, since we
         # gather the losses for each layer. Here we perform only one step.
-        assert not self.automatic_optimization
         assert forward_loss.requires_grad == (phase == "train")
-
-        if forward_loss.requires_grad:
+        # NOTE: If this is getting called from the `ParallelDTP`, then `self.automatic_optimization`
+        # will be `True`, and we let PL do the update.
+        if forward_loss.requires_grad and not self.automatic_optimization:
             self.forward_optimizer.zero_grad()
             self.manual_backward(
                 forward_loss

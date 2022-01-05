@@ -17,7 +17,7 @@ from simple_parsing import ArgumentParser
 
 import wandb
 from target_prop.config import Config
-from target_prop.models import DTP, BaselineModel, ParallelDTP
+from target_prop.models import DTP, BaselineModel, ParallelDTP, VanillaDTP, TargetProp
 
 
 def main(running_sweep: bool = False):
@@ -38,28 +38,18 @@ def main(running_sweep: bool = False):
     subparsers = parser.add_subparsers(
         title="model", description="Type of model to use.", required=True
     )
-    sequential_parser: ArgumentParser = subparsers.add_parser(
-        "dtp", help="Use DTP", description=DTP.__doc__
-    )
-    sequential_parser.add_arguments(Config, dest="config")
-    sequential_parser.add_arguments(DTP.HParams, "hparams")
-    sequential_parser.set_defaults(model_type=DTP)
 
-    parallel_parser: ArgumentParser = subparsers.add_parser(
-        "parallel_dtp",
-        help="Use the parallel variant of DTP",
-        description=ParallelDTP.__doc__,
-    )
-    parallel_parser.add_arguments(Config, dest="config")
-    parallel_parser.add_arguments(ParallelDTP.HParams, "hparams")
-    parallel_parser.set_defaults(model_type=ParallelDTP)
-
-    baseline_parser: ArgumentParser = subparsers.add_parser(
-        "backprop", help="Use regular backprop", description=BaselineModel.__doc__
-    )
-    baseline_parser.add_arguments(Config, dest="config")
-    baseline_parser.add_arguments(BaselineModel.HParams, "hparams")
-    baseline_parser.set_defaults(model_type=BaselineModel)
+    for option_str, help_str, model_type in [
+        ("dtp", "Use DTP", DTP),
+        ("parallel_dtp", "Use the parallel variant of DTP", ParallelDTP),
+        ("vanilla_dtp", "Use 'vanilla' DTP", VanillaDTP),
+        ("tp", "Use 'vanilla' Target Propagation", TargetProp),
+        ("backprop", "Use regular backprop", BaselineModel),
+    ]:
+        subparser = subparsers.add_parser(option_str, help=help_str, description=model_type.__doc__)
+        subparser.add_arguments(Config, dest="config")
+        subparser.add_arguments(model_type.HParams, dest="hparams")
+        subparser.set_defaults(model_type=model_type)
 
     subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
 
@@ -95,7 +85,7 @@ def main(running_sweep: bool = False):
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
     # Create the model
-    model: Union[BaselineModel, DTP, ParallelDTP] = model_class(
+    model: Union[BaselineModel, DTP, ParallelDTP, VanillaDTP, TargetProp] = model_class(
         datamodule=datamodule, hparams=hparams, config=config
     )
 
