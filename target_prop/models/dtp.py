@@ -455,7 +455,18 @@ class DTP(LightningModule):
                 # Compute the angle and distance for debugging the training of the
                 # feedback weights:
                 with torch.no_grad():
-                    distance, angle = compute_dist_angle(F_i, G_i)
+                    metrics = compute_dist_angle(F_i, G_i)
+                    if isinstance(metrics, dict):
+                        # NOTE: When a block has more than one trainable layer, we only report the
+                        # first non-zero value for now.
+                        # TODO: Fix this later.
+                        distance, angle = 0, 0
+                        for k, v in metrics.items():
+                            if v != (0, 0):
+                                distance, angle = k, v
+                                break
+                    else:
+                        distance, angle = metrics
 
                 # perform the optimization step for that layer when training.
                 if self.training and layer_optimizer:
