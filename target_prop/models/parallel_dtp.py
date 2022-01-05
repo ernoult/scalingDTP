@@ -15,9 +15,10 @@ from target_prop.utils import is_trainable
 from torch import Tensor, nn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
-
+from torch.optim.optimizer import Optimizer
 from .dtp import DTP
 from .utils import make_stacked_feedback_training_figure
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 logger = get_logger(__name__)
 
@@ -79,6 +80,8 @@ class ParallelDTP(DTP):
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True
         self.criterion = nn.CrossEntropyLoss(reduction="none")
+
+        self._feedback_optimizer: Optional[Optimizer] = None
 
     def create_trainer(self) -> Trainer:
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
@@ -249,3 +252,50 @@ class ParallelDTP(DTP):
         # TODO: Move all the logs to this once we used DDP.
         # self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
         return loss
+
+    def configure_optimizers(self):
+        ## Feedback optimizer:
+        feedback_optimizer = self.hp.b_optim.make_optimizer(
+            self.backward_net, learning_rates_per_layer=self.feedback_lrs
+        )
+        feedback_optim_config = {"optimizer": feedback_optimizer}
+
+        ## Forward optimizer:
+        forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
+        forward_optim_config = {
+            "optimizer": forward_optimizer,
+        }
+        if self.hp.scheduler:
+            # Using the same LR scheduler as the original code:
+            lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
+            forward_optim_config["lr_scheduler"] = lr_scheduler
+        return [feedback_optim_config, forward_optim_config]
+
+    @property
+    def feedback_optimizers(self) -> List[Optional[Optimizer]]:
+        """Returns the list of optimizers, one per layer of the feedback/backward net.
+        
+        For the first feedback layer, as well as all layers without trainable weights. the entry
+        will be `None`.
+        """
+        raise NotImplementedError(f"There is only one feedback optimizer!")
+
+    @property
+    def feedback_optimizer(self) -> Optimizer:
+        """Returns the list of optimizers, one per layer of the feedback/backward net.
+        
+        For the first feedback layer, as well as all layers without trainable weights. the entry
+        will be `None`.
+        """
+        if self._feedback_optimizer is not None:
+            return self._feedback_optimizer
+        self._feedback_optimizer = self.optimizers()[0]
+        return self._feedback_optimizer
+
+    @property
+    def forward_optimizer(self) -> Optimizer:
+        """Returns The optimizer of the forward net."""
+        if self._forward_optimizer is not None:
+            return self._forward_optimizer
+        self._forward_optimizer = self.optimizers()[-1]
+        return self._forward_optimizer

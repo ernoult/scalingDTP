@@ -60,12 +60,11 @@ def _compute_dist_angle_conv(
     return compute_dist_angle(F, G)
 
 
-from target_prop.layers import ConvPoolBlock
+# from target_prop.layers import ConvPoolBlock
 
 
-@compute_dist_angle.register(ConvPoolBlock)
 @compute_dist_angle.register(nn.Sequential)
-def _(forward_module: ConvPoolBlock, backward_module: nn.Sequential) -> tuple[Tensor, Tensor]:
+def _(forward_module: nn.Sequential, backward_module: nn.Sequential) -> tuple[Tensor, Tensor]:
     # NOTE: For now, assume that if we're passed a `Sequential`, it will have a
     # nn.Conv2d layer at key 'conv' and that the backward_module will have a
     # `nn.ConvTranspose2d` at key `conv`.
@@ -78,7 +77,12 @@ def _(forward_module: ConvPoolBlock, backward_module: nn.Sequential) -> tuple[Te
     #     F_i = forward_module[i]
     #     G_i = backward_module[-1 - i]
     #     dist, angle = compute_dist_angle(F_i, G_i)
+    return {
+        i: compute_dist_angle(forward_module[i], backward_module[i])
+        for i in range(len(forward_module))
+    }
+    # if hasattr(forward_module, "conv"):
+    #     conv2d = forward_module.conv
+    #     convtranspose2d = backward_module.conv
+    #     return compute_dist_angle(conv2d, convtranspose2d)
 
-    conv2d = forward_module.conv
-    convtranspose2d = backward_module.conv
-    return compute_dist_angle(conv2d, convtranspose2d)
