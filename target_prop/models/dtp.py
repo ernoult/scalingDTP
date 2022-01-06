@@ -4,7 +4,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
-from functools import cached_property
 import torch
 import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
@@ -765,7 +764,7 @@ class DTP(LightningModule):
         configs.append(forward_optim_config)
         return configs
 
-    @cached_property
+    @property
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
 <<<<<<< HEAD
         """Returns the list of optimizers, one per layer of the feedback/backward net.
@@ -797,7 +796,7 @@ class DTP(LightningModule):
         assert optimizers[-1] is self.forward_optimizer
         return _feedback_optimizers
 
-    @cached_property
+    @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
         # NOTE: This attribute can be set for unit testing, but we don't save it on `self`,
