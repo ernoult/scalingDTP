@@ -277,7 +277,7 @@ class DTP(LightningModule):
         layers["fc"] = nn.Sequential(
             OrderedDict(
                 reshape=Reshape(target_shape=(-1,)),
-                fc=nn.LazyLinear(out_features=self.n_classes, bias=True),
+                linear=nn.LazyLinear(out_features=self.n_classes, bias=True),
             )
         )
         # layers["reshape"] = Reshape(target_shape=(-1,))
