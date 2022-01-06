@@ -274,15 +274,15 @@ class DTP(LightningModule):
                 )
             )
             layers[f"conv_{i}"] = block
-        # layers["fc"] = nn.Sequential(
-        #     OrderedDict(
-        #         reshape=Reshape(target_shape=(-1,)),
-        #         fc=nn.LazyLinear(out_features=self.n_classes, bias=True),
-        #     )
-        # )
-        layers["reshape"] = Reshape(target_shape=(-1,))
-        # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
-        layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
+        layers["fc"] = nn.Sequential(
+            OrderedDict(
+                reshape=Reshape(target_shape=(-1,)),
+                fc=nn.LazyLinear(out_features=self.n_classes, bias=True),
+            )
+        )
+        # layers["reshape"] = Reshape(target_shape=(-1,))
+        # # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
+        # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
         return nn.Sequential(layers)
 
     def create_backward_net(self) -> nn.Sequential:
