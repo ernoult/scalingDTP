@@ -196,8 +196,8 @@ class DTP(LightningModule):
                     )
                 )
             ):
-                print(
-                    f"self.backward_net[{i}]: (G[{N-i-1}]" + (", *unused*") + f"): LR: {lr}, "
+                logger.info(
+                    f"self.backward_net[{i}]: (G[{N-i-1}]): Type {type(layer).__name__}, LR: {lr}, "
                     f"noise: {noise}, iterations: {iterations}"
                 )
                 if i == N - 1:
@@ -725,23 +725,32 @@ class DTP(LightningModule):
             assert not isinstance(lr_scheduler, list)
             lr_scheduler.step()
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> List[Dict]:
+        """ Returns the configurations for the optimizers.
+
+        The entries are ordered like: [G_N, G_N-1, ..., G_2, G_1, F]
+
+        The first items in the list are the configs for each trainable feedback layer.
+        There is no entry for the first feedback layer (G_0)
+        The last item in the list is for the forward optimizer.
+        """
         # NOTE: We pass the learning rates in the same order as the feedback net:
         # NOTE: Here when we have one optimizer per feedback layer, we will put the forward optim at
         # the last index.
         configs: List[Dict] = []
         # NOTE: The last feedback layer (G_0) isn't trained, so it doesn't have an optimizer.
+        assert len(self.backward_net) == len(self.feedback_lrs)
         for i, (feedback_layer, lr) in enumerate(zip(self.backward_net, self.feedback_lrs)):
             if i == (len(self.backward_net) - 1) or not is_trainable(feedback_layer):
                 # NOTE: No learning rate for the first feedback layer atm, although we very well
                 # could train it, it wouldn't change anything about the forward weights.
                 # Non-trainable layers also don't have an optimizer.
                 assert lr == 0.0, (i, lr, self.feedback_lrs, type(feedback_layer))
-                continue
-            assert lr != 0.0
-            feedback_layer_optimizer = self.hp.b_optim.make_optimizer(feedback_layer, lrs=[lr])
-            feedback_layer_optim_config = {"optimizer": feedback_layer_optimizer}
-            configs.append(feedback_layer_optim_config)
+            else:
+                assert lr != 0.0
+                feedback_layer_optimizer = self.hp.b_optim.make_optimizer(feedback_layer, lrs=[lr])
+                feedback_layer_optim_config = {"optimizer": feedback_layer_optimizer}
+                configs.append(feedback_layer_optim_config)
 
         ## Forward optimizer:
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
@@ -757,24 +766,31 @@ class DTP(LightningModule):
 
     @property
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
+<<<<<<< HEAD
         """Returns the list of optimizers, one per layer of the feedback/backward net.
 
         For the first feedback layer, as well as all layers without trainable weights. the entry
         will be `None`.
+=======
+        """Returns the list of optimizers, one per layer of the feedback/backward net:
+        [G_N, G_N-1, ..., G_2, G_1, None]
+
+        For the "first" feedback layer (G_0), as well as all layers without trainable weights, the
+        entry will be `None`.
+>>>>>>> Fix bugs in ParallelDTP, DTP ordering
         """
         if self._feedback_optimizers is not None:
             return self._feedback_optimizers
         self._feedback_optimizers = []
         optimizers: List[Optimizer] = list(self.optimizers())
         for i, layer in enumerate(self.backward_net):
-            if i == 0:
-                # First feedback layer is not currently trained (although it could eventually).
-                self._feedback_optimizers.append(None)
-            elif is_trainable(layer):
-                self._feedback_optimizers.append(optimizers.pop(0))
-            else:
-                self._feedback_optimizers.append(None)
-        assert len(optimizers) == 1
+            layer_optimizer: Optional[Optimizer] = None
+            # NOTE: First feedback layer is not currently trained (although it could eventually if
+            # we wanted an end-to-end invertible network).
+            if i != (len(self.backward_net) - 1) and is_trainable(layer):
+                layer_optimizer = optimizers.pop(0)
+            self._feedback_optimizers.append(layer_optimizer)
+        assert len(optimizers) == 1  # Only one left: The optimizer for the forward net.
         assert optimizers[-1] is self.forward_optimizer
         return self._feedback_optimizers
 

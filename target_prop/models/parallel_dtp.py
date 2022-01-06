@@ -57,7 +57,7 @@ class ParallelDTP(DTP):
             # type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
         )
         # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = uniform(
+        noise: List[float] = uniform(  # type: ignore
             0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
         )
         # Hyper-parameters for the forward optimizer
@@ -256,7 +256,7 @@ class ParallelDTP(DTP):
     def configure_optimizers(self):
         ## Feedback optimizer:
         feedback_optimizer = self.hp.b_optim.make_optimizer(
-            self.backward_net, learning_rates_per_layer=self.feedback_lrs
+            self.backward_net, lrs=self.feedback_lrs
         )
         feedback_optim_config = {"optimizer": feedback_optimizer}
 
