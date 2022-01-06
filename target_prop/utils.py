@@ -72,3 +72,40 @@ def get_list_of_values(values: V | list[V], out_length: int, name: str = "") -> 
 
 def is_trainable(layer: nn.Module) -> bool:
     return any(p.requires_grad for p in layer.parameters())
+
+
+def repeat_batch(v: Tensor, n: int) -> Tensor:
+    """Repeats the elements of tensor `v` `n` times along the batch dimension:
+
+    Example:
+
+    input:  [[1, 2, 3], [4, 5, 6]] of shape=(2, 3), n = 2
+    output: [[1, 2, 3], [1, 2, 3], [4, 5, 6], [4, 5, 6]] of shape=(4, 3)
+
+    >>> import torch
+    >>> input = torch.as_tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    >>> repeat_batch(input, 2).tolist()
+    [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [4.0, 5.0, 6.0]]
+    """
+    b = v.shape[0]
+    batched_v = v.unsqueeze(1).expand([b, n, *v.shape[1:]])  # [B, N, ...]
+    flattened_batched_v = batched_v.reshape([b * n, *v.shape[1:]])  # [N*B, ...]
+    return flattened_batched_v
+
+
+def split_batch(batched_v: Tensor, n: int) -> Tensor:
+    """Reshapes the output of `repeat_batch` from shape [B*N, ...] back to a shape of [B, N, ...]
+
+    Example:
+
+    input: [[1.0, 2.0, 3.0], [1.1, 2.1, 3.1], [4.0, 5.0, 6.0], [4.1, 5.1, 6.1]], shape=(4, 3)
+    output: [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], [[1.1, 2.1, 3.1], [4.1, 5.1, 6.1]]], shape=(2, 2, 3)
+
+    >>> import numpy as np
+    >>> input = np.array([[1.0, 2.0, 3.0], [1.1, 2.1, 3.1], [4.0, 5.0, 6.0], [4.1, 5.1, 6.1]])
+    >>> split_batch(input, 2).tolist()
+    [[[1.0, 2.0, 3.0], [1.1, 2.1, 3.1]], [[4.0, 5.0, 6.0], [4.1, 5.1, 6.1]]]
+    """
+    assert batched_v.shape[0] % n == 0
+    # [N*B, ...] -> [N, B, ...]
+    return batched_v.reshape([-1, n, *batched_v.shape[1:]])

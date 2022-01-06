@@ -120,21 +120,14 @@ class DTP(LightningModule):
 
         # Type of activation to use.
         activation: Type[nn.Module] = choice(
-            {
-                "relu": nn.ReLU,
-                "elu": nn.ELU,
-            },
-            default=nn.ELU,
+            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
         )
 
         # Step interval for creating and logging plots.
         plot_every: int = 1000
 
     def __init__(
-        self,
-        datamodule: LightningDataModule,
-        hparams: "DTP.HParams",
-        config: Config,
+        self, datamodule: LightningDataModule, hparams: "DTP.HParams", config: Config,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
@@ -162,15 +155,11 @@ class DTP(LightningModule):
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations,
-            default=0,
-            forward_ordering=True,
+            self.hp.feedback_training_iterations, default=0, forward_ordering=True,
         )
         # The noise scale for each feedback layer.
         self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise,
-            default=0.0,
-            forward_ordering=True,
+            self.hp.noise, default=0.0, forward_ordering=True,
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
@@ -254,13 +243,7 @@ class DTP(LightningModule):
         for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
             block = nn.Sequential(
                 OrderedDict(
-                    conv=nn.Conv2d(
-                        in_channels,
-                        out_channels,
-                        kernel_size=3,
-                        stride=1,
-                        padding=1,
-                    ),
+                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
                     rho=activation_type(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
                     # the indices to the backward net for this layer through a "magic bridge".
@@ -320,17 +303,11 @@ class DTP(LightningModule):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-    ) -> float:  # type: ignore
+    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="train")
 
     def validation_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
     ) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
@@ -338,10 +315,7 @@ class DTP(LightningModule):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-        phase: str,
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
     ):
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
@@ -430,7 +404,7 @@ class DTP(LightningModule):
                     iterations_i,
                 )
                 # Get the loss (see `feedback_loss.py`)
-                loss = get_feedback_loss(
+                loss = self.layer_feedback_loss(
                     feedback_layer=G_i,
                     forward_layer=F_i,
                     input=x_i,
@@ -533,7 +507,7 @@ class DTP(LightningModule):
             "layer_distances": layer_distances,
         }
 
-    def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
+    def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Dict:
         """Get the loss used to train the forward net.
 
         NOTE: Unlike `feedback_loss`, this actually returns the 'live' loss tensor.
@@ -544,9 +518,7 @@ class DTP(LightningModule):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net,
-            x,
-            allow_grads_between_layers=False,
+            self.forward_net, x, allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y
@@ -604,7 +576,10 @@ class DTP(LightningModule):
                 assert targets[i - 1] is None  # Make sure we're not overwriting anything.
                 # NOTE: Shifted the indices by 1 compared to @ernoult's eq.
                 # t^{n-1} = s^{n-1} + G(t^{n}; B) - G(s^{n} ; B).
-                targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
+                # targets[i - 1] = ys[i - 1] + G(targets[i]) - G(ys[i])
+                prev_target = targets[i]
+                assert prev_target is not None
+                targets[i - 1] = self.compute_target(i=i, G=G, hs=ys, prev_target=prev_target)
 
                 # NOTE: Alternatively, just target propagation:
                 # targets[i - 1] = G(targets[i])
@@ -636,10 +611,10 @@ class DTP(LightningModule):
 
         # During training, the forward loss will be a 'live' loss tensor, since we
         # gather the losses for each layer. Here we perform only one step.
-        assert not self.automatic_optimization
         assert forward_loss.requires_grad == (phase == "train")
-
-        if forward_loss.requires_grad:
+        # NOTE: If this is getting called from the `ParallelDTP`, then `self.automatic_optimization`
+        # will be `True`, and we let PL do the update.
+        if forward_loss.requires_grad and not self.automatic_optimization:
             self.forward_optimizer.zero_grad()
             self.manual_backward(
                 forward_loss
@@ -651,6 +626,48 @@ class DTP(LightningModule):
             "loss": forward_loss,
             "layer_losses": forward_loss_per_layer,
         }
+
+    def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
+        """Compute the target of the previous forward layer. given ,
+        the associated feedback layer, the activations for each layer, and the target of the current
+        layer.
+
+        Parameters
+        ----------
+        i : int
+            the index of the forward layer for which we want to compute a target
+        G : nn.Module
+            the associated feedback layer
+        hs : List[Tensor]
+            the activations for each layer
+        prev_target : Tensor
+            The target of the next forward layer.
+
+        Returns
+        -------
+        Tensor
+            The target to use to train the forward layer at index `i`.
+        """
+        return hs[i - 1] + G(prev_target) - G(hs[i])
+
+    def layer_feedback_loss(
+        self,
+        *,
+        feedback_layer: nn.Module,
+        forward_layer: nn.Module,
+        input: Tensor,
+        output: Tensor,
+        noise_scale: Union[float, Tensor],
+        noise_samples: int = 1,
+    ) -> Tensor:
+        return get_feedback_loss(
+            feedback_layer=feedback_layer,
+            forward_layer=forward_layer,
+            input=input,
+            output=output,
+            noise_scale=noise_scale,
+            noise_samples=noise_samples,
+        )
 
     def on_train_epoch_end(self):
         lr_scheduler = self.lr_schedulers()

@@ -1,14 +1,14 @@
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import wandb
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import uniform
 from target_prop.feedback_loss import get_feedback_loss_parallel
-from target_prop.layers import forward_all
+from target_prop.layers import forward_all, forward_each
 from target_prop.metrics import compute_dist_angle
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
@@ -130,13 +130,14 @@ class ParallelDTP(DTP):
 
         if optimizer_idx in [None, 1]:
             # ----------- Optimize the forward weights -------------
-            forward_loss = self.forward_loss(x, y, phase=phase)
+            forward_outputs = self.forward_loss(x, y, phase=phase)
+            forward_loss = forward_outputs["loss"]
             self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
             loss += forward_loss
 
         return loss
 
-    def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
+    def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Dict[str, Tensor]:
         # NOTE: Could use the same exact forward loss as the sequential model, at the
         # moment.
         return super().forward_loss(x=x, y=y, phase=phase)
