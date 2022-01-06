@@ -779,9 +779,11 @@ class DTP(LightningModule):
         entry will be `None`.
 >>>>>>> Fix bugs in ParallelDTP, DTP ordering
         """
+        # NOTE: This attribute can be set in unit tests, but we don't save it on `self`, otherwise
+        # it causes pickling issues at the end of a training epoch.
         if self._feedback_optimizers is not None:
             return self._feedback_optimizers
-        self._feedback_optimizers = []
+        _feedback_optimizers = []
         optimizers: List[Optimizer] = list(self.optimizers())
         for i, layer in enumerate(self.backward_net):
             layer_optimizer: Optional[Optimizer] = None
@@ -789,18 +791,19 @@ class DTP(LightningModule):
             # we wanted an end-to-end invertible network).
             if i != (len(self.backward_net) - 1) and is_trainable(layer):
                 layer_optimizer = optimizers.pop(0)
-            self._feedback_optimizers.append(layer_optimizer)
+            _feedback_optimizers.append(layer_optimizer)
         assert len(optimizers) == 1  # Only one left: The optimizer for the forward net.
         assert optimizers[-1] is self.forward_optimizer
-        return self._feedback_optimizers
+        return _feedback_optimizers
 
     @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
+        # NOTE: This attribute can be set for unit testing, but we don't save it on `self`,
+        # otherwise it causes pickling issues at the end of a training epoch.
         if self._forward_optimizer is not None:
             return self._forward_optimizer
-        self._forward_optimizer = self.optimizers()[-1]
-        return self._forward_optimizer
+        return self.optimizers()[-1]
 
     def _align_values_with_backward_net(
         self, values: List[T], default: T, inputs_are_forward_ordered: bool = False
