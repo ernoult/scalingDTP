@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import wandb
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import WandbLogger
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import uniform
 from target_prop.feedback_loss import get_feedback_loss_parallel
@@ -13,26 +15,25 @@ from target_prop.metrics import compute_dist_angle
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import WandbLogger
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
+
 from .dtp import DTP
 from .utils import make_stacked_feedback_training_figure
-from torch.optim.lr_scheduler import CosineAnnealingLR
 
 logger = get_logger(__name__)
 
 
 class ParallelDTP(DTP):
     """ "Parallel" variant of the DTP algorithm.
-    
+
     Performs a single fused update for all feedback weights (a single "iteration") but uses multiple
     noise samples per "iteration".
 
     By avoiding to have multiple sequential, layer-wise updates within a single step, it becomes
     possible to use the automatic optimization and distributed training features of
     PyTorch-Lightning.
-    
+
     NOTE: The "sequential" version of DTP can also use multiple noise samples per iteration. The
     default value for that parameter is set to 1 by default in DTP in order to reproduce @ernoult's
     experiments exactly.
@@ -40,7 +41,7 @@ class ParallelDTP(DTP):
 
     @dataclass
     class HParams(DTP.HParams):
-        """ HParams of the Parallel model. """
+        """HParams of the Parallel model."""
 
         # Number of training steps for the feedback weights per batch.
         # In the case of this parallel model, this parameter can't be changed and is fixed to 1.
@@ -63,7 +64,9 @@ class ParallelDTP(DTP):
         # Hyper-parameters for the forward optimizer
         # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
         f_optim: OptimizerConfig = OptimizerConfig(
-            type="adam", lr=[3e-4], weight_decay=1e-4,  # momentum=0.9
+            type="adam",
+            lr=[3e-4],
+            weight_decay=1e-4,  # momentum=0.9
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
@@ -113,8 +116,8 @@ class ParallelDTP(DTP):
         phase: str,
         optimizer_idx: Optional[int] = None,
     ):
-        """ Main step, used by the `[training/valid/test]_step` methods.
-        
+        """Main step, used by the `[training/valid/test]_step` methods.
+
         NOTE: In the case of this Parallel model, we use the automatic optimization from PL.
         This means that we return a 'live' loss tensor here, rather than perform the optimzation
         manually.
@@ -234,7 +237,7 @@ class ParallelDTP(DTP):
         return loss.sum()
 
     def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
-        """ Called with the results of each worker / replica's output.
+        """Called with the results of each worker / replica's output.
 
         See the `training_step_end` of pytorch-lightning for more info.
         """
@@ -254,13 +257,13 @@ class ParallelDTP(DTP):
         return loss
 
     def configure_optimizers(self):
-        ## Feedback optimizer:
+        # Feedback optimizer:
         feedback_optimizer = self.hp.b_optim.make_optimizer(
             self.backward_net, lrs=self.feedback_lrs
         )
         feedback_optim_config = {"optimizer": feedback_optimizer}
 
-        ## Forward optimizer:
+        # Forward optimizer:
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
         forward_optim_config = {
             "optimizer": forward_optimizer,
@@ -268,13 +271,17 @@ class ParallelDTP(DTP):
         if self.hp.scheduler:
             # Using the same LR scheduler as the original code:
             lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
-            forward_optim_config["lr_scheduler"] = lr_scheduler
+            forward_optim_config["lr_scheduler"] = {
+                "scheduler": lr_scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            }
         return [feedback_optim_config, forward_optim_config]
 
     @property
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
         """Returns the list of optimizers, one per layer of the feedback/backward net.
-        
+
         For the first feedback layer, as well as all layers without trainable weights. the entry
         will be `None`.
         """
@@ -283,11 +290,11 @@ class ParallelDTP(DTP):
     @property
     def feedback_optimizer(self) -> Optimizer:
         """Returns the list of optimizers, one per layer of the feedback/backward net.
-        
+
         For the first feedback layer, as well as all layers without trainable weights. the entry
         will be `None`.
         """
-        if self._feedback_optimizer is not None:
+        if self.trainer is None:
             return self._feedback_optimizer
         self._feedback_optimizer = self.optimizers()[0]
         return self._feedback_optimizer
@@ -295,7 +302,7 @@ class ParallelDTP(DTP):
     @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
-        if self._forward_optimizer is not None:
+        if self.trainer is None:
             return self._forward_optimizer
         self._forward_optimizer = self.optimizers()[-1]
         return self._forward_optimizer
