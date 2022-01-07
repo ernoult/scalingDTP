@@ -766,18 +766,11 @@ class DTP(LightningModule):
 
     @property
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
-<<<<<<< HEAD
-        """Returns the list of optimizers, one per layer of the feedback/backward net.
-
-        For the first feedback layer, as well as all layers without trainable weights. the entry
-        will be `None`.
-=======
         """Returns the list of optimizers, one per layer of the feedback/backward net:
         [G_N, G_N-1, ..., G_2, G_1, None]
 
         For the "first" feedback layer (G_0), as well as all layers without trainable weights, the
         entry will be `None`.
->>>>>>> Fix bugs in ParallelDTP, DTP ordering
         """
         # NOTE: self.trainer is None during unit testing
         if self.trainer is None:
