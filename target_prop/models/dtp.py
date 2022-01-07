@@ -721,12 +721,12 @@ class DTP(LightningModule):
 
     def on_train_epoch_end(self):
         lr_scheduler = self.lr_schedulers()
-        if lr_scheduler:
+        if lr_scheduler and not self.automatic_optimization:
             assert not isinstance(lr_scheduler, list)
             lr_scheduler.step()
 
     def configure_optimizers(self) -> List[Dict]:
-        """ Returns the configurations for the optimizers.
+        """Returns the configurations for the optimizers.
 
         The entries are ordered like: [G_N, G_N-1, ..., G_2, G_1, F]
 
@@ -779,9 +779,8 @@ class DTP(LightningModule):
         entry will be `None`.
 >>>>>>> Fix bugs in ParallelDTP, DTP ordering
         """
-        # NOTE: This attribute can be set in unit tests, but we don't save it on `self`, otherwise
-        # it causes pickling issues at the end of a training epoch.
-        if self._feedback_optimizers is not None:
+        # NOTE: self.trainer is None during unit testing
+        if self.trainer is None:
             return self._feedback_optimizers
         _feedback_optimizers = []
         optimizers: List[Optimizer] = list(self.optimizers())
@@ -799,9 +798,8 @@ class DTP(LightningModule):
     @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
-        # NOTE: This attribute can be set for unit testing, but we don't save it on `self`,
-        # otherwise it causes pickling issues at the end of a training epoch.
-        if self._forward_optimizer is not None:
+        # NOTE: self.trainer is None during unit testing
+        if self.trainer is None:
             return self._forward_optimizer
         return self.optimizers()[-1]
 
