@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 import torch
 import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
-from pytorch_lightning.core.optimizer import LightningOptimizer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field

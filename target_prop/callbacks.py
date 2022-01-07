@@ -1,29 +1,30 @@
+from __future__ import annotations
 import contextlib
-from os import name
-from typing import Dict, Optional, Tuple, List
-from pytorch_lightning import Callback, Trainer, LightningModule
-import torch
 import warnings
-from torch import nn
-
-from target_prop.metrics import compute_dist_angle
-from .models.dtp import DTP
-from target_prop.layers import forward_all
-from torch import Tensor
-from torch.nn import functional as F, parameter
-from target_prop.utils import named_trainable_parameters
 from logging import getLogger as get_logger
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+
+import torch
+from pytorch_lightning import Callback, LightningModule, Trainer
+from torch import Tensor
+from torch.nn import functional as F
+
+from target_prop.layers import forward_all
+from target_prop.metrics import compute_dist_angle
+from target_prop.utils import named_trainable_parameters
 
 logger = get_logger(__name__)
 
+if TYPE_CHECKING:
+    # Avoid circular imports.
+    from target_prop.models.dtp import DTP
+
 
 class CompareToBackpropCallback(Callback):
-    """ TODO: Create a PL callback that calculates and logs the angles between the
-    forward and backward weights?
-    """
+    """ Callback that compares the weight updates from DTP with those obtained from backprop. """
 
     def __init__(self, temp_beta: float = 0.005) -> None:
-        """Callback that compares the weight updates from DTP with those obtained from backprop.   
+        """Callback that compares the weight updates from DTP with those obtained from backprop.
 
         Parameters
         ----------
@@ -37,8 +38,8 @@ class CompareToBackpropCallback(Callback):
     def on_train_batch_end(
         self,
         trainer: Trainer,
-        pl_module: DTP,
-        outputs: List[Tensor],
+        pl_module: LightningModule,
+        outputs: Any,
         batch: Tuple[Tensor, Tensor],
         batch_idx: int,
         dataloader_idx: int,
@@ -49,6 +50,8 @@ class CompareToBackpropCallback(Callback):
         self.last_batch = batch
 
     def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule, unused=None) -> None:
+        from target_prop.models.dtp import DTP
+
         if not isinstance(pl_module, DTP):
             raise NotImplementedError(
                 f"This callback currently only works with the DTP model (or its variants: TP, "
@@ -164,3 +167,11 @@ def temporarily_change_beta(model: DTP, temp_beta: float = 0.005):
     model.hp.beta = starting_beta
     logger.debug(f"Value of beta reset to {model.hp.beta}.")
 
+
+class FeedbackTrainingFigureCallback(Callback):
+    """ TODO: (refactoring): Move the 'feedback training figure' stuff from DTP to this callback.
+
+    The `on_before_backward`/etc methods seem to work fine even with manual optimization.
+    The only problem is that this callback would need to know what layer / iteration the model is
+    currently backpropagating for, which might be a bit tricky.
+    """
