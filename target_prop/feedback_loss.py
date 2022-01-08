@@ -129,6 +129,8 @@ def get_feedback_loss_parallel(
 
     # 3- Perturbate y <-- y + noise and redo y --> r
     batch_dy = noise_scale * torch.randn_like(batch_y)
+    with torch.no_grad():
+        forward_layer(batch_x)
     batch_r_noise_y = feedback_layer(batch_y + batch_dy)
     batch_dr_y = batch_r_noise_y - batch_r
 

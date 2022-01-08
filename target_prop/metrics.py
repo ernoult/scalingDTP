@@ -1,16 +1,16 @@
-from __future__ import annotations
 from functools import singledispatch
-from typing import Any
+from typing import Any, Dict, Optional, Union, Tuple
 import torch
 import numpy as np
 from torch import nn, Tensor
 
 
 @singledispatch
-@torch.no_grad()
-def compute_dist_angle(forward_module: Any, backward_module: Any) -> tuple[float, float]:
+def compute_dist_angle(
+    forward_module: Any, backward_module: Any
+) -> Union[Tuple[float, float], Dict[Any, Union[Tuple[float, float], Any]]]:
     """
-    Computes distance and angle between the feedforward and feedback weights
+    Computes distance and angle between the feedforward and feedback weights.
     """
     raise NotImplementedError((forward_module, backward_module))
 
@@ -19,7 +19,7 @@ def compute_dist_angle(forward_module: Any, backward_module: Any) -> tuple[float
 @compute_dist_angle.register(nn.Parameter)
 def _compute_dist_angle_between_weights(
     forward_weight: Tensor, feedback_weight: Tensor
-) -> tuple[float, float]:
+) -> Tuple[float, float]:
     F = forward_weight
     G = feedback_weight
     dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
@@ -34,10 +34,22 @@ def _compute_dist_angle_between_weights(
     return dist.item(), angle.item()
 
 
+@compute_dist_angle.register(nn.Module)
+def _compute_dist_angle_base(
+    forward_module: nn.Module, backward_module: nn.Module
+) -> Tuple[float, float]:
+    if not any(p.requires_grad for p in forward_module.parameters()):
+        return (0.0, 0.0)
+    raise NotImplementedError(
+        f"Don't know how to calculate distance and angle between weights of modules of type "
+        f"{type(forward_module)} and {type(backward_module)}. Register a handler."
+    )
+
+
 @compute_dist_angle.register(nn.Linear)
 def _compute_dist_angle_linear(
     forward_module: nn.Linear, backward_module: nn.Linear
-) -> tuple[float, float]:
+) -> Tuple[float, float]:
     """
     Computes angle and distance between feedforward and feedback weights of linear layers
     
@@ -51,7 +63,7 @@ def _compute_dist_angle_linear(
 @compute_dist_angle.register(nn.Conv2d)
 def _compute_dist_angle_conv(
     forward_module: nn.Conv2d, backward_module: nn.ConvTranspose2d
-) -> tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """
     Computes distance and angle between feedforward and feedback convolutional kernels
     """
@@ -60,12 +72,13 @@ def _compute_dist_angle_conv(
     return compute_dist_angle(F, G)
 
 
-from target_prop.layers import ConvPoolBlock
+# from target_prop.layers import ConvPoolBlock
 
 
-@compute_dist_angle.register(ConvPoolBlock)
 @compute_dist_angle.register(nn.Sequential)
-def _(forward_module: ConvPoolBlock, backward_module: nn.Sequential) -> tuple[Tensor, Tensor]:
+def _(
+    forward_module: nn.Sequential, backward_module: nn.Sequential
+) -> Dict[Any, Union[Tuple[float, float], Any]]:
     # NOTE: For now, assume that if we're passed a `Sequential`, it will have a
     # nn.Conv2d layer at key 'conv' and that the backward_module will have a
     # `nn.ConvTranspose2d` at key `conv`.
@@ -78,7 +91,12 @@ def _(forward_module: ConvPoolBlock, backward_module: nn.Sequential) -> tuple[Te
     #     F_i = forward_module[i]
     #     G_i = backward_module[-1 - i]
     #     dist, angle = compute_dist_angle(F_i, G_i)
+    return {
+        i: compute_dist_angle(F_i, G_i)
+        for i, (F_i, G_i) in enumerate(zip(forward_module, reversed(backward_module)))
+    }
+    # if hasattr(forward_module, "conv"):
+    #     conv2d = forward_module.conv
+    #     convtranspose2d = backward_module.conv
+    #     return compute_dist_angle(conv2d, convtranspose2d)
 
-    conv2d = forward_module.conv
-    convtranspose2d = backward_module.conv
-    return compute_dist_angle(conv2d, convtranspose2d)

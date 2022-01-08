@@ -9,8 +9,8 @@ from typing import (
 
 import torch
 from torch import Tensor, nn
-from torch.nn.modules.conv import _size_2_t
-from torch.nn.modules.pooling import AdaptiveMaxPool2d, _size_any_t
+from torch.nn.modules.pooling import AdaptiveMaxPool2d
+from torch.nn.common_types import _size_any_t, _size_2_t
 
 from .backward_layers import invert, Invertible
 
@@ -225,31 +225,3 @@ def invert_batchnorm(
 ) -> BatchUnNormalize:
     # TODO: Is there a way to initialize symetric weights for BatchNorm?
     return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
-
-
-class ConvPoolBlock(nn.Sequential, Invertible):
-    """Convolutional block with max-pooling and an activation.
-
-    NOTE: This isn't used anymore, Instead, I just use the `Sequential` class, where
-    each passed layer is directly invertible.
-    """
-
-    def __init__(
-        self, in_channels: int, out_channels: int, activation_type: Type[nn.Module] = nn.ELU,
-    ):
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.activation_type = activation_type
-        self.conv: nn.Conv2d
-        self.rho: nn.Module
-        self.pool: nn.Module
-        conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        rho = activation_type()
-        pool = MaxPool2d(2)
-        super().__init__(OrderedDict([("conv", conv), ("rho", rho), ("pool", pool)]),)
-
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Feedforward operator (x --> y = F(x))
-        """
-        return super().forward(x)

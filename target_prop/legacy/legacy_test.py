@@ -24,6 +24,7 @@ from target_prop.legacy import (
 )
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
+from target_prop.utils import is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -100,9 +101,7 @@ class TestLegacyCompatibility:
 
         # Get PL dataloaders
         config = Config(dataset="cifar10", num_workers=1, debug=False, pin_memory=False)
-        datamodule = config.make_datamodule(
-            batch_size=pl_hparams.batch_size,
-        )
+        datamodule = config.make_datamodule(batch_size=pl_hparams.batch_size)
         datamodule.setup()
         pl_train_loader, pl_test_loader = (
             datamodule.train_dataloader(),
@@ -170,8 +169,8 @@ class TestLegacyCompatibility:
         criterion = torch.nn.CrossEntropyLoss(reduction="none")
         optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
         forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
-        pl_model.forward_optimizer = forward_optimizer
-        optimizer_f, _ = optimizers
+        pl_model._forward_optimizer = forward_optimizer
+        optimizer_f = optimizers[0]
         _, legacy_layer_losses = train_forward(
             legacy_model, example_inputs, example_labels, criterion, optimizer_f, legacy_hparams
         )
@@ -202,6 +201,9 @@ class TestLegacyCompatibility:
         errors = self._compare_weights(legacy_model, pl_model, forward_mapping)
         assert sum(errors) < 1e-4
 
+    # @pytest.mark.xfail(
+    #     reason="TODO: Need to adapt this test a bit since there's now one optim per feedback layer."
+    # )
     def test_feedback_updates_are_same(
         self,
         pl_model: nn.Module,
@@ -233,19 +235,25 @@ class TestLegacyCompatibility:
             rng_state = torch.cuda.get_rng_state(device)
         else:
             rng_state = torch.get_rng_state()
-        optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
-        _, optimizer_b = optimizers
-        train_backward(legacy_model, example_inputs, optimizer_b)
+        createOptimizers(legacy_model, legacy_hparams, forward=True)
+        train_backward(legacy_model, example_inputs)
 
         # Do feedback updates in PL model
         if torch.cuda.is_available():
             torch.cuda.set_rng_state(rng_state, device)
         else:
             torch.set_rng_state(rng_state)
-        feedback_optimizer = pl_hparams.b_optim.make_optimizer(
-            pl_model.backward_net, learning_rates_per_layer=pl_model.feedback_lrs
-        )
-        pl_model.feedback_optimizer = feedback_optimizer
+
+        feedback_optimizers = []
+        for i, (feedback_layer, lr) in enumerate(zip(pl_model.backward_net, pl_model.feedback_lrs)):
+            layer_optimizer = None
+            if i == (len(pl_model.backward_net) - 1) or not is_trainable(feedback_layer):
+                assert lr == 0.0, (i, lr, pl_model.feedback_lrs, type(feedback_layer))
+            else:
+                assert lr != 0.0
+                layer_optimizer = pl_model.hp.b_optim.make_optimizer(feedback_layer, lrs=[lr])
+            feedback_optimizers.append(layer_optimizer)
+        pl_model._feedback_optimizers = feedback_optimizers
         pl_model.feedback_loss(example_inputs, example_labels, phase="train")
 
         # Compare weights
@@ -323,24 +331,25 @@ class TestLegacyCompatibility:
                     )
 
             elif isinstance(layer.f, nn.Linear):
-                forward_mapping["forward_net.fc.weight"] = f"layers.{i}.f.weight"
-                forward_mapping["forward_net.fc.bias"] = f"layers.{i}.f.bias"
+                forward_mapping["forward_net.fc.linear.weight"] = f"layers.{i}.f.weight"
+                forward_mapping["forward_net.fc.linear.bias"] = f"layers.{i}.f.bias"
                 assert (
-                    pl_dict[f"forward_net.fc.weight"].shape
+                    pl_dict[f"forward_net.fc.linear.weight"].shape
                     == legacy_dict[f"layers.{i}.f.weight"].shape
                 )
                 assert (
-                    pl_dict[f"forward_net.fc.bias"].shape == legacy_dict[f"layers.{i}.f.bias"].shape
+                    pl_dict[f"forward_net.fc.linear.bias"].shape
+                    == legacy_dict[f"layers.{i}.f.bias"].shape
                 )
 
-                backward_mapping["backward_net.fc.weight"] = f"layers.{i}.b.weight"
-                backward_mapping["backward_net.fc.bias"] = f"layers.{i}.b.bias"
+                backward_mapping["backward_net.fc.linear.weight"] = f"layers.{i}.b.weight"
+                backward_mapping["backward_net.fc.linear.bias"] = f"layers.{i}.b.bias"
                 assert (
-                    pl_dict[f"backward_net.fc.weight"].shape
+                    pl_dict[f"backward_net.fc.linear.weight"].shape
                     == legacy_dict[f"layers.{i}.b.weight"].shape
                 )
                 assert (
-                    pl_dict[f"backward_net.fc.bias"].shape
+                    pl_dict[f"backward_net.fc.linear.bias"].shape
                     == legacy_dict[f"layers.{i}.b.bias"].shape
                 )
 
