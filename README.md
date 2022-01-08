@@ -17,8 +17,15 @@ To use the modified version of the above DTP model, with "parallel" feedback wei
 python main_pl.py parallel_dtp
 ```
 
+### ImageNet
+
+To train with DTP on downsampled ImageNet 32x32 dataset, do:
+```
+python main_pl.py dtp --dataset imagenet32
+```
 
 
+### Legacy Implementation
 To check training on CIFAR-10, type the following command in the terminal:
 
 ```console

@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Callable, ClassVar, Dict, Optional, Type
 
 import torch
-from pl_bolts.datamodules import ImagenetDataModule
-from pl_bolts.datamodules.imagenet_datamodule import imagenet_normalization
+
+# from pl_bolts.datamodules import ImageNet32DataModule
+# from pl_bolts.datamodules.imagenet_datamodule import imagenet32_normalization
 from pytorch_lightning import LightningDataModule
 from simple_parsing.helpers import choice, flag
 from simple_parsing.helpers.serialization import Serializable
@@ -20,7 +21,12 @@ from torchvision.transforms import (
     ToTensor,
 )
 
-from target_prop.datasets import CIFAR10DataModule, cifar10_normalization
+from target_prop.datasets import (
+    CIFAR10DataModule,
+    ImageNet32DataModule,
+    cifar10_normalization,
+    imagenet32_normalization,
+)
 
 Transform = Callable[[Tensor], Tensor]
 
@@ -31,11 +37,11 @@ class Config(Serializable):
 
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
         "cifar10": CIFAR10DataModule,
-        "imagenet": ImagenetDataModule,  # TODO: Not yet tested.
+        "imagenet32": ImageNet32DataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
         "cifar10": cifar10_normalization,
-        "imagenet": imagenet_normalization,  # TODO: Not yet tested.
+        "imagenet32": imagenet32_normalization,
     }
 
     # Which dataset to use.

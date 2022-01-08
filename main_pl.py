@@ -17,7 +17,7 @@ from simple_parsing import ArgumentParser
 
 import wandb
 from target_prop.config import Config
-from target_prop.models import DTP, BaselineModel, ParallelDTP, VanillaDTP, TargetProp
+from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 
 
 def main(running_sweep: bool = False):
