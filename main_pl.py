@@ -2,30 +2,28 @@
 
 Use `python main_pl.py --help` to see a list of all available arguments.
 """
-from argparse import Namespace
 import argparse
 import dataclasses
 import json
 import logging
 import textwrap
-from dataclasses import asdict
-from typing import List, Literal, TypeVar, Type, Union
 import warnings
-from pytorch_lightning.core.datamodule import LightningDataModule
+from argparse import Namespace
+from dataclasses import asdict
+from typing import List, Literal, Type, TypeVar, Union
 
 import torch
-import wandb
 from pytorch_lightning import Trainer
+from pytorch_lightning.core.datamodule import LightningDataModule
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 
+import wandb
 from target_prop.config import Config
-from target_prop.models import DTP, BaselineModel, ParallelDTP, VanillaDTP, TargetProp
-from target_prop.utils import make_reproducible
-
+from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 
 HParams = TypeVar("HParams", bound=HyperParameters)
 
@@ -33,7 +31,7 @@ Model = Union[BaselineModel, DTP, ParallelDTP, VanillaDTP, TargetProp]
 
 
 def main(parser: ArgumentParser = None):
-    """ Main script. """
+    """Main script."""
     # Allow passing a parser in, in case this is used as a subparser action for another program.
     parser = parser or ArgumentParser(description=__doc__)
 
@@ -60,7 +58,7 @@ def main(parser: ArgumentParser = None):
 
 
 def add_run_args(parser: ArgumentParser):
-    """ Adds the command-line arguments for launching a run. """
+    """Adds the command-line arguments for launching a run."""
     # NOTE: if args for config are added here, then command becomes
     # python main.py (config args) [dtp|parallel_dtp] (model ags)
     # parser.add_arguments(Config, dest="config")
@@ -86,7 +84,10 @@ def add_run_args(parser: ArgumentParser):
 
 def add_sweep_args(parser: ArgumentParser):
     subparsers = parser.add_subparsers(
-        title="model", description="Type of model to use for the sweep.", required=True, help=None,
+        title="model",
+        description="Type of model to use for the sweep.",
+        required=True,
+        help=None,
     )
 
     for option_str, help_str, model_type in [
@@ -116,8 +117,7 @@ def add_sweep_args(parser: ArgumentParser):
 
 
 def run(config: Config, model_type: Type[Model], hparams: HyperParameters) -> float:
-    """ Executes a run, where a model of the given type is trained, with the given hyper-parameters.
-    """
+    """Executes a run, where a model of the given type is trained, with the given hyper-parameters."""
     print(f"Type of model used: {model_type}")
     print("Config:")
     print(config.dumps_json(indent="\t"))
@@ -158,8 +158,8 @@ def run(config: Config, model_type: Type[Model], hparams: HyperParameters) -> fl
 
 
 def sweep(config: Config, model_type: Type[Model], n_runs: int = 1, **fixed_hparams):
-    """ Performs a hyper-parameter sweep.
-    
+    """Performs a hyper-parameter sweep.
+
     The hyper-parameters are sampled randomly from their priors. This then calls `run` with the
     sampled hyper-parameters.
     """

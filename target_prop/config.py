@@ -2,12 +2,14 @@
 """
 import os
 from dataclasses import dataclass
+from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Callable, ClassVar, Dict, Optional, Type
 
 import torch
-from pl_bolts.datamodules import ImagenetDataModule
-from pl_bolts.datamodules.imagenet_datamodule import imagenet_normalization
+
+# from pl_bolts.datamodules import ImageNet32DataModule
+# from pl_bolts.datamodules.imagenet_datamodule import imagenet32_normalization
 from pytorch_lightning import LightningDataModule
 from simple_parsing.helpers import choice, flag
 from simple_parsing.helpers.serialization import Serializable
@@ -20,8 +22,12 @@ from torchvision.transforms import (
     ToTensor,
 )
 
-from target_prop.datasets import CIFAR10DataModule, cifar10_normalization
-from logging import getLogger as get_logger
+from target_prop.datasets import (
+    CIFAR10DataModule,
+    ImageNet32DataModule,
+    cifar10_normalization,
+    imagenet32_normalization,
+)
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
@@ -33,11 +39,11 @@ class Config(Serializable):
 
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
         "cifar10": CIFAR10DataModule,
-        "imagenet": ImagenetDataModule,  # TODO: Not yet tested.
+        "imagenet32": ImageNet32DataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
         "cifar10": cifar10_normalization,
-        "imagenet": imagenet_normalization,  # TODO: Not yet tested.
+        "imagenet32": imagenet32_normalization,
     }
 
     # Which dataset to use.
@@ -96,7 +102,12 @@ class Config(Serializable):
                 ]
             )
 
-            test_transform = Compose([ToTensor(), normalization_transform(),])
+            test_transform = Compose(
+                [
+                    ToTensor(),
+                    normalization_transform(),
+                ]
+            )
         # NOTE: We don't pass a seed to the datamodule constructor here, because we assume that the
         # train/val/test split is properly seeded with a fixed value already, and we don't want to
         # contaminate the train/val/test splits during sweeps!
@@ -112,16 +123,17 @@ class Config(Serializable):
         )
 
 
+from typing import Any, Callable, TypeVar, Union, overload
+
 from simple_parsing.helpers.serialization import encode, register_decoding_fn
 from simple_parsing.helpers.serialization.decoding import _register
-from typing import Union, TypeVar, Any, Callable, overload
 
 T = TypeVar("T")
 from typing_extensions import ParamSpec
 
 
 def register_decode(some_type: Type[T]):
-    """Register a decoding function for the type `some_type`. """
+    """Register a decoding function for the type `some_type`."""
 
     def wrapper(f: Callable[[Any], T]) -> Callable[[Any], T]:
         _register(some_type, f)
