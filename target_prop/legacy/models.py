@@ -75,7 +75,7 @@ class layer_fc(nn.Module):
 
         return dist, angle
 
-    def weight_b_train(self, input, optimizer, arg_return=False):
+    def weight_b_train(self, input, arg_return=False):
         """
         Trains feedback weights
         """
@@ -83,6 +83,7 @@ class layer_fc(nn.Module):
         nb_iter = self.iter
         sigma = self.noise
         losses = []
+        assert hasattr(self, "optimizer")
 
         for iter in range(1, nb_iter + 1):
             # 1- Compute y = F(input) and r=G(y)
@@ -105,9 +106,9 @@ class layer_fc(nn.Module):
             )
 
             # 5- Update the feedback weights
-            optimizer.zero_grad()
+            self.optimizer.zero_grad()
             loss_b.backward()
-            optimizer.step()
+            self.optimizer.step()
             losses.append(loss_b.detach())
 
         if arg_return:
@@ -225,7 +226,7 @@ class layer_convpool(nn.Module):
 
         return dist, angle
 
-    def weight_b_train(self, input, optimizer, arg_return=False):
+    def weight_b_train(self, input, arg_return=False):
         """
         Trains feedback weights
         """
@@ -233,6 +234,7 @@ class layer_convpool(nn.Module):
         nb_iter = self.iter
         sigma = self.noise
         losses = []
+        assert hasattr(self, "optimizer")
 
         for iter in range(1, nb_iter + 1):
 
@@ -256,9 +258,9 @@ class layer_convpool(nn.Module):
             )
 
             # 5- Update the weights
-            optimizer.zero_grad()
+            self.optimizer.zero_grad()
             loss_b.backward()
-            optimizer.step()
+            self.optimizer.step()
             losses.append(loss_b.detach())
 
         if arg_return:

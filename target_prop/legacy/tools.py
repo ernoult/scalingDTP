@@ -22,17 +22,17 @@ def train_batch(args, net, data, optimizers, target=None, criterion=None, **kwar
     NOTE: it is the central function of this whole code!
     """
 
-    optimizer_f, optimizer_b = optimizers
+    optimizer_f = optimizers[0]
 
     # ****FEEDBACK WEIGHTS TRAINING****#
-    pred, layer_losses_b = train_backward(net, data, optimizer_b)
+    pred, layer_losses_b = train_backward(net, data)
 
     # *********FORWARD WEIGHTS TRAINING********#
     loss, layer_losses_f = train_forward(net, data, target, criterion, optimizer_f, args)
     return pred, loss, layer_losses_b, layer_losses_f
 
 
-def train_backward(net, data, optimizer_b):
+def train_backward(net, data):
     # 1- Compute the first hidden layer and detach the resulting node
     y = net.layers[0](data).detach()
 
@@ -40,7 +40,7 @@ def train_backward(net, data, optimizer_b):
     losses = []
     for id_layer in range(len(net.layers) - 1):
         # 3- Train the current autoencoder (NOTE: there is no feedback operator paired to the first layer net.layers[0])
-        loss_b = net.layers[id_layer + 1].weight_b_train(y, optimizer_b, True)
+        loss_b = net.layers[id_layer + 1].weight_b_train(y, True)
         losses.append(loss_b)
 
         # 4- Compute the next hidden layer
@@ -100,14 +100,12 @@ def createOptimizers(net, args, forward=False):
 
     """
     Function which initializes the optimizers of
-    the feedforward and of the feedback weights
+    the feedforward and feedback weights
     """
 
-    optim_params_b = []
     for i in range(len(net.layers) - 1):
-        optim_params_b.append({"params": net.layers[i + 1].b.parameters(), "lr": args.lr_b[i]})
-
-    optimizer_b = torch.optim.SGD(optim_params_b, momentum=0.9)
+        optim_params_b = [{"params": net.layers[i + 1].b.parameters(), "lr": args.lr_b[i]}]
+        net.layers[i + 1].optimizer = torch.optim.SGD(optim_params_b, momentum=0.9)
 
     if forward:
         optim_params_f = []
@@ -127,10 +125,9 @@ def createOptimizers(net, args, forward=False):
             print("We are using weight decay!")
 
         optimizer_f = torch.optim.SGD(optim_params_f, momentum=0.9)
-        return (optimizer_f, optimizer_b)
-
+        return [optimizer_f]
     else:
-        return optimizer_b
+        return [None]
 
 
 def test(net, test_loader, device):
