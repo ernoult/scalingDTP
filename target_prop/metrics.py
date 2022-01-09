@@ -24,8 +24,8 @@ def _compute_dist_angle_between_weights(
     G = feedback_weight
     dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
 
-    F_flat = F.flatten(1)
-    G_flat = G.flatten(1)
+    F_flat = F.flatten(1) if F.ndim > 1 else F.unsqueeze(0)
+    G_flat = G.flatten(1) if G.ndim > 1 else G.unsqueeze(0)
     cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
         ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
     )

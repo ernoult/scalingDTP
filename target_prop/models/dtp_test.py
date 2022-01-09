@@ -12,6 +12,7 @@ from target_prop.config import Config
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
+from target_prop.utils import named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -65,12 +66,6 @@ class TestDTP:
         print(test_results)
         test_accuracy: float = test_results[0]["test/accuracy"]
         assert test_accuracy > 0
-
-
-def named_trainable_parameters(module: nn.Module) -> Iterable[Tuple[str, nn.Parameter]]:
-    for name, param in module.named_parameters():
-        if param.requires_grad:
-            yield name, param
 
 
 def get_forward_weight_losses(
