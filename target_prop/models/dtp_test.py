@@ -12,6 +12,7 @@ from target_prop.config import Config
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
+from target_prop.utils import named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
 

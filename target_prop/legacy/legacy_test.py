@@ -24,7 +24,7 @@ from target_prop.legacy import (
 )
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
-from target_prop.utils import is_trainable
+from target_prop.utils import is_trainable, named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -147,9 +147,9 @@ class TestLegacyCompatibility:
 
     def test_forward_updates_are_same(
         self,
-        pl_model: nn.Module,
+        pl_model: DTP,
         legacy_model: nn.Module,
-        pl_hparams: HyperParameters,
+        pl_hparams: DTP.HParams,
         legacy_hparams: HyperParameters,
     ):
         seed_everything(seed=123, workers=True)
@@ -175,7 +175,9 @@ class TestLegacyCompatibility:
             legacy_model, example_inputs, example_labels, criterion, optimizer_f, legacy_hparams
         )
         pl_output = pl_model.forward_loss(example_inputs, example_labels, phase="train")
-        _, pl_layer_losses = pl_output["loss"], pl_output["layer_losses"]
+        pl_forward_loss, pl_layer_losses = pl_output["loss"], pl_output["layer_losses"]
+        pl_forward_loss.backward()
+        forward_optimizer.step()
 
         # Ensure that layer losses are equal
         for i, (legacy_layer_loss, pl_layer_loss) in enumerate(
