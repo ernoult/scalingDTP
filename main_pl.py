@@ -6,18 +6,23 @@ import dataclasses
 import json
 import logging
 import textwrap
-from typing import Type, Union
+from dataclasses import asdict
+from typing import List, TypeVar, Type, Union
 
 import torch
+import wandb
 from pytorch_lightning import Trainer
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing import ArgumentParser
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 
-import wandb
 from target_prop.config import Config
 from target_prop.models import DTP, BaselineModel, ParallelDTP, VanillaDTP, TargetProp
+
+
+HParams = TypeVar("HParams", bound=HyperParameters)
 
 
 def main(running_sweep: bool = False):
@@ -103,14 +108,6 @@ def main(running_sweep: bool = False):
     print(test_results)
     test_accuracy: float = test_results[0]["test/accuracy"]
     return test_accuracy
-
-
-from dataclasses import asdict
-from typing import List, TypeVar
-
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-
-HParams = TypeVar("HParams", bound=HyperParameters)
 
 
 def sample_hparams(base_hparams: HParams) -> HParams:

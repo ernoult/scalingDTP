@@ -311,7 +311,10 @@ class DTP(LightningModule):
         return y, r
 
     def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="train")
+        result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
+        if not self.automatic_optimization:
+            return None
+        return result
 
     def validation_step(
         self, batch: Tuple[Tensor, Tensor], batch_idx: int,
