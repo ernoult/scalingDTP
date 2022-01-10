@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from logging import getLogger
 from typing import List, Union
@@ -23,55 +21,9 @@ class TargetProp(VanillaDTP):
     class HParams(VanillaDTP.HParams):
         """ Hyper-Parameters of the model.
 
-        TODO: The parameters for this model haven't been optimized yet. The values below are
-        those from DTP-J. 
+        This model inherits the same hyper-parameters and hyper-parameter priors as Vanilla DTP. 
+        TODO: The hyper-parameters for this model haven't been tuned yet.
         """
-
-        # batch size
-        batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
-
-        # Max number of training epochs in total.
-        max_epochs: int = 90
-
-        # Hyper-parameters for the "backward" optimizer
-        b_optim: OptimizerConfig = OptimizerConfig(
-            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
-        )
-        # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = uniform(  # type: ignore
-            0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        )
-
-        # Hyper-parameters for the forward optimizer
-        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
-        f_optim: OptimizerConfig = OptimizerConfig(
-            type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
-        )
-        # Use of a learning rate scheduler for the forward weights.
-        scheduler: bool = True
-        # nudging parameter: Used when calculating the first target.
-        beta: float = uniform(0.01, 1.0, default=0.7)
-
-        # Number of training steps for the feedback weights per batch. Can be a list of
-        # integers, where each value represents the number of iterations for that layer.
-        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
-
-        # Number of noise samples to use to get the feedback loss in a single iteration.
-        # NOTE: The loss used for each update is the average of these losses.
-        feedback_samples_per_iteration: int = uniform(1, 20, default=1)
-
-        # Max number of epochs to train for without an improvement to the validation
-        # accuracy before the training is stopped. When 0, no early stopping is used.
-        early_stopping_patience: int = 0
-
-        # Sets symmetric weight initialization. Useful for debugging.
-        init_symetric_weights: bool = False
-
-        # TODO: Add a Callback class to compute and plot jacobians, if that's interesting.
-        # jacobian: bool = False  # compute jacobians
-
-        # Step interval for creating and logging plots.
-        plot_every: int = 10
 
     def __init__(self, datamodule: VisionDataModule, hparams: "TargetProp.HParams", config: Config):
         super().__init__(datamodule, hparams, config)
