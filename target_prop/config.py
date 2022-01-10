@@ -39,7 +39,7 @@ class Config(Serializable):
     }
 
     # Which dataset to use.
-    dataset: str = choice(available_datasets.keys(), default="cifar10")
+    dataset: str = choice(*available_datasets.keys(), default="cifar10")
     # Directory where the dataset is to be downloaded. Uses the "DATA_DIR" environment
     # variable, if present, else a local "data" directory.
     data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))
@@ -86,20 +86,45 @@ class Config(Serializable):
                 ]
             )
 
-            test_transform = Compose(
-                [
-                    ToTensor(),
-                    normalization_transform(),
-                ]
-            )
+            test_transform = Compose([ToTensor(), normalization_transform(),])
+        # NOTE: We don't pass a seed to the datamodule constructor here, because we assume that the
+        # train/val/test split is properly seeded with a fixed value already, and we don't want to
+        # contaminate the train/val/test splits during sweeps!
         return datamodule_class(
             data_dir=self.data_dir,
             batch_size=batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            seed=self.seed or 123,  # NOTE: Seed here needs to be an int, not None!,
             shuffle=self.shuffle,
             train_transforms=train_transform,
             val_transforms=train_transform,
             test_transforms=test_transform,
         )
+
+
+from simple_parsing.helpers.serialization import encode, register_decoding_fn
+from simple_parsing.helpers.serialization.decoding import _register
+from typing import Union, TypeVar, Any, Callable, overload
+
+T = TypeVar("T")
+from typing_extensions import ParamSpec
+
+
+def register_decode(some_type: Type[T]):
+    """Register a decoding function for the type `some_type`. """
+
+    def wrapper(f: Callable[[Any], T]) -> Callable[[Any], T]:
+        _register(some_type, f)
+        return f
+
+    return wrapper
+
+
+@encode.register(torch.device)
+def _encode_device(v: torch.device) -> str:
+    return v.type
+
+
+@register_decode(torch.device)
+def _decode_device(v: str) -> torch.device:
+    return torch.device(v)

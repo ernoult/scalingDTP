@@ -208,9 +208,9 @@ class TestLegacyCompatibility:
     # )
     def test_feedback_updates_are_same(
         self,
-        pl_model: nn.Module,
+        pl_model: DTP,
         legacy_model: nn.Module,
-        pl_hparams: HyperParameters,
+        pl_hparams: DTP.HParams,
         legacy_hparams: HyperParameters,
     ):
         seed_everything(seed=123, workers=True)
