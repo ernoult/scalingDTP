@@ -136,15 +136,14 @@ class DTP(LightningModule):
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
+        # NOTE: Not tuning these values:
         feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
-
+        # NOTE: tuning a single value for all layers:
+        # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
         # NOTE: IF we want to tune each value independantly:
         # feedback_training_iterations: List[int] = uniform(
         #     1, 60, shape=5, default_factory=[20, 30, 35, 55, 20].copy, discrete=True
         # )
-
-        # NOTE: tuning a single value for all layers:
-        # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
 
         # Max number of training epochs in total.
         max_epochs: int = 90
@@ -155,28 +154,29 @@ class DTP(LightningModule):
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
+        # NOTE: Not tuning this parameter:
+        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
         # NOTE: tuning a value per layer:
-        noise: List[float] = uniform(  # type: ignore
-            0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        )
-
-        # The scale of the gaussian random variable in the feedback loss calculation.
+        # noise: List[float] = uniform(  # type: ignore
+        #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
+        # )
         # NOTE: tuning a single value for all layers:
         # noise: float = uniform(0.001, 0.5, default=0.2)
 
         # Hyper-parameters for the forward optimizer
-        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
             type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
         # nudging parameter: Used when calculating the first target.
-        beta: float = uniform(0.01, 1.0, default=0.7)
+        # beta: float = 0.7  # NOTE: not tuning this value
+        beta: float = uniform(0.01, 1.0, default=0.7)  # Adding it to HPO space
 
         # Number of noise samples to use to get the feedback loss in a single iteration.
         # NOTE: The loss used for each update is the average of these losses.
-        feedback_samples_per_iteration: int = uniform(1, 20, default=1)
+        feedback_samples_per_iteration: int = 1  # Not tuning the value
+        # feedback_samples_per_iteration: int = uniform(1, 20, default=1)  # tuning the value
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped. When 0, no early stopping is used.
@@ -375,7 +375,7 @@ class DTP(LightningModule):
             accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
-            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
+            terminate_on_nan=True,
             logger=WandbLogger() if not self.config.debug else None,
         )
 
@@ -809,13 +809,25 @@ class DTP(LightningModule):
 
         ## Forward optimizer:
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
-        forward_optim_config = {
+        forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
         if self.hp.scheduler:
             # Using the same LR scheduler as the original code:
             lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
-            forward_optim_config["lr_scheduler"] = lr_scheduler
+            lr_scheduler_config = {
+                # REQUIRED: The scheduler instance
+                "scheduler": lr_scheduler,
+                # The unit of the scheduler's step size, could also be 'step'.
+                # 'epoch' updates the scheduler on epoch end whereas 'step'
+                # updates it after a optimizer update.
+                "interval": "epoch",
+                # How many epochs/steps should pass between calls to
+                # `scheduler.step()`. 1 corresponds to updating the learning
+                # rate after every epoch/step.
+                "frequency": 1,
+            }
+            forward_optim_config["lr_scheduler"] = lr_scheduler_config
         configs.append(forward_optim_config)
         return configs
 
