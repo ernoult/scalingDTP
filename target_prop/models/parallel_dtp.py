@@ -89,7 +89,7 @@ class ParallelDTP(DTP):
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=torch.cuda.device_count(),
-            accelerator="ddp",
+            accelerator="dp",
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
             logger=WandbLogger() if not self.config.debug else None,
