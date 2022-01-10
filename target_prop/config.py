@@ -44,7 +44,7 @@ class Config(Serializable):
     # variable, if present, else a local "data" directory.
     data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))
     # Number of workers to use in the dataloader.
-    num_workers: int = torch.multiprocessing.cpu_count()
+    num_workers: int = int(os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count()))
     # Wether to pin the memory, which is good when using CUDA tensors.
     pin_memory: bool = True
     # Random seed.
