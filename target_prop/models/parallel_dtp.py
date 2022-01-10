@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import wandb
@@ -64,9 +64,7 @@ class ParallelDTP(DTP):
         # Hyper-parameters for the forward optimizer
         # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
         f_optim: OptimizerConfig = OptimizerConfig(
-            type="adam",
-            lr=[3e-4],
-            weight_decay=1e-4,  # momentum=0.9
+            type="adam", lr=[3e-4], weight_decay=1e-4,  # momentum=0.9
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
@@ -265,7 +263,7 @@ class ParallelDTP(DTP):
 
         # Forward optimizer:
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
-        forward_optim_config = {
+        forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
         if self.hp.scheduler:
@@ -296,13 +294,13 @@ class ParallelDTP(DTP):
         """
         if self.trainer is None:
             return self._feedback_optimizer
-        self._feedback_optimizer = self.optimizers()[0]
-        return self._feedback_optimizer
+        feedback_optimizer = self.optimizers()[0]
+        return feedback_optimizer
 
     @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
         if self.trainer is None:
             return self._forward_optimizer
-        self._forward_optimizer = self.optimizers()[-1]
-        return self._forward_optimizer
+        forward_optimizer = self.optimizers()[-1]
+        return forward_optimizer
