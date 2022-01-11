@@ -97,47 +97,25 @@ class BaselineModel(LightningModule, ABC):
         )
         self.trainer: Trainer  # type: ignore
 
+        # Dummy forward pass to initialize the weights of the lazy modules (required for DP/DDP)
+        _ = self(self.example_input_array)
+
     def create_forward_net(self) -> nn.Sequential:
-        activation_type = self.hp.activation
+        # TODO: @amoudgl has probably already moved this somewhere else, but there shouldn't be code
+        # duplication here:
+        from target_prop.models.dtp import DTP
 
-        layers: OrderedDict[str, nn.Module] = OrderedDict()
-        channels = [self.in_channels] + self.hp.channels
-        # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
-        # iterable is exhausted. This gives us the right number of blocks.
-        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
-            block = nn.Sequential(
-                OrderedDict(
-                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
-                    rho=activation_type(),
-                    # NOTE: Even though `return_indices` is `False` here, we're actually passing
-                    # the indices to the backward net for this layer through a "magic bridge".
-                    # We use `return_indices=False` here just so the layer doesn't also return
-                    # the indices in its forward pass.
-                    pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
-                    # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
-                    # pool=nn.AvgPool2d(kernel_size=2),
-                )
-            )
-            layers[f"conv_block_{i}"] = block
-
-        layers["reshape"] = Reshape(target_shape=(-1,))
-        # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
-        layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
-        return nn.Sequential(layers)
+        return DTP.create_forward_net(self)  # type: ignore
 
     def create_trainer(self) -> Trainer:
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=torch.cuda.device_count(),
-            track_grad_norm=False,
-            accelerator=None,
+            accelerator="dp",
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
-            # accelerator="ddp",
-            # profiler="simple",
-            # callbacks=[],
-            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
+            terminate_on_nan=self.automatic_optimization,
             logger=WandbLogger() if not self.config.debug else None,
         )
 
