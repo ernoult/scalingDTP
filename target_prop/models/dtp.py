@@ -37,10 +37,10 @@ T = TypeVar("T")
 
 @dataclass
 class ForwardOptimizerConfig(OptimizerConfig):
-    """ Configuration of the optimizer for the forward weights.
-    
+    """Configuration of the optimizer for the forward weights.
+
     NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer. 
+    for the forward optimizer and the feedback optimizer.
     """
 
     # Type of Optimizer to use.
@@ -63,10 +63,10 @@ class ForwardOptimizerConfig(OptimizerConfig):
 
 @dataclass
 class FeedbackOptimizerConfig(OptimizerConfig):
-    """ Configuration of the optimizer for the forward weights.
-    
+    """Configuration of the optimizer for the forward weights.
+
     NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer. 
+    for the forward optimizer and the feedback optimizer.
     """
 
     # Type of Optimizer to use.
@@ -190,7 +190,11 @@ class DTP(LightningModule):
 
         # Type of activation to use.
         activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
+            {
+                "relu": nn.ReLU,
+                "elu": nn.ELU,
+            },
+            default=nn.ELU,
         )
 
         # Step interval for creating and logging plots.
@@ -207,7 +211,10 @@ class DTP(LightningModule):
                     setattr(self, field.name, value.tolist())
 
     def __init__(
-        self, datamodule: LightningDataModule, hparams: "DTP.HParams", config: Config,
+        self,
+        datamodule: LightningDataModule,
+        hparams: "DTP.HParams",
+        config: Config,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
@@ -235,11 +242,15 @@ class DTP(LightningModule):
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
+            self.hp.feedback_training_iterations,
+            default=0,
+            inputs_are_forward_ordered=True,
         )
         # The noise scale for each feedback layer.
         self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
+            self.hp.noise,
+            default=0.0,
+            inputs_are_forward_ordered=True,
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
@@ -314,38 +325,10 @@ class DTP(LightningModule):
         self._forward_optimizer: Optional[Optimizer] = None
 
     def create_forward_net(self) -> nn.Sequential:
-        layers: OrderedDict[str, nn.Module] = OrderedDict()
-
-        activation_type = self.hp.activation
-
-        channels = [self.in_channels] + self.hp.channels
-        # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
-        # iterable is exhausted. This gives us the right number of blocks.
-        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
-            block = nn.Sequential(
-                OrderedDict(
-                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
-                    rho=activation_type(),
-                    # NOTE: Even though `return_indices` is `False` here, we're actually passing
-                    # the indices to the backward net for this layer through a "magic bridge".
-                    # We use `return_indices=False` here just so the layer doesn't also return
-                    # the indices in its forward pass.
-                    pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
-                    # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
-                    # pool=nn.AvgPool2d(kernel_size=2),
-                )
-            )
-            layers[f"conv_{i}"] = block
-        layers["fc"] = nn.Sequential(
-            OrderedDict(
-                reshape=Reshape(target_shape=(-1,)),
-                linear=nn.LazyLinear(out_features=self.n_classes, bias=True),
-            )
-        )
-        # layers["reshape"] = Reshape(target_shape=(-1,))
-        # # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
-        # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
-        return nn.Sequential(layers)
+        network_type: str = self.config.network
+        network_class = self.config.available_networks[network_type]
+        network = network_class(in_channels=self.in_channels, n_classes=self.n_classes)
+        return network
 
     def create_backward_net(self) -> nn.Sequential:
         # Pass an example input through the forward net so that we know the input/output shapes for
@@ -386,14 +369,20 @@ class DTP(LightningModule):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
+    def training_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+    ) -> float:  # type: ignore
         result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
         if not self.automatic_optimization:
             return None
         return result
 
     def validation_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
     ) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
@@ -401,7 +390,10 @@ class DTP(LightningModule):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
     ):
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
@@ -637,7 +629,9 @@ class DTP(LightningModule):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net, x, allow_grads_between_layers=False,
+            self.forward_net,
+            x,
+            allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y
