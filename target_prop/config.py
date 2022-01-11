@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import Callable, ClassVar, Dict, Optional, Type
 
 import torch
-from pl_bolts.datamodules import ImagenetDataModule
-from pl_bolts.datamodules.imagenet_datamodule import imagenet_normalization
+
+# from pl_bolts.datamodules import ImageNet32DataModule
+# from pl_bolts.datamodules.imagenet_datamodule import imagenet32_normalization
 from pytorch_lightning import LightningDataModule
 from simple_parsing.helpers import choice, flag
 from simple_parsing.helpers.serialization import Serializable
-from torch import Tensor
+from torch import Tensor, nn
 from torchvision.transforms import (
     Compose,
     Normalize,
@@ -20,7 +21,13 @@ from torchvision.transforms import (
     ToTensor,
 )
 
-from target_prop.datasets import CIFAR10DataModule, cifar10_normalization
+from target_prop.datasets import (
+    CIFAR10DataModule,
+    ImageNet32DataModule,
+    cifar10_normalization,
+    imagenet32_normalization,
+)
+from target_prop.networks import ResNet18, SimpleVGG, LeNet
 
 Transform = Callable[[Tensor], Tensor]
 
@@ -31,15 +38,24 @@ class Config(Serializable):
 
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
         "cifar10": CIFAR10DataModule,
-        "imagenet": ImagenetDataModule,  # TODO: Not yet tested.
+        "imagenet32": ImageNet32DataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
         "cifar10": cifar10_normalization,
-        "imagenet": imagenet_normalization,  # TODO: Not yet tested.
+        "imagenet32": imagenet32_normalization,
+    }
+    available_networks: ClassVar[Dict[str, Type[nn.Sequential]]] = {
+        "simple_vgg": SimpleVGG,
+        "lenet": LeNet,
+        "resnet": ResNet18,
     }
 
     # Which dataset to use.
-    dataset: str = choice(*available_datasets.keys(), default="cifar10")
+
+    dataset: str = choice(available_datasets.keys(), default="cifar10")
+    # Which network to use.
+    network: str = choice(available_networks.keys(), default="simple_vgg")
+
     # Directory where the dataset is to be downloaded. Uses the "DATA_DIR" environment
     # variable, if present, else a local "data" directory.
     data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))
