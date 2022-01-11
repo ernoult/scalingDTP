@@ -1,19 +1,22 @@
+import dataclasses
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
+import numpy as np
 import torch
 import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams import log_uniform, uniform
+from simple_parsing.helpers.hparams.hparam import log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import invert, mark_as_invertible
+from target_prop.callbacks import CompareToBackpropCallback
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import MaxPool2d, Reshape, forward_all
@@ -24,13 +27,69 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
-from target_prop.callbacks import CompareToBackpropCallback
 from torchmetrics.classification.accuracy import Accuracy
 
 from .utils import make_stacked_feedback_training_figure
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+
+
+@dataclass
+class ForwardOptimizerConfig(OptimizerConfig):
+    """ Configuration of the optimizer for the forward weights.
+    
+    NOTE: Creating a distinct class for this is currently the only way to specify different priors
+    for the forward optimizer and the feedback optimizer. 
+    """
+
+    # Type of Optimizer to use.
+    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
+    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
+    # type: str = categorical(
+    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
+    # )
+
+    # Learning rate of the optimizer.
+    lr: float = log_uniform(1e-4, 1e-1, default=0.08)
+
+    # Weight decay coefficient.
+    weight_decay: Optional[float] = 1e-4
+
+    # Momentum term to pass to SGD.
+    # NOTE: This value is only used with SGD, not with Adam.
+    momentum: float = 0.9
+
+
+@dataclass
+class FeedbackOptimizerConfig(OptimizerConfig):
+    """ Configuration of the optimizer for the forward weights.
+    
+    NOTE: Creating a distinct class for this is currently the only way to specify different priors
+    for the forward optimizer and the feedback optimizer. 
+    """
+
+    # Type of Optimizer to use.
+    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
+    # type: str = categorical(
+    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
+    # )
+
+    # Learning rate of the optimizer.
+    lr: Union[List[float], float] = log_uniform(
+        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
+    )
+
+    # Learning rate of the optimizer.
+    # NOTE: IF we want to tune a single learning rate:
+    # lr: float = log_uniform(1e-4, 1e-1, default=1e-3)
+
+    # Weight decay coefficient.
+    weight_decay: Optional[float] = None
+
+    # Momentum term to pass to SGD.
+    # NOTE: This value is only used with SGD, not with Adam.
+    momentum: float = 0.9
 
 
 class DTP(LightningModule):
@@ -77,36 +136,47 @@ class DTP(LightningModule):
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
+        # NOTE: Not tuning these values:
         feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
+        # NOTE: tuning a single value for all layers:
+        # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
+        # NOTE: IF we want to tune each value independantly:
+        # feedback_training_iterations: List[int] = uniform(
+        #     1, 60, shape=5, default_factory=[20, 30, 35, 55, 20].copy, discrete=True
+        # )
 
         # Max number of training epochs in total.
         max_epochs: int = 90
 
-        # Weight decay for forward optimizer
-        weight_decay: float = 1e-4
-
-        # Hyper-parameters for the "backward" optimizer
-        b_optim: OptimizerConfig = OptimizerConfig(
+        # Hyper-parameters for the optimizer of the feedback weights (backward net).
+        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
             type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
         )
+
         # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = uniform(
-            0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        )
+        # NOTE: Not tuning this parameter:
+        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+        # NOTE: tuning a value per layer:
+        # noise: List[float] = uniform(  # type: ignore
+        #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
+        # )
+        # NOTE: tuning a single value for all layers:
+        # noise: float = uniform(0.001, 0.5, default=0.2)
 
         # Hyper-parameters for the forward optimizer
-        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
-        f_optim: OptimizerConfig = OptimizerConfig(
-            type="sgd", lr=0.08, weight_decay=weight_decay, momentum=0.9
+        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
+            type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
         # nudging parameter: Used when calculating the first target.
-        beta: float = uniform(0.01, 1.0, default=0.7)
+        # beta: float = 0.7  # NOTE: not tuning this value
+        beta: float = uniform(0.01, 1.0, default=0.7)  # Adding it to HPO space
 
         # Number of noise samples to use to get the feedback loss in a single iteration.
         # NOTE: The loss used for each update is the average of these losses.
-        feedback_samples_per_iteration: int = uniform(1, 20, default=1)
+        feedback_samples_per_iteration: int = 1  # Not tuning the value
+        # feedback_samples_per_iteration: int = uniform(1, 20, default=1)  # tuning the value
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped. When 0, no early stopping is used.
@@ -125,6 +195,16 @@ class DTP(LightningModule):
 
         # Step interval for creating and logging plots.
         plot_every: int = 1000
+
+        def __post_init__(self):
+            super().__post_init__()
+            for field in dataclasses.fields(self):
+                value = getattr(self, field.name)
+                from simple_parsing.utils import is_list
+
+                if is_list(field.type) and isinstance(value, np.ndarray):
+                    # Convert to a list.
+                    setattr(self, field.name, value.tolist())
 
     def __init__(
         self, datamodule: LightningDataModule, hparams: "DTP.HParams", config: Config,
@@ -163,7 +243,6 @@ class DTP(LightningModule):
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
-        assert isinstance(lrs_per_layer, list)
         self.feedback_lrs = self._align_values_with_backward_net(
             lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
         )
@@ -293,14 +372,10 @@ class DTP(LightningModule):
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=1,
-            track_grad_norm=False,
             accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
-            # accelerator="ddp",
-            # profiler="simple",
-            # callbacks=[],
-            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
+            terminate_on_nan=True,
             logger=WandbLogger() if not self.config.debug else None,
         )
 
@@ -312,7 +387,10 @@ class DTP(LightningModule):
         return y, r
 
     def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="train")
+        result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
+        if not self.automatic_optimization:
+            return None
+        return result
 
     def validation_step(
         self, batch: Tuple[Tensor, Tensor], batch_idx: int,
@@ -731,13 +809,25 @@ class DTP(LightningModule):
 
         ## Forward optimizer:
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
-        forward_optim_config = {
+        forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
         if self.hp.scheduler:
             # Using the same LR scheduler as the original code:
             lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
-            forward_optim_config["lr_scheduler"] = lr_scheduler
+            lr_scheduler_config = {
+                # REQUIRED: The scheduler instance
+                "scheduler": lr_scheduler,
+                # The unit of the scheduler's step size, could also be 'step'.
+                # 'epoch' updates the scheduler on epoch end whereas 'step'
+                # updates it after a optimizer update.
+                "interval": "epoch",
+                # How many epochs/steps should pass between calls to
+                # `scheduler.step()`. 1 corresponds to updating the learning
+                # rate after every epoch/step.
+                "frequency": 1,
+            }
+            forward_optim_config["lr_scheduler"] = lr_scheduler_config
         configs.append(forward_optim_config)
         return configs
 
@@ -799,12 +889,16 @@ class DTP(LightningModule):
 
             Output:  [0.18, 0 (default), 8e-3, 8e-3, 3.5e-4, 1e-4, 0 (never trained)]
         """
-        backward_ordered_input = list(reversed(values)) if inputs_are_forward_ordered else values
-
         n_layers_that_need_a_value = sum(map(is_trainable, self.backward_net))
         # Don't count the last layer of the backward net (i.e. G_0), since we don't
         # train it.
         n_layers_that_need_a_value -= 1
+
+        if isinstance(values, (int, float)):
+            values = [values for _ in range(n_layers_that_need_a_value)]
+
+        backward_ordered_input = list(reversed(values)) if inputs_are_forward_ordered else values
+
         if len(values) != n_layers_that_need_a_value:
             raise ValueError(
                 f"There are {n_layers_that_need_a_value} layers that need a value, but we were "

@@ -1,6 +1,6 @@
 import logging
 from collections import OrderedDict
-from typing import ClassVar, Iterable, List, Optional, Tuple, Type
+from typing import ClassVar, Dict, Iterable, List, Optional, Tuple, Type
 
 import pytest
 import torch
@@ -32,14 +32,9 @@ class TestDTP:
         trainer = Trainer(
             max_epochs=1,
             gpus=torch.cuda.device_count(),
-            track_grad_norm=False,
             accelerator=None,
             fast_dev_run=True,
-            # max_steps=10 if config.debug else None, # NOTE: Can be useful when generating a lot of plots.
             # accelerator="ddp",  # todo: debug DP/DDP
-            # profiler="simple",
-            # callbacks=[],
-            terminate_on_nan=False,  # bug: doesn't work with the SequentialModel (manual optim).
             logger=None,
         )
 
@@ -66,6 +61,51 @@ class TestDTP:
         print(test_results)
         test_accuracy: float = test_results[0]["test/accuracy"]
         assert test_accuracy > 0
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.parametrize("dataset", ["cifar10"])
+    @pytest.mark.parametrize("seed", [123, 456])
+    def test_run_is_reproducible_given_seed(self, dataset: str, seed: int):
+        perf_1 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed)
+        perf_2 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed)
+        assert perf_1 == perf_2
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.parametrize("dataset", ["cifar10"])
+    @pytest.mark.parametrize("seed", [123, 456])
+    def test_seed_has_impact(self, dataset: str, seed: int):
+        perf_1 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed)
+        perf_2 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed + 1)
+        assert perf_1 != perf_2
+
+    def _get_debug_performance_given_seed(self, dataset: str, seed: int, batches: int = 1) -> float:
+        print(f"Selected seed: {seed}")
+        # Note: using 0 workers to speed up testing.
+        config = Config(dataset=dataset, debug=True, seed=seed, num_workers=0)
+        hparams = self.model_class.HParams()
+        trainer = Trainer(
+            max_epochs=1,
+            gpus=torch.cuda.device_count(),
+            fast_dev_run=True,
+            logger=None,
+            limit_train_batches=batches,
+            limit_val_batches=batches,
+            limit_test_batches=batches,
+        )
+
+        logging.getLogger().setLevel(logging.INFO)
+        logging.getLogger("target_prop").setLevel(logging.DEBUG)
+
+        print("HParams:", hparams.dumps_json(indent="\t"))
+        # Create the datamodule:
+        datamodule = config.make_datamodule(batch_size=hparams.batch_size)
+
+        model = self.model_class(datamodule=datamodule, hparams=hparams, config=config)
+        trainer.fit(model, datamodule=datamodule)
+        test_results = trainer.test(model, datamodule=datamodule)
+        test_accuracy: float = test_results[0]["test/accuracy"]
+        # print(f"Test accuracy: {test_accuracy:.1%}")
+        return test_accuracy
 
 
 def get_forward_weight_losses(

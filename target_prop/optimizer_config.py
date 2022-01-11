@@ -1,3 +1,4 @@
+import numpy as np
 from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import HyperParameters, log_uniform
 import torch
@@ -28,13 +29,18 @@ class OptimizerConfig(HyperParameters):
     # categorical("sgd", "adam"], default="adam", strict=True)
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(1e-4, 1e-1, default=5e-3, shape=2)
+    lr: Union[List[float], float] = log_uniform(1e-4, 1e-1, default=5e-3)
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
 
     # Momentum term to pass to SGD.
     # NOTE: This value is only used with SGD, not with Adam.
     momentum: float = 0.9
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.lr, np.ndarray):
+            self.lr = self.lr.tolist()
 
     def make_optimizer(self, network: nn.Module, lrs: List[float] = None) -> Optimizer:
         """ Create the optimizer, using the options set in this object """

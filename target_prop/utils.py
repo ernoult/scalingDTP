@@ -1,4 +1,5 @@
 from __future__ import annotations
+import contextlib
 import warnings
 from torch.distributions import Normal as Normal_
 from torch import Tensor
@@ -118,3 +119,32 @@ def split_batch(batched_v: Tensor, n: int) -> Tensor:
     assert batched_v.shape[0] % n == 0
     # [N*B, ...] -> [N, B, ...]
     return batched_v.reshape([-1, n, *batched_v.shape[1:]])
+
+
+import random
+import torch
+import numpy as np
+
+
+@contextlib.contextmanager
+def make_reproducible(seed: int):
+    """ Makes the random operations within a block of code reproducible for a given seed. """
+    # First: Get the starting random state, and restore it after.
+    start_random_state = random.getstate()
+    start_np_rng_state = np.random.get_state()
+    with torch.random.fork_rng():
+        # Set the random state, using the given seed.
+        random.seed(seed)
+        np_seed = random.randint(0, 2 ** 32 - 1)
+        np.random.seed(np_seed)
+
+        torch_seed = random.randint(0, 2 ** 32 - 1)
+        torch.random.manual_seed(torch_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(torch_seed)
+
+        yield
+
+    # Restore the random state to the original state.
+    np.random.set_state(start_np_rng_state)
+    random.setstate(start_random_state)

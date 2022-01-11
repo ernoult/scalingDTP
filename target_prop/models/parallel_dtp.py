@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+from simple_parsing.helpers.fields import choice
+from simple_parsing.helpers.hparams.hparam import log_uniform
 
 import torch
 import wandb
@@ -18,10 +20,46 @@ from torch import Tensor, nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 
-from .dtp import DTP
+from .dtp import (
+    DTP,
+    ForwardOptimizerConfig as _ForwardOptimizerConfig,
+    FeedbackOptimizerConfig as _FeedbackOptimizerConfig,
+)
 from .utils import make_stacked_feedback_training_figure
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class ForwardOptimizerConfig(_ForwardOptimizerConfig):
+    # Type of Optimizer to use.
+    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
+    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
+    # type: str = categorical(
+    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
+    # )
+
+    # Learning rate of the optimizer.
+    lr: float = log_uniform(1e-6, 1e-1, default=4e-3)
+
+    # Weight decay coefficient.
+    weight_decay: Optional[float] = log_uniform(1e-9, 1e-3, default=1e-4)
+
+
+@dataclass
+class FeedbackOptimizerConfig(_FeedbackOptimizerConfig):
+    # Type of Optimizer to use.
+    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
+    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
+    # type: str = categorical(
+    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
+    # )
+
+    # Learning rate of the optimizer.
+    lr: float = log_uniform(1e-6, 1e-1, default=4e-3)
+
+    # Weight decay coefficient.
+    weight_decay: Optional[float] = log_uniform(1e-9, 1e-3, default=1e-4)
 
 
 class ParallelDTP(DTP):
@@ -52,21 +90,16 @@ class ParallelDTP(DTP):
         feedback_samples_per_iteration: int = uniform(1, 20, default=10)
 
         # Hyper-parameters for the "backward" optimizer
-        b_optim: OptimizerConfig = OptimizerConfig(
-            type="adam",
-            lr=[3e-4] * 5,
-            # type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
+            type="adam", lr=3e-4,
         )
         # The scale of the gaussian random variable in the feedback loss calculation.
         noise: List[float] = uniform(  # type: ignore
             0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
         )
         # Hyper-parameters for the forward optimizer
-        # NOTE: On mnist, usign 0.1 0.2 0.3 gives decent results (75% @ 1 epoch)
-        f_optim: OptimizerConfig = OptimizerConfig(
-            type="adam",
-            lr=[3e-4],
-            weight_decay=1e-4,  # momentum=0.9
+        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
+            type="adam", lr=3e-4, weight_decay=1e-4,
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
@@ -91,13 +124,9 @@ class ParallelDTP(DTP):
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=torch.cuda.device_count(),
-            track_grad_norm=False,
-            accelerator="ddp",
+            accelerator="dp",
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
-            # profiler="simple",
-            # callbacks=[],
-            terminate_on_nan=self.automatic_optimization,  # BUG: Can't use this with sequential DTP.
             logger=WandbLogger() if not self.config.debug else None,
         )
 
@@ -265,7 +294,7 @@ class ParallelDTP(DTP):
 
         # Forward optimizer:
         forward_optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
-        forward_optim_config = {
+        forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
         if self.hp.scheduler:
@@ -296,13 +325,13 @@ class ParallelDTP(DTP):
         """
         if self.trainer is None:
             return self._feedback_optimizer
-        self._feedback_optimizer = self.optimizers()[0]
-        return self._feedback_optimizer
+        feedback_optimizer = self.optimizers()[0]
+        return feedback_optimizer
 
     @property
     def forward_optimizer(self) -> Optimizer:
         """Returns The optimizer of the forward net."""
         if self.trainer is None:
             return self._forward_optimizer
-        self._forward_optimizer = self.optimizers()[-1]
-        return self._forward_optimizer
+        forward_optimizer = self.optimizers()[-1]
+        return forward_optimizer

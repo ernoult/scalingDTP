@@ -32,5 +32,6 @@ setuptools.setup(
         "wandb",
         "plotly",
         "kaleido",
+        "torchmetrics",
     ],
 )
