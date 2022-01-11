@@ -21,7 +21,9 @@ from torchvision.transforms import (
 )
 
 from target_prop.datasets import CIFAR10DataModule, cifar10_normalization
+from logging import getLogger as get_logger
 
+logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
 
 
@@ -67,6 +69,14 @@ class Config(Serializable):
         if self.seed is None:
             g = torch.Generator(device=self.device)
             self.seed = g.seed()
+        array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+        if array_task_id is not None and self.seed is not None:
+            logger.info(
+                f"Adding {array_task_id} to base seed ({self.seed}) since this job is "
+                f"#{array_task_id} in an array of jobs."
+            )
+            self.seed += int(array_task_id)
+            logger.info(f"New seed: {self.seed}")
 
     def make_datamodule(self, batch_size: int) -> LightningDataModule:
 
