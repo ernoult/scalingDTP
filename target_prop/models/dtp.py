@@ -128,6 +128,9 @@ class DTP(LightningModule):
         "parallel" version of DTP, however the feedback layers still need to be updated in sequence.
         """
 
+        # architecture
+        architecture: str = "vgg"
+
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
@@ -314,6 +317,15 @@ class DTP(LightningModule):
         self._forward_optimizer: Optional[Optimizer] = None
 
     def create_forward_net(self) -> nn.Sequential:
+
+        if self.architecture == 'vgg':
+            return self._create_forward_net_vgg()
+        elif self.architecture == 'lenet':
+            return self._create_forward_net_lenet()
+        else:
+            print(f"Architecture {self.architecture} is not supported.")
+
+    def _create_forward_net_vgg(self) -> nn.Sequential:
         layers: OrderedDict[str, nn.Module] = OrderedDict()
 
         activation_type = self.hp.activation
@@ -347,7 +359,51 @@ class DTP(LightningModule):
         # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
         return nn.Sequential(layers)
 
+    def _create_forward_net_lenet(self) -> nn.Sequential:
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
+
+        activation_type = self.hp.activation
+
+        channels = [self.in_channels] + self.hp.channels
+        # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
+        # iterable is exhausted. This gives us the right number of blocks.
+        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
+            block = nn.Sequential(
+                OrderedDict(
+                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=5, stride=1, padding=1,),
+                    rho=activation_type(),
+                    # NOTE: Even though `return_indices` is `False` here, we're actually passing
+                    # the indices to the backward net for this layer through a "magic bridge".
+                    # We use `return_indices=False` here just so the layer doesn't also return
+                    # the indices in its forward pass.
+                    pool=MaxPool2d(kernel_size=3, stride=2, return_indices=False),
+                    # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
+                    # pool=nn.AvgPool2d(kernel_size=2),
+                )
+            )
+            layers[f"conv_{i}"] = block
+        layers["fc"] = nn.Sequential(
+            OrderedDict(
+                reshape=Reshape(target_shape=(-1,)),
+                linear1=nn.LazyLinear(out_features=512, bias=True),
+                rho=activation_type(),
+                linear2=nn.LazyLinear(out_features=self.n_classes, bias=True),
+            )
+        )
+        # layers["reshape"] = Reshape(target_shape=(-1,))
+        # # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
+        # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
+        return nn.Sequential(layers)
+
     def create_backward_net(self) -> nn.Sequential:
+        if self.architecture == 'vgg':
+            return self._create_backward_net_vgg()
+        elif self.architecture == 'lenet':
+            return self._create_backward_net_lenet()
+        else:
+            print(f"Architecture {self.architecture} is not supported.")
+
+    def _create_backward_vgg(self) -> nn.Sequential:
         # Pass an example input through the forward net so that we know the input/output shapes for
         # each layer. This makes it easier to then create the feedback (a.k.a backward) net.
         mark_as_invertible(self.forward_net)
@@ -366,6 +422,27 @@ class DTP(LightningModule):
         assert example_in_hat.dtype == self.example_input_array.dtype
 
         return backward_net
+
+    def _create_backward_lenet(self) -> nn.Sequential:
+        # Pass an example input through the forward net so that we know the input/output shapes for
+        # each layer. This makes it easier to then create the feedback (a.k.a backward) net.
+        mark_as_invertible(self.forward_net)
+        example_out: Tensor = self.forward_net(self.example_input_array)
+
+        assert example_out.requires_grad
+        # Get the "pseudo-inverse" of the forward network:
+        backward_net: nn.Sequential = invert(self.forward_net)  # type: ignore
+
+        # Pass the output of the forward net for the `example_input_array` through the
+        # backward net, to check that the backward net is indeed able to recover the
+        # inputs (at least in terms of their shape for now).
+        example_in_hat: Tensor = backward_net(example_out)
+        assert example_in_hat.requires_grad
+        assert example_in_hat.shape == self.example_input_array.shape
+        assert example_in_hat.dtype == self.example_input_array.dtype
+
+        return backward_net
+
 
     def create_trainer(self) -> Trainer:
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
