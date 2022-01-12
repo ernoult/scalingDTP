@@ -24,7 +24,7 @@ def LeNet(
                     out_channels,
                     kernel_size=5,
                     stride=1,
-                    padding=1,
+                    padding=2, # in Meuleman code padding=2
                 ),
                 rho=activation(),
                 # NOTE: Even though `return_indices` is `False` here, we're actually passing
@@ -42,7 +42,7 @@ def LeNet(
             reshape=Reshape(target_shape=(-1,)),
             linear1= nn.LazyLinear(out_features=512, bias=True),
             rho=activation(),
-            linear2= nn.Linear(in_features=512, out_features=10, bias=True)
+            linear2= nn.Linear(in_features=512, out_features=n_classes, bias=True)
         )
     )
     # layers["reshape"] = Reshape(target_shape=(-1,))

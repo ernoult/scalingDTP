@@ -135,6 +135,9 @@ def run(config: Config, model_type: Type[Model], hparams: HyperParameters) -> fl
         hparams.max_epochs = 1
         root_logger.setLevel(logging.DEBUG)
 
+    # Needed for flexible uniform sampling of tensors
+    hparams.n_layers = len(hparams.channels)
+
     # Create the datamodule:
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
