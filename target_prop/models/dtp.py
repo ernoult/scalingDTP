@@ -218,7 +218,6 @@ class DTP(LightningModule):
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
-        self.datamodule = datamodule  # type: ignore
         self.config = config
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.
@@ -303,7 +302,6 @@ class DTP(LightningModule):
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
-                "datamodule": datamodule,
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
             }

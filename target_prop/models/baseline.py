@@ -11,6 +11,7 @@ import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import HyperParameters, log_uniform
@@ -20,20 +21,19 @@ from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torchmetrics.classification import Accuracy
 from torch.optim.optimizer import Optimizer
-from pytorch_lightning.loggers import WandbLogger
+from torchmetrics.classification import Accuracy
 
 T = TypeVar("T")
 logger = getLogger(__name__)
 
 
 class BaselineModel(LightningModule, ABC):
-    """ Baseline model that uses normal backpropagation. """
+    """Baseline model that uses normal backpropagation."""
 
     @dataclass
     class HParams(HyperParameters):
-        """ Hyper-Parameters of the baseline model. """
+        """Hyper-Parameters of the baseline model."""
 
         # Channels per conv layer.
         channels: List[int] = list_field(128, 128, 256, 256, 512)
@@ -55,13 +55,18 @@ class BaselineModel(LightningModule, ABC):
 
         # Choice of activation function.
         # NOTE: Only using elu for now in practice.
-        activation: Type[nn.Module] = choice({"relu": nn.ReLU, "elu": nn.ELU,}, default="elu")
+        activation: Type[nn.Module] = choice(
+            {
+                "relu": nn.ReLU,
+                "elu": nn.ELU,
+            },
+            default="elu",
+        )
 
     def __init__(self, datamodule: VisionDataModule, hparams: HParams, config: Config):
         super().__init__()
         # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp: BaselineModel.HParams = hparams
-        self.datamodule = datamodule  # type: ignore
         self.config = config
         if self.config.seed is not None:
             seed_everything(seed=self.config.seed, workers=True)
@@ -90,7 +95,6 @@ class BaselineModel(LightningModule, ABC):
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
-                "datamodule": datamodule,
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
             }
@@ -111,8 +115,9 @@ class BaselineModel(LightningModule, ABC):
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
         return Trainer(
             max_epochs=self.hp.max_epochs,
-            gpus=torch.cuda.device_count(),
-            accelerator="dp",
+            gpus=1,
+            track_grad_norm=False,
+            accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
             terminate_on_nan=self.automatic_optimization,
@@ -125,9 +130,13 @@ class BaselineModel(LightningModule, ABC):
         logits = self.forward_net(input)
         return logits
 
-    def shared_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,) -> Tensor:
-        """ Main step, used by the `[training/valid/test]_step` methods.
-        """
+    def shared_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
+    ) -> Tensor:
+        """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
         # and `feedback_loss` below.
@@ -151,7 +160,7 @@ class BaselineModel(LightningModule, ABC):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def configure_optimizers(self) -> Dict:
-        """ Creates the optimizers and the LR scheduler (if needed)."""
+        """Creates the optimizers and the LR scheduler (if needed)."""
         # Create the optimizers using the config class for it in `self.hp`.
         optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
         optim_config: Dict[str, Any] = {"optimizer": optimizer}
