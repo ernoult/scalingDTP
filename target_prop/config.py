@@ -29,7 +29,7 @@ from target_prop.datasets import (
     imagenet32_normalization,
 )
 from target_prop.networks import ResNet18, SimpleVGG, LeNet
-
+from logging import getLogger as get_logger
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
