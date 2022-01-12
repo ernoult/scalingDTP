@@ -789,6 +789,8 @@ class DTP(LightningModule):
         # the last index.
         configs: List[Dict] = []
         # NOTE: The last feedback layer (G_0) isn't trained, so it doesn't have an optimizer.
+        print(self.backward_net)
+        print(self.feedback_lrs)
         assert len(self.backward_net) == len(self.feedback_lrs)
         for i, (feedback_layer, lr) in enumerate(zip(self.backward_net, self.feedback_lrs)):
             if i == (len(self.backward_net) - 1) or not is_trainable(feedback_layer):
