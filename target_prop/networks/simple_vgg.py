@@ -7,7 +7,7 @@ available_activations = {"elu": nn.ELU, "relu": nn.ReLU}
 
 
 def SimpleVGG(
-    in_channels=3, n_classes=10, channels=[32, 64], activation_type="elu"
+    in_channels=3, n_classes=10, channels=[128, 128, 256, 256, 512], activation_type="elu"
 ):
     layers: OrderedDict[str, nn.Module] = OrderedDict()
     activation = available_activations[activation_type]
