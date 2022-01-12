@@ -16,13 +16,13 @@ class ResidualBlock(nn.Module):
 
     def __init__(self, in_planes, planes, stride=1, use_batchnorm=False):
         super(ResidualBlock, self).__init__()
-        # save hyperparams
+        # Save hyperparams relevant for inversion
         self.in_planes = in_planes
         self.planes = planes
         self.stride = stride
         self.use_batchnorm = use_batchnorm
 
-        # initialize layers
+        # Initialize layers
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
         )
@@ -62,8 +62,8 @@ class InvertedResidualBlock(nn.Module):
 
     Inverted residual forward pass:
     x -> relu -> bn2 -> conv2_t -> relu -> bn1 -> conv1_t -> + -> out
-                  |                                          |
-                  |------------ bn -> conv_t ----------------|
+           |                                                 |
+           |--------------- bn -> conv_t --------------------|
     """
 
     expansion = 1
@@ -75,7 +75,7 @@ class InvertedResidualBlock(nn.Module):
         self.stride = stride
         self.use_batchnorm = use_batchnorm
 
-        # initialize layers: exactly same as residual block, just invert all with invert() method
+        # Create inverted layers
         self.conv1 = invert(
             nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         )
@@ -109,7 +109,6 @@ class InvertedResidualBlock(nn.Module):
 
 @invert.register(ResidualBlock)
 def invert_residual(module: ResidualBlock) -> InvertedResidualBlock:
-    # first create inverted residual block with same hyperparams
     backward = InvertedResidualBlock(
         in_planes=module.in_planes,
         planes=module.planes,
