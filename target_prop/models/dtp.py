@@ -243,19 +243,28 @@ class DTP(LightningModule):
             logger.info(f"Initializing the backward net with symetric weights.")
             init_symetric_weights(self.forward_net, self.backward_net)
 
+        #TODO: hardcoded to work with LeNet
+
         # The number of iterations to perform for each of the layers in `self.backward_net`.
-        self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
-        )
+        # self.feedback_iterations = self._align_values_with_backward_net(
+        #     self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
+        # )
+        self.feedback_iterations = list(reversed(self.hp.feedback_training_iterations))
+
+        # TODO: hardcoded to work with LeNet
+
         # The noise scale for each feedback layer.
-        self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
-        )
+        self.feedback_noise_scales = list(reversed(self.hp.noise))
+        # self.feedback_noise_scales = self._align_values_with_backward_net(
+        #     self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
+        # )
         # The learning rate for each feedback layer.
+        #TODO: hardcoded to work with LeNet
         lrs_per_layer = self.hp.b_optim.lr
-        self.feedback_lrs = self._align_values_with_backward_net(
-            lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
-        )
+        # self.feedback_lrs = self._align_values_with_backward_net(
+        #     lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
+        # )
+        self.feedback_lrs = list(reversed(self.hp.b_optim.lr))
 
         if self.config.debug:
             print(f"Forward net: ")
