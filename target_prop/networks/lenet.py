@@ -11,7 +11,6 @@ def LeNet(
 ):
 
     layers: OrderedDict[str, nn.Module] = OrderedDict()
-
     activation = available_activations[activation_type]
 
     channels = [in_channels] + channels
@@ -20,7 +19,13 @@ def LeNet(
     for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
         block = nn.Sequential(
             OrderedDict(
-                conv=nn.Conv2d(in_channels, out_channels, kernel_size=5, stride=1, padding=1, ),
+                conv=nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=5,
+                    stride=1,
+                    padding=1,
+                ),
                 rho=activation(),
                 # NOTE: Even though `return_indices` is `False` here, we're actually passing
                 # the indices to the backward net for this layer through a "magic bridge".
@@ -35,9 +40,9 @@ def LeNet(
     layers["fc"] = nn.Sequential(
         OrderedDict(
             reshape=Reshape(target_shape=(-1,)),
-            linear1=nn.LazyLinear(out_features=512, bias=True),
+            linear1= nn.LazyLinear(out_features=512, bias=True),
             rho=activation(),
-            linear2=nn.LazyLinear(out_features=n_classes, bias=True),
+            linear2= nn.Linear(in_features=512, out_features=10, bias=True)
         )
     )
     # layers["reshape"] = Reshape(target_shape=(-1,))
