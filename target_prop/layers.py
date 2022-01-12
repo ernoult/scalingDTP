@@ -104,8 +104,7 @@ def invert_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
 
 
 class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
-    # TODO: use a magic_bridge deque that is shared from the forward to the backward
-    # net.
+    # NOTE: uses a magic_bridge deque that is shared from the forward to the backward layers
 
     def __init__(
         self,
@@ -198,8 +197,8 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
 def invert_maxpool2d(module: MaxPool2d, init_symetric_weights: bool = False) -> MaxUnpool2d:
     m = MaxUnpool2d(
         kernel_size=module.kernel_size,
-        stride=None,  # todo: Not sure waht to do with this value here.
-        padding=0,  # todo
+        stride=module.stride,  # todo: double-check that this is correct
+        padding=module.padding,  # todo: double-check that this is correct
         magic_bridge=module.magic_bridge,
     )
     m.output_shape = module.input_shape
