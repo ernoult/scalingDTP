@@ -1,8 +1,11 @@
 from functools import singledispatch
-from typing import Any, Dict, Optional, Union, Tuple
-import torch
+from typing import Any, Dict, Optional, Tuple, Union
+
 import numpy as np
-from torch import nn, Tensor
+import torch
+from torch import Tensor, nn
+
+from target_prop.networks.resnet import InvertedResidualBlock, ResidualBlock
 
 
 @singledispatch
@@ -52,7 +55,7 @@ def _compute_dist_angle_linear(
 ) -> Tuple[float, float]:
     """
     Computes angle and distance between feedforward and feedback weights of linear layers
-    
+
     Returns angle (degrees) and distance (no real unit I guess) as floats.
     """
     F = forward_module.weight
@@ -72,7 +75,24 @@ def _compute_dist_angle_conv(
     return compute_dist_angle(F, G)
 
 
-# from target_prop.layers import ConvPoolBlock
+@compute_dist_angle.register(ResidualBlock)
+def _compute_dist_angle_residual(
+    forward_module: ResidualBlock, backward_module: InvertedResidualBlock
+):
+    """
+    Computes distance and angle between feedforward and feedback residual blocks
+    """
+    metrics = {}
+    metrics = {
+        0: compute_dist_angle(forward_module.conv1, backward_module.conv1),
+        1: compute_dist_angle(forward_module.bn1, backward_module.bn1),
+        2: compute_dist_angle(forward_module.conv2, backward_module.conv2),
+        3: compute_dist_angle(forward_module.bn2, backward_module.bn2),
+    }
+    if len(forward_module.shortcut) > 0:  # Non-identity shortcut
+        metrics[4] = compute_dist_angle(forward_module.shortcut.conv, backward_module.shortcut.conv)
+        metrics[5] = compute_dist_angle(forward_module.shortcut.bn, backward_module.shortcut.bn)
+    return metrics
 
 
 @compute_dist_angle.register(nn.Sequential)
@@ -99,4 +119,3 @@ def _(
     #     conv2d = forward_module.conv
     #     convtranspose2d = backward_module.conv
     #     return compute_dist_angle(conv2d, convtranspose2d)
-

@@ -48,7 +48,7 @@ class Config(Serializable):
     }
     available_networks: ClassVar[Dict[str, Type[nn.Sequential]]] = {
         "simple_vgg": SimpleVGG,
-        "resnet": ResNet18,
+        "resnet18": ResNet18,
     }
 
     # Which dataset to use.

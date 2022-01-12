@@ -232,7 +232,7 @@ class DTP(LightningModule):
             [datamodule.batch_size, *datamodule.dims], device=self.device
         )
 
-        ## Create the forward and backward nets.
+        # Create the forward and backward nets.
         self.forward_net = self.create_forward_net()
         self.backward_net = self.create_backward_net()
 
