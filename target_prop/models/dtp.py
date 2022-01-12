@@ -136,14 +136,12 @@ class DTP(LightningModule):
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
         # Channels per conv layer.
-        # TODO: hardcoded
-        channels: List[int] = list_field(32, 64) #list_field(128, 128, 256, 256, 512)
+        channels: List[int] = list_field(128, 128, 256, 256, 512) #list_field(32, 64)
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         # NOTE: Not tuning these values:
-        # TODO: hardcoded
-        feedback_training_iterations: List[int] = list_field(10,20) #list_field(20, 30, 35, 55, 20)
+        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20) #list_field(10,20)
         # NOTE: tuning a single value for all layers:
         # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
         # NOTE: IF we want to tune each value independantly:
@@ -155,15 +153,14 @@ class DTP(LightningModule):
         max_epochs: int = 90
 
         # Hyper-parameters for the optimizer of the feedback weights (backward net).
-        #TODO: hardcoded lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18]
+        #TODO: hardcoded lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18] or lr=[0.35, 0.18]
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="sgd", lr=[0.35, 0.18], momentum=0.9
+            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
         # NOTE: Not tuning this parameter:
-        # TODO: hardcoded
-        noise: List[float] = list_field(0.025,0.035) #list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08) #list_field(0.025,0.035)
         # NOTE: tuning a value per layer:
         # noise: List[float] = uniform(  # type: ignore
         #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
@@ -172,9 +169,8 @@ class DTP(LightningModule):
         # noise: float = uniform(0.001, 0.5, default=0.2)
 
         # Hyper-parameters for the forward optimizer
-        #TODO: hardcoded lr=0.08
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="sgd", lr=0.05, weight_decay=1e-4, momentum=0.9
+            type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
@@ -326,7 +322,7 @@ class DTP(LightningModule):
 
         network_type: str = self.config.network
         network_class = self.config.available_networks[network_type]
-        network = network_class(in_channels=self.in_channels, n_classes=self.n_classes)
+        network = network_class(in_channels=self.in_channels, n_classes=self.n_classes, channels=self.hp.channels)
         return network
 
 
