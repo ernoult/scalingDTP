@@ -138,6 +138,8 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
             # loss uses this backward layer twice in a row (once with y and again with y+noise)
             indices = self.magic_bridge[0]
             # indices = self.magic_bridge.pop()
+        if output_size is None and self.output_shape:
+            output_size = list(self.output_shape[-2:])
         return super().forward(input=input, indices=indices, output_size=output_size)
 
 
@@ -194,12 +196,15 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
 
 @invert.register
 def invert_maxpool2d(module: MaxPool2d, init_symetric_weights: bool = False) -> MaxUnpool2d:
-    return MaxUnpool2d(
+    m = MaxUnpool2d(
         kernel_size=module.kernel_size,
         stride=None,  # todo: Not sure waht to do with this value here.
         padding=0,  # todo
         magic_bridge=module.magic_bridge,
     )
+    m.output_shape = module.input_shape
+    m.input_shape = module.output_shape
+    return m
 
 
 class BatchUnNormalize(nn.Module):

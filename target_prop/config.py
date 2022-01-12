@@ -21,6 +21,7 @@ from torchvision.transforms import (
     ToTensor,
 )
 
+
 from target_prop.datasets import (
     CIFAR10DataModule,
     ImageNet32DataModule,
@@ -29,6 +30,8 @@ from target_prop.datasets import (
 )
 from target_prop.networks import ResNet18, SimpleVGG, LeNet
 
+
+logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
 
 
@@ -52,9 +55,11 @@ class Config(Serializable):
 
     # Which dataset to use.
 
+
     dataset: str = choice(available_datasets.keys(), default="cifar10")
     # Which network to use.
     network: str = choice(available_networks.keys(), default="simple_vgg")
+
 
     # Directory where the dataset is to be downloaded. Uses the "DATA_DIR" environment
     # variable, if present, else a local "data" directory.
@@ -83,6 +88,14 @@ class Config(Serializable):
         if self.seed is None:
             g = torch.Generator(device=self.device)
             self.seed = g.seed()
+        array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+        if array_task_id is not None and self.seed is not None:
+            logger.info(
+                f"Adding {array_task_id} to base seed ({self.seed}) since this job is "
+                f"#{array_task_id} in an array of jobs."
+            )
+            self.seed += int(array_task_id)
+            logger.info(f"New seed: {self.seed}")
 
     def make_datamodule(self, batch_size: int) -> LightningDataModule:
 

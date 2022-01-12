@@ -23,6 +23,7 @@ from simple_parsing import ArgumentParser
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 
 from target_prop.config import Config
+from target_prop.utils import make_reproducible
 from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 
 
