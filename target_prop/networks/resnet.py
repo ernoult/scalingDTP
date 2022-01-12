@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch.nn as nn
 import torch.nn.functional as F
 from target_prop.backward_layers import invert
-from target_prop.layers import Reshape
+from target_prop.layers import AdaptiveAvgPool2d, Reshape
 
 
 class ResidualBlock(nn.Module):
@@ -162,7 +162,7 @@ def ResNet18(
     )
     layers["fc"] = nn.Sequential(
         OrderedDict(
-            # pool=nn.AvgPool2d(kernel_size=4),
+            pool=AdaptiveAvgPool2d(output_size=(1, 1)),  # NOTE: This is specific for 32x32 input!
             reshape=Reshape(target_shape=(-1,)),
             linear=nn.LazyLinear(out_features=n_classes, bias=True),
         )

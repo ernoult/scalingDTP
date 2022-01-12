@@ -95,7 +95,7 @@ class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d, Invertible):
 
 
 @invert.register
-def invert_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
+def invert_adaptive_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
     """Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input!"""
     assert module.input_shape and module.output_shape, "Use the net before inverting."
     return type(module)(
