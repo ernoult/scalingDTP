@@ -76,7 +76,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(
+    lr: List[float] = log_uniform(
         1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
     )
 
@@ -240,7 +240,7 @@ class DTP(LightningModule):
             inputs_are_forward_ordered=True,
         )
         # The learning rate for each feedback layer.
-        lrs_per_layer = self.hp.b_optim.lr
+        lrs_per_layer = self.hp.
         self.feedback_lrs = self._align_values_with_backward_net(
             lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
         )
