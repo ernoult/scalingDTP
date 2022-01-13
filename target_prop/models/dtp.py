@@ -240,7 +240,7 @@ class DTP(LightningModule):
             inputs_are_forward_ordered=True,
         )
         # The learning rate for each feedback layer.
-        lrs_per_layer = self.hp.
+        lrs_per_layer = self.hp.b_optim.lr
         self.feedback_lrs = self._align_values_with_backward_net(
             lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
         )
