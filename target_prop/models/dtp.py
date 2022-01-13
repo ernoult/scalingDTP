@@ -250,8 +250,8 @@ class DTP(LightningModule):
         #     self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
         # )
         fb_train_iter = self.hp.feedback_training_iterations
-        nested_fb_train_iter = [fb_train_iter[x:x + 2] for x in range(0, len(fb_train_iter) - 1, 2)]
-        self.feedback_iterations = list(reversed(nested_fb_train_iter))
+        #nested_fb_train_iter = [fb_train_iter[x:x + 2] for x in range(0, len(fb_train_iter) - 1, 2)]
+        self.feedback_iterations = list(reversed(fb_train_iter))
 
         # TODO: hardcoded to work with LeNet
 
