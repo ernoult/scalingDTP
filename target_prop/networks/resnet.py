@@ -1,12 +1,17 @@
 from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import torch.nn as nn
 import torch.nn.functional as F
+from simple_parsing.helpers import list_field
+from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.backward_layers import invert
 from target_prop.layers import AdaptiveAvgPool2d, Reshape
 
 
-class ResidualBlock(nn.Module):
+class BasicBlock(nn.Module):
     """
     Basic residual block with optional BatchNorm.
     Adapted from PyTorch ResNet: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py
@@ -15,7 +20,7 @@ class ResidualBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1, use_batchnorm=False):
-        super(ResidualBlock, self).__init__()
+        super(BasicBlock, self).__init__()
         # Save hyperparams relevant for inversion
         self.in_planes = in_planes
         self.planes = planes
@@ -51,9 +56,9 @@ class ResidualBlock(nn.Module):
         return out
 
 
-class InvertedResidualBlock(nn.Module):
+class InvertedBasicBlock(nn.Module):
     """
-    Implements residual block that mimics residual operation in inverted manner.
+    Implements basic block that mimics residual operation in inverted manner.
 
     Original residual forward pass:
     x -> conv1 -> bn1 -> relu -> conv2 -> bn2 -> + -> relu -> out
@@ -69,7 +74,7 @@ class InvertedResidualBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1, use_batchnorm=False):
-        super(InvertedResidualBlock, self).__init__()
+        super(InvertedBasicBlock, self).__init__()
         self.in_planes = in_planes
         self.planes = planes
         self.stride = stride
@@ -107,15 +112,29 @@ class InvertedResidualBlock(nn.Module):
         return out
 
 
-@invert.register(ResidualBlock)
-def invert_residual(module: ResidualBlock) -> InvertedResidualBlock:
-    backward = InvertedResidualBlock(
+@invert.register(BasicBlock)
+def invert_basic(module: BasicBlock) -> InvertedBasicBlock:
+    backward = InvertedBasicBlock(
         in_planes=module.in_planes,
         planes=module.planes,
         stride=module.stride,
         use_batchnorm=module.use_batchnorm,
     )
     return backward
+
+
+@dataclass
+class ResNet18Hparams(HyperParameters):
+    block: nn.Module = categorical({"basic": BasicBlock}, default=BasicBlock)
+    use_batchnorm: bool = False
+    num_blocks: List[int] = list_field(2, 2, 2, 2)
+
+
+@dataclass
+class ResNet34Hparams(HyperParameters):
+    block: nn.Module = categorical({"basic": BasicBlock}, default=BasicBlock)
+    use_batchnorm: bool = False
+    num_blocks: List[int] = list_field(3, 4, 6, 3)
 
 
 def make_layer(block, planes, num_blocks, stride, in_planes, use_batchnorm):
@@ -127,16 +146,16 @@ def make_layer(block, planes, num_blocks, stride, in_planes, use_batchnorm):
     return nn.Sequential(*layers), in_planes
 
 
-def ResNet18(
-    in_channels=3,
-    n_classes=10,
-    use_batchnorm=False,
-    block=ResidualBlock,
-    num_blocks=[2, 2, 2, 2],
-):
+def resnet(in_channels, n_classes, hparams):
     """
     ResNet18 with optional BatchNorm.
     """
+    # Catch hparams
+    use_batchnorm = hparams.use_batchnorm
+    block = hparams.block
+    num_blocks = hparams.num_blocks
+
+    # Build ResNet
     layers: OrderedDict[str, nn.Module] = OrderedDict()
     layers["layer_0"] = nn.Sequential(
         OrderedDict(

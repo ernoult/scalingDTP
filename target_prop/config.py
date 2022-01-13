@@ -28,7 +28,6 @@ from target_prop.datasets import (
     cifar10_normalization,
     imagenet32_normalization,
 )
-from target_prop.networks import ResNet18, SimpleVGG
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
@@ -46,15 +45,9 @@ class Config(Serializable):
         "cifar10": cifar10_normalization,
         "imagenet32": imagenet32_normalization,
     }
-    available_networks: ClassVar[Dict[str, Type[nn.Sequential]]] = {
-        "simple_vgg": SimpleVGG,
-        "resnet18": ResNet18,
-    }
 
     # Which dataset to use.
     dataset: str = choice(available_datasets.keys(), default="cifar10")
-    # Which network to use.
-    network: str = choice(available_networks.keys(), default="simple_vgg")
     # Directory where the dataset is to be downloaded. Uses the "DATA_DIR" environment
     # variable, if present, else a local "data" directory.
     data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))

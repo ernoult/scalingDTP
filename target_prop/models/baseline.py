@@ -35,9 +35,6 @@ class BaselineModel(LightningModule, ABC):
     class HParams(HyperParameters):
         """Hyper-Parameters of the baseline model."""
 
-        # Channels per conv layer.
-        channels: List[int] = list_field(128, 128, 256, 256, 512)
-
         # Max number of training epochs in total.
         max_epochs: int = 90
 
@@ -53,26 +50,21 @@ class BaselineModel(LightningModule, ABC):
         # accuracy before the training is stopped.
         early_stopping_patience: int = 5
 
-        # Choice of activation function.
-        # NOTE: Only using elu for now in practice.
-        activation: Type[nn.Module] = choice(
-            {
-                "relu": nn.ReLU,
-                "elu": nn.ELU,
-            },
-            default="elu",
-        )
-
-    def __init__(self, datamodule: VisionDataModule, hparams: HParams, config: Config):
+    def __init__(
+        self,
+        datamodule: VisionDataModule,
+        network: nn.Sequential,
+        hparams: HParams,
+        config: Config,
+        network_hparams: HyperParameters,
+    ):
         super().__init__()
         # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp: BaselineModel.HParams = hparams
+        self.net_hp = network_hparams
         self.config = config
         if self.config.seed is not None:
             seed_everything(seed=self.config.seed, workers=True)
-
-        self.in_channels, self.img_h, self.img_w = datamodule.dims
-        self.n_classes = datamodule.num_classes
 
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
@@ -81,8 +73,8 @@ class BaselineModel(LightningModule, ABC):
             # names=["B", "C", "H", "W"],  # NOTE: cudnn conv doesn't yet support named inputs.
         )
 
-        ## Create the forward achitecture:
-        self.forward_net = self.create_forward_net()
+        # Create the forward achitecture
+        self.forward_net = network
 
         if self.config.debug:
             _ = self.forward(self.example_input_array)
@@ -97,19 +89,14 @@ class BaselineModel(LightningModule, ABC):
                 "hp": self.hp.to_dict(),
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
+                "net_hp": self.net_hp.to_dict(),
+                "net_type": type(self.hp).__name__,
             }
         )
         self.trainer: Trainer  # type: ignore
 
         # Dummy forward pass to initialize the weights of the lazy modules (required for DP/DDP)
         _ = self(self.example_input_array)
-
-    def create_forward_net(self) -> nn.Sequential:
-        # TODO: @amoudgl has probably already moved this somewhere else, but there shouldn't be code
-        # duplication here:
-        from target_prop.models.dtp import DTP
-
-        return DTP.create_forward_net(self)  # type: ignore
 
     def create_trainer(self) -> Trainer:
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.

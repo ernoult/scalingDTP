@@ -131,9 +131,6 @@ class DTP(LightningModule):
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
-        # Channels per conv layer.
-        channels: List[int] = list_field(128, 128, 256, 256, 512)
-
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         # NOTE: Not tuning these values:
@@ -188,15 +185,6 @@ class DTP(LightningModule):
         # TODO: Add a Callback class to compute and plot jacobians, if that's interesting.
         # jacobian: bool = False  # compute jacobians
 
-        # Type of activation to use.
-        activation: Type[nn.Module] = choice(
-            {
-                "relu": nn.ReLU,
-                "elu": nn.ELU,
-            },
-            default=nn.ELU,
-        )
-
         # Step interval for creating and logging plots.
         plot_every: int = 1000
 
@@ -213,18 +201,18 @@ class DTP(LightningModule):
     def __init__(
         self,
         datamodule: LightningDataModule,
+        network: nn.Sequential,
         hparams: "DTP.HParams",
         config: Config,
+        network_hparams: HyperParameters,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
+        self.net_hp = network_hparams
         self.config = config
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.
             seed_everything(seed=self.config.seed, workers=True)
-
-        self.in_channels, self.img_h, self.img_w = datamodule.dims
-        self.n_classes = datamodule.num_classes
 
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
@@ -232,7 +220,7 @@ class DTP(LightningModule):
         )
 
         # Create the forward and backward nets.
-        self.forward_net = self.create_forward_net()
+        self.forward_net = network
         self.backward_net = self.create_backward_net()
 
         if self.hp.init_symetric_weights:
@@ -304,6 +292,8 @@ class DTP(LightningModule):
                 "hp": self.hp.to_dict(),
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
+                "net_hp": self.net_hp.to_dict(),
+                "net_type": type(self.hp).__name__,
             }
         )
 
@@ -321,12 +311,6 @@ class DTP(LightningModule):
         # self.supervised_metrics: List[Metrics]
         self._feedback_optimizers: Optional[List[Optional[Optimizer]]] = None
         self._forward_optimizer: Optional[Optimizer] = None
-
-    def create_forward_net(self) -> nn.Sequential:
-        network_type: str = self.config.network
-        network_class = self.config.available_networks[network_type]
-        network = network_class(in_channels=self.in_channels, n_classes=self.n_classes)
-        return network
 
     def create_backward_net(self) -> nn.Sequential:
         # Pass an example input through the forward net so that we know the input/output shapes for

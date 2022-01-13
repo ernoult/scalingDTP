@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from target_prop.networks.resnet import InvertedResidualBlock, ResidualBlock
+from target_prop.networks.resnet import BasicBlock, InvertedBasicBlock
 
 
 @singledispatch
@@ -75,12 +75,10 @@ def _compute_dist_angle_conv(
     return compute_dist_angle(F, G)
 
 
-@compute_dist_angle.register(ResidualBlock)
-def _compute_dist_angle_residual(
-    forward_module: ResidualBlock, backward_module: InvertedResidualBlock
-):
+@compute_dist_angle.register(BasicBlock)
+def _compute_dist_angle_residual(forward_module: BasicBlock, backward_module: InvertedBasicBlock):
     """
-    Computes distance and angle between feedforward and feedback residual blocks
+    Computes distance and angle between feedforward and feedback basic residual blocks
     """
     metrics = {}
     metrics = {

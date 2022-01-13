@@ -10,7 +10,7 @@ import textwrap
 import warnings
 from argparse import Namespace
 from dataclasses import asdict
-from typing import List, Literal, Type, TypeVar, Union
+from typing import Callable, List, Literal, Type, TypeVar, Union
 
 import torch
 from pytorch_lightning import Trainer
@@ -20,10 +20,18 @@ from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing import ArgumentParser
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from torch import nn
 
 import wandb
 from target_prop.config import Config
 from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
+from target_prop.networks import (
+    ResNet18Hparams,
+    ResNet34Hparams,
+    SimpleVGGHparams,
+    resnet,
+    simple_vgg,
+)
 
 HParams = TypeVar("HParams", bound=HyperParameters)
 
@@ -75,9 +83,29 @@ def add_run_args(parser: ArgumentParser):
         ("backprop", "Use regular backprop", BaselineModel),
     ]:
         subparser = subparsers.add_parser(option_str, help=help_str, description=model_type.__doc__)
-        subparser.add_arguments(Config, dest="config")
-        subparser.add_arguments(model_type.HParams, dest="hparams")  # type: ignore
+        # subparser.add_arguments(Config, dest="config")
+        # subparser.add_arguments(model_type.HParams, dest="hparams")  # type: ignore
         subparser.set_defaults(model_type=model_type)
+
+        net_subparsers = subparser.add_subparsers(
+            title="network", description="Which network architecture to use", required=True
+        )
+
+        for option_str, net_help_str, net_fn, net_hparams in [
+            ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
+            ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
+            ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
+        ]:
+            net_subparser = net_subparsers.add_parser(
+                option_str,
+                help=help_str + " with a " + net_help_str,
+                description=net_fn.__doc__,
+            )
+            net_subparser.add_arguments(model_type.HParams, dest="hparams")
+            net_subparser.add_arguments(net_hparams, dest="network_hparams")
+            net_subparser.add_arguments(Config, dest="config")
+            net_subparser.set_defaults(network_type=net_fn)
+
     # Fixes a weird little argparse bug with metavar.
     subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
 
@@ -116,13 +144,21 @@ def add_sweep_args(parser: ArgumentParser):
     subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
 
 
-def run(config: Config, model_type: Type[Model], hparams: HyperParameters) -> float:
+def run(
+    config: Config,
+    model_type: Type[Model],
+    hparams: HyperParameters,
+    network_type: Callable[..., nn.Sequential],
+    network_hparams: HyperParameters,
+) -> float:
     """Executes a run, where a model of the given type is trained, with the given hyper-parameters."""
     print(f"Type of model used: {model_type}")
     print("Config:")
     print(config.dumps_json(indent="\t"))
     print("HParams:")
     print(hparams.dumps_json(indent="\t"))
+    print("Network HParams:")
+    print(network_hparams.dumps_json(indent="\t"))
     print(f"Selected seed: {config.seed}")
     seed_everything(seed=config.seed, workers=True)
 
@@ -138,8 +174,21 @@ def run(config: Config, model_type: Type[Model], hparams: HyperParameters) -> fl
     # Create the datamodule:
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
+    # Create the network
+    network: nn.Sequential = network_type(
+        in_channels=datamodule.dims[0],
+        n_classes=datamodule.num_classes,
+        hparams=network_hparams,
+    )
+
     # Create the model
-    model: Model = model_type(datamodule=datamodule, hparams=hparams, config=config)  # type: ignore
+    model: Model = model_type(
+        datamodule=datamodule,
+        network=network,
+        hparams=hparams,
+        config=config,
+        network_hparams=network_hparams,
+    )
 
     # --- Create the trainer.. ---
     # NOTE: Now each algo can customize how the Trainer gets created.
