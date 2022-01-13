@@ -77,7 +77,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
 
     # Learning rate of the optimizer.
     lr: List[float] = log_uniform(
-        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
+        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=3
     )
 
     # Learning rate of the optimizer.
@@ -134,13 +134,13 @@ class DTP(LightningModule):
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         # NOTE: Not tuning these values:
-        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
+        #feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
         # NOTE: tuning a single value for all layers:
         # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
         # NOTE: IF we want to tune each value independantly:
-        # feedback_training_iterations: List[int] = uniform(
-        #     1, 60, shape=5, default_factory=[20, 30, 35, 55, 20].copy, discrete=True
-        # )
+        feedback_training_iterations: List[int] = uniform(
+            1, 60, shape=3, default_factory=[20, 55, 20].copy, discrete=True
+        )
 
         # Max number of training epochs in total.
         max_epochs: int = 90
@@ -152,11 +152,11 @@ class DTP(LightningModule):
 
         # The scale of the gaussian random variable in the feedback loss calculation.
         # NOTE: Not tuning this parameter:
-        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+        #noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
         # NOTE: tuning a value per layer:
-        # noise: List[float] = uniform(  # type: ignore
-        #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        # )
+        noise: List[float] = uniform(  # type: ignore
+            0.001, 0.5, default_factory=[0.4, 0.08, 0.08].copy, shape=3
+        )
         # NOTE: tuning a single value for all layers:
         # noise: float = uniform(0.001, 0.5, default=0.2)
 
