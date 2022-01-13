@@ -789,15 +789,16 @@ class DTP(LightningModule):
         # the last index.
         configs: List[Dict] = []
         # NOTE: The last feedback layer (G_0) isn't trained, so it doesn't have an optimizer.
-        print(self.backward_net)
-        print(self.feedback_lrs)
-        assert len(self.backward_net) == len(self.feedback_lrs)
+#        print(len(self.backward_net))
+#        print(len(self.feedback_lrs))
+#        assert len(self.backward_net) == len(self.feedback_lrs)
         for i, (feedback_layer, lr) in enumerate(zip(self.backward_net, self.feedback_lrs)):
             if i == (len(self.backward_net) - 1) or not is_trainable(feedback_layer):
                 # NOTE: No learning rate for the first feedback layer atm, although we very well
                 # could train it, it wouldn't change anything about the forward weights.
                 # Non-trainable layers also don't have an optimizer.
-                assert lr == 0.0, (i, lr, self.feedback_lrs, type(feedback_layer))
+                #assert lr == 0.0, (i, lr, self.feedback_lrs, type(feedback_layer))
+                pass
             else:
                 assert lr != 0.0
                 feedback_layer_optimizer = self.hp.b_optim.make_optimizer(feedback_layer, lrs=[lr])
