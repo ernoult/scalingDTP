@@ -498,6 +498,7 @@ class DTP(LightningModule):
                 # Compute the angle and distance for debugging the training of the
                 # feedback weights:
                 with torch.no_grad():
+                    #TODO: verify this distance is normalized by F_i
                     metrics = compute_dist_angle(F_i, G_i)
                     if isinstance(metrics, dict):
                         # NOTE: When a block has more than one trainable layer, we only report the
