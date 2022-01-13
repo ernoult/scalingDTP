@@ -130,7 +130,7 @@ class TestDTP:
         print("HParams:", hparams.dumps_json(indent="\t"))
         # Create the datamodule:
         datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-        network = network_type(in_channels=datamodule.dims[0], num_classes=datamodule.num_classes)
+        network = network_type(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
         model = self.model_class(
             datamodule=datamodule, hparams=hparams, config=config, network=network
         )
