@@ -136,12 +136,9 @@ class DTP(LightningModule):
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
-<<<<<<< HEAD
         # Channels per conv layer.
         channels: List[int] = list_field(128, 128, 256, 256, 512) #list_field(32, 64)
 
-=======
->>>>>>> master
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         # NOTE: Not tuning these values:

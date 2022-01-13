@@ -1,19 +1,31 @@
 from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
+from simple_parsing.helpers import list_field
+from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
 
-available_activations = {"elu": nn.ELU, "relu": nn.ReLU}
 
+@dataclass
+class LeNetHparams(HyperParameters):
+    channels: List[int] = list_field(32,64)
+    activation: Type[nn.Module] = categorical(
+        {
+            "relu": nn.ReLU,
+            "elu": nn.ELU,
+        },
+        default=nn.ELU,
+    )
 
-def LeNet(
-    in_channels=3, n_classes=10, channels=[32, 64], activation_type="elu"
-):
+def lenet(in_channels, n_classes, hparams):
 
     layers: OrderedDict[str, nn.Module] = OrderedDict()
-    activation = available_activations[activation_type]
+    activation: nn.Module = hparams.activation
+    channels = [in_channels] + hparams.channels
 
-    channels = [in_channels] + channels
     # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
     # iterable is exhausted. This gives us the right number of blocks.
     for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
@@ -49,6 +61,5 @@ def LeNet(
     # # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
     # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
     return nn.Sequential(layers)
-
 
 

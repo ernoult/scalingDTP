@@ -192,4 +192,3 @@ def resnet(in_channels, n_classes, hparams):
         )
     )
     return nn.Sequential(layers)
->>>>>>> master
