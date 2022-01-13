@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from simple_parsing.helpers.fields import choice
-from simple_parsing.helpers.hparams.hparam import log_uniform
 
 
 import torch
@@ -11,7 +9,9 @@ import wandb
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
 from simple_parsing.helpers import list_field
+from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import uniform
+from simple_parsing.helpers.hparams.hparam import log_uniform
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all, forward_each
 from target_prop.metrics import compute_dist_angle
@@ -21,11 +21,9 @@ from torch import Tensor, nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 
-from .dtp import (
-    DTP,
-    ForwardOptimizerConfig as _ForwardOptimizerConfig,
-    FeedbackOptimizerConfig as _FeedbackOptimizerConfig,
-)
+from .dtp import DTP
+from .dtp import FeedbackOptimizerConfig as _FeedbackOptimizerConfig
+from .dtp import ForwardOptimizerConfig as _ForwardOptimizerConfig
 from .utils import make_stacked_feedback_training_figure
 
 logger = get_logger(__name__)
@@ -92,7 +90,8 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="adam", lr=3e-4,
+            type="adam",
+            lr=3e-4,
         )
         # The scale of the gaussian random variable in the feedback loss calculation.
         noise: List[float] = uniform(  # type: ignore
@@ -101,8 +100,14 @@ class ParallelDTP(DTP):
         # Hyper-parameters for the forward optimizer
 
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
+<<<<<<< HEAD
             type="adam", lr=3e-4, weight_decay=1e-4,
 
+=======
+            type="adam",
+            lr=3e-4,
+            weight_decay=1e-4,
+>>>>>>> master
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True
@@ -113,8 +118,8 @@ class ParallelDTP(DTP):
             super().__post_init__()
             self.feedback_training_iterations = [1 for _ in self.channels]
 
-    def __init__(self, datamodule, hparams, config):
-        super().__init__(datamodule, hparams, config)
+    def __init__(self, datamodule, network, hparams, config, network_hparams):
+        super().__init__(datamodule, network, hparams, config, network_hparams)
         # Here we can do automatic optimization, since we don't need to do multiple
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True

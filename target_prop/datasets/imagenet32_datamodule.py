@@ -1,6 +1,10 @@
 import os
 import pdb
+<<<<<<< HEAD
 import sys
+=======
+import pickle
+>>>>>>> master
 from abc import abstractmethod
 from logging import getLogger
 from typing import Any, Callable, List, Optional, Union
@@ -13,10 +17,13 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from torchvision.datasets.vision import VisionDataset
 
+<<<<<<< HEAD
 if sys.version_info[0] == 2:
     import cPickle as pickle
 else:
     import pickle
+=======
+>>>>>>> master
 logger = getLogger(__name__)
 
 
@@ -31,9 +38,13 @@ class ImageNet32Dataset(VisionDataset):
     """
 
     def __init__(self, root, train=True, transform=None, target_transform=None):
+<<<<<<< HEAD
         super(ImageNet32Dataset, self).__init__(
             root, transform=transform, target_transform=target_transform
         )
+=======
+        super().__init__(root, transform=transform, target_transform=target_transform)
+>>>>>>> master
         self.base_folder = "imagenet32"
         self.train = train  # training set or test set
         self.split = "train" if self.train else "val"
@@ -71,10 +82,14 @@ class ImageNet32Dataset(VisionDataset):
             file_name = "train_data_batch_" + str(i)
             file_path = os.path.join(self.root, self.base_folder, self.split_folder, file_name)
             with open(file_path, "rb") as f:
+<<<<<<< HEAD
                 if sys.version_info[0] == 2:
                     entry = pickle.load(f)
                 else:
                     entry = pickle.load(f, encoding="latin1")
+=======
+                entry = pickle.load(f, encoding="latin1")
+>>>>>>> master
                 self.data.append(entry["data"])
                 if "labels" in entry:
                     self.targets.extend(entry["labels"])

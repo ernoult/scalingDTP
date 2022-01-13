@@ -9,19 +9,23 @@ pip install -e .
 ## Running the code
 To run the pytorch-lightning re-implementation of DTP on CIFAR-10, use the following command:
 ```console
-python main_pl.py dtp
+python main_pl.py run dtp simple_vgg
 ```
 
 To use the modified version of the above DTP model, with "parallel" feedback weight training on CIFAR-10, use the following command:
 ```console
-python main_pl.py parallel_dtp
+python main_pl.py run parallel_dtp simple_vgg
 ```
 
 ### ImageNet
 
 To train with DTP on downsampled ImageNet 32x32 dataset, do:
 ```
+<<<<<<< HEAD
 python main_pl.py dtp --dataset imagenet32
+=======
+python main_pl.py run dtp <architecture> --dataset imagenet32
+>>>>>>> master
 ```
 
 

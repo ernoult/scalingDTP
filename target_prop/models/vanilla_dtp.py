@@ -1,43 +1,34 @@
 from contextlib import nullcontext
+from dataclasses import dataclass
 from functools import singledispatch
 from logging import getLogger
 from typing import List, Union
 
 import torch
-from torch import Tensor, nn
-from torch.optim.optimizer import Optimizer
-
-import torch
-from contextlib import nullcontext
-from logging import getLogger
-from typing import Union
-
-import torch
-from torch import Tensor, nn
-from torch.nn import functional as F
-
-from target_prop.utils import repeat_batch
-from typing import List
-from dataclasses import dataclass
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from simple_parsing.helpers import list_field
+from simple_parsing.helpers.hparams import categorical, log_uniform, uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.config import Config
 from target_prop.optimizer_config import OptimizerConfig
-from simple_parsing.helpers.hparams import log_uniform, uniform, categorical
-from simple_parsing.helpers import list_field
+from target_prop.utils import repeat_batch
+from torch import Tensor, nn
+from torch.nn import functional as F
+from torch.optim.optimizer import Optimizer
 
 logger = getLogger(__name__)
-from .dtp import DTP, ForwardOptimizerConfig, FeedbackOptimizerConfig
+from .dtp import DTP, FeedbackOptimizerConfig, ForwardOptimizerConfig
 
 
 class VanillaDTP(DTP):
-    """ (Vanilla) Difference Target Propagation (DTP)."""
+    """(Vanilla) Difference Target Propagation (DTP)."""
 
     @dataclass
     class HParams(DTP.HParams):
-        """ Hyper-Parameters of the model.
+        """Hyper-Parameters of the model.
 
         This model inherits the same hyper-parameters and hyper-parameter priors as DTP, but with
-        slightly different default values. 
+        slightly different default values.
         TODO: The hyper-parameters for this (vanilla) DTP haven't been tuned yet.
         """
 
@@ -53,8 +44,15 @@ class VanillaDTP(DTP):
             type="sgd", lr=1e-3, weight_decay=1e-4, momentum=0.9
         )
 
-    def __init__(self, datamodule: VisionDataModule, hparams: "VanillaDTP.HParams", config: Config):
-        super().__init__(datamodule, hparams, config)
+    def __init__(
+        self,
+        datamodule: VisionDataModule,
+        network: nn.Sequential,
+        hparams: "VanillaDTP.HParams",
+        config: Config,
+        network_hparams: HyperParameters,
+    ):
+        super().__init__(datamodule, network, hparams, config, network_hparams)
         self.hp: VanillaDTP.HParams
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
@@ -116,9 +114,9 @@ def vanilla_DTP_feedback_loss(
     use_separate_streams: bool = False,
     synchronize: bool = False,
 ) -> Tensor:
-    """ Computes the loss for the feedback weights, given the feedback layer and its
+    """Computes the loss for the feedback weights, given the feedback layer and its
     accompanying forward module.
-    
+
     Returns the loss for a single iteration.
     Can optionally use more than one noise sample per iteration.
     """
@@ -169,7 +167,7 @@ def vanilla_DTP_feedback_loss_parallel(
     noise_scale: Union[float, Tensor],
     noise_samples: int = 1,
 ) -> Tensor:
-    """ Computes the loss for the feedback weights, given the feedback layer and its
+    """Computes the loss for the feedback weights, given the feedback layer and its
     accompanying forward module.
 
     Returns the loss for a single iteration.
