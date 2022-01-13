@@ -100,14 +100,9 @@ class ParallelDTP(DTP):
         # Hyper-parameters for the forward optimizer
 
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-<<<<<<< HEAD
-            type="adam", lr=3e-4, weight_decay=1e-4,
-
-=======
             type="adam",
             lr=3e-4,
             weight_decay=1e-4,
->>>>>>> master
         )
         # Use of a learning rate scheduler for the forward weights.
         scheduler: bool = True

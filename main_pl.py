@@ -1,3 +1,4 @@
+
 """ Script that runs Pytorch lightning version of the DTP models.
 
 Use `python main_pl.py --help` to see a list of all available arguments.
@@ -7,10 +8,6 @@ import dataclasses
 import json
 import logging
 import textwrap
-
-from dataclasses import asdict
-from typing import List,  TypeVar, Type, Union
-
 import warnings
 from argparse import Namespace
 from dataclasses import asdict
@@ -28,7 +25,6 @@ from torch import nn
 
 import wandb
 from target_prop.config import Config
-
 from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 from target_prop.utils import make_reproducible
 from target_prop.networks import (
@@ -40,7 +36,6 @@ from target_prop.networks import (
     simple_vgg,
     lenet,
 )
-
 
 HParams = TypeVar("HParams", bound=HyperParameters)
 
@@ -145,9 +140,6 @@ def run(
         hparams.max_epochs = 1
         root_logger.setLevel(logging.DEBUG)
 
-    # Needed for flexible uniform sampling of tensors
-    hparams.n_layers = len(hparams.channels)
-
     # Create the datamodule:
     datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
@@ -207,7 +199,7 @@ def add_sweep_args(parser: ArgumentParser):
 
         for option_str, net_help_str, net_fn, net_hparams in [
             ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
-            ("lenet", "VGG-like architecture", lenet, LeNetHparams),
+            ("lenet", "LeNet-like architecture", lenet, LeNetHparams),
             ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
             ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
         ]:
