@@ -9,7 +9,7 @@ import json
 import logging
 import textwrap
 from dataclasses import asdict
-from typing import List, Literal, TypeVar, Type, Union
+from typing import List,  TypeVar, Type, Union
 import warnings
 from pytorch_lightning.core.datamodule import LightningDataModule
 
