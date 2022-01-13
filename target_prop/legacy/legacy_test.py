@@ -24,6 +24,7 @@ from target_prop.legacy import (
 )
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
+from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils import is_trainable, named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -82,7 +83,8 @@ def pl_hparams():
 def pl_model(pl_hparams: HyperParameters):
     config = Config(dataset="cifar10", num_workers=0, debug=True)
     datamodule = config.make_datamodule(batch_size=pl_hparams.batch_size)
-    pl_model = DTP(datamodule=datamodule, hparams=pl_hparams, config=config)
+    network = SimpleVGG(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
+    pl_model = DTP(datamodule=datamodule, hparams=pl_hparams, config=config, network=network)
     return pl_model
 
 

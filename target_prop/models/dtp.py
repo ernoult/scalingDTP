@@ -21,6 +21,7 @@ from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import MaxPool2d, Reshape, forward_all
 from target_prop.metrics import compute_dist_angle
+from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
@@ -201,14 +202,14 @@ class DTP(LightningModule):
     def __init__(
         self,
         datamodule: LightningDataModule,
-        network: nn.Sequential,
+        network: Network,
         hparams: "DTP.HParams",
         config: Config,
-        network_hparams: HyperParameters,
+        network_hparams: HyperParameters = None,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
-        self.net_hp = network_hparams
+        self.net_hp = network_hparams or network.hparams
         self.config = config
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.

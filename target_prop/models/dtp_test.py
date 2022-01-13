@@ -1,6 +1,6 @@
 import logging
 from collections import OrderedDict
-from typing import ClassVar, Dict, Iterable, List, Optional, Tuple, Type
+from typing import ClassVar, Dict, Iterable, List, Optional, Tuple, Type, TypeVar
 
 import pytest
 import torch
@@ -12,9 +12,14 @@ from target_prop.config import Config
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
+from target_prop.networks import Network
+from target_prop.networks.resnet import ResNet18, ResNet34
+from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils import named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
+
+networks = [SimpleVGG, ResNet18, ResNet34]
 
 
 class TestDTP:
@@ -22,7 +27,8 @@ class TestDTP:
     model_class: ClassVar[Type[DTP]] = DTP
 
     @pytest.mark.parametrize("dataset", ["cifar10"])
-    def test_fast_dev_run(self, dataset: str):
+    @pytest.mark.parametrize("network_type", networks)
+    def test_fast_dev_run(self, dataset: str, network_type: Type[Network]):
         """ Run a fast dev run using a single batch of data for training/validation/testing. """
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
         # all made for Cifar10 (e.g. hard-set to 5 layers). This would make the test uglier, as we'd
@@ -54,7 +60,18 @@ class TestDTP:
         # Create the datamodule:
         datamodule = config.make_datamodule(batch_size=hparams.batch_size)
 
-        model = self.model_class(datamodule=datamodule, hparams=hparams, config=config)
+        # Create the network
+        network: nn.Sequential = network_type(
+            in_channels=datamodule.dims[0], n_classes=datamodule.num_classes, hparams=None,
+        )
+
+        model = self.model_class(
+            datamodule=datamodule,
+            hparams=hparams,
+            config=config,
+            network=network,
+            network_hparams=network.hparams,
+        )
         trainer.fit(model, datamodule=datamodule)
 
         test_results = trainer.test(model, datamodule=datamodule)
@@ -65,20 +82,34 @@ class TestDTP:
     @pytest.mark.timeout(30)
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("seed", [123, 456])
-    def test_run_is_reproducible_given_seed(self, dataset: str, seed: int):
-        perf_1 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed)
-        perf_2 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed)
+    @pytest.mark.parametrize("network_type", networks)
+    def test_run_is_reproducible_given_seed(
+        self, dataset: str, network_type: Type[Network], seed: int
+    ):
+        perf_1 = self._get_debug_performance_given_seed(
+            dataset=dataset, network_type=network_type, seed=seed
+        )
+        perf_2 = self._get_debug_performance_given_seed(
+            dataset=dataset, network_type=network_type, seed=seed
+        )
         assert perf_1 == perf_2
 
     @pytest.mark.timeout(30)
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("seed", [123, 456])
-    def test_seed_has_impact(self, dataset: str, seed: int):
-        perf_1 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed)
-        perf_2 = self._get_debug_performance_given_seed(dataset=dataset, seed=seed + 1)
+    @pytest.mark.parametrize("network_type", networks)
+    def test_seed_has_impact(self, dataset: str, network_type: Type[Network], seed: int):
+        perf_1 = self._get_debug_performance_given_seed(
+            dataset=dataset, network_type=network_type, seed=seed
+        )
+        perf_2 = self._get_debug_performance_given_seed(
+            dataset=dataset, network_type=network_type, seed=seed + 1
+        )
         assert perf_1 != perf_2
 
-    def _get_debug_performance_given_seed(self, dataset: str, seed: int, batches: int = 1) -> float:
+    def _get_debug_performance_given_seed(
+        self, dataset: str, network_type: Type[Network], seed: int, batches: int = 1
+    ) -> float:
         print(f"Selected seed: {seed}")
         # Note: using 0 workers to speed up testing.
         config = Config(dataset=dataset, debug=True, seed=seed, num_workers=0)
@@ -99,8 +130,10 @@ class TestDTP:
         print("HParams:", hparams.dumps_json(indent="\t"))
         # Create the datamodule:
         datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-
-        model = self.model_class(datamodule=datamodule, hparams=hparams, config=config)
+        network = network_type(in_channels=datamodule.dims[0], num_classes=datamodule.num_classes)
+        model = self.model_class(
+            datamodule=datamodule, hparams=hparams, config=config, network=network
+        )
         trainer.fit(model, datamodule=datamodule)
         test_results = trainer.test(model, datamodule=datamodule)
         test_accuracy: float = test_results[0]["test/accuracy"]
