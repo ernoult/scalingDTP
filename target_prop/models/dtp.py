@@ -249,12 +249,16 @@ class DTP(LightningModule):
         # self.feedback_iterations = self._align_values_with_backward_net(
         #     self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
         # )
-        self.feedback_iterations = list(reversed(self.hp.feedback_training_iterations))
+        fb_train_iter = self.hp.feedback_training_iterations
+        nested_fb_train_iter = [fb_train_iter[x:x + 2] for x in range(0, len(fb_train_iter) - 1, 2)]
+        self.feedback_iterations = list(reversed(nested_fb_train_iter))
 
         # TODO: hardcoded to work with LeNet
 
         # The noise scale for each feedback layer.
-        self.feedback_noise_scales = list(reversed(self.hp.noise))
+        noise = self.hp.noise
+        nested_noise = [noise[x:x + 2] for x in range(0, len(noise) - 1, 2)]
+        self.feedback_noise_scales = list(reversed(nested_noise))
         # self.feedback_noise_scales = self._align_values_with_backward_net(
         #     self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
         # )
@@ -264,7 +268,8 @@ class DTP(LightningModule):
         # self.feedback_lrs = self._align_values_with_backward_net(
         #     lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
         # )
-        self.feedback_lrs = list(reversed(self.hp.b_optim.lr))
+        nested_lrs_per_layer = [lrs_per_layer[x:x + 2] for x in range(0, len(lrs_per_layer) - 1, 2)]
+        self.feedback_lrs = list(reversed(nested_lrs_per_layer))
 
         if self.config.debug:
             print(f"Forward net: ")
