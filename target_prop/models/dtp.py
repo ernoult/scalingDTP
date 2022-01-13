@@ -37,10 +37,10 @@ T = TypeVar("T")
 
 @dataclass
 class ForwardOptimizerConfig(OptimizerConfig):
-    """ Configuration of the optimizer for the forward weights.
-    
+    """Configuration of the optimizer for the forward weights.
+
     NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer. 
+    for the forward optimizer and the feedback optimizer.
     """
 
     # Type of Optimizer to use.
@@ -63,10 +63,10 @@ class ForwardOptimizerConfig(OptimizerConfig):
 
 @dataclass
 class FeedbackOptimizerConfig(OptimizerConfig):
-    """ Configuration of the optimizer for the forward weights.
-    
+    """Configuration of the optimizer for the forward weights.
+
     NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer. 
+    for the forward optimizer and the feedback optimizer.
     """
 
     # Type of Optimizer to use.
@@ -76,13 +76,8 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-
-    # lr: Union[List[float], float] = log_uniform(
-    #     1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
-    # )
-
-    lr: List[float] = log_uniform(
-        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 0.18].copy, shape=4
+    lr: Union[List[float], float] = log_uniform(
+        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
     )
 
     # Learning rate of the optimizer.
@@ -136,40 +131,32 @@ class DTP(LightningModule):
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
-        # Channels per conv layer.
-        channels: List[int] = list_field(128, 128, 256, 256, 512) #list_field(32, 64)
-
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         # NOTE: Not tuning these values:
-
-        #feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20) #list_field(10,20)
-
+        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
         # NOTE: tuning a single value for all layers:
-        #feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
+        # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
         # NOTE: IF we want to tune each value independantly:
-        feedback_training_iterations: List[int] = uniform(
-             5, 40, shape=4, default_factory=[20, 30, 35, 20].copy, discrete=True
-         )
+        # feedback_training_iterations: List[int] = uniform(
+        #     1, 60, shape=5, default_factory=[20, 30, 35, 55, 20].copy, discrete=True
+        # )
 
         # Max number of training epochs in total.
         max_epochs: int = 90
 
         # Hyper-parameters for the optimizer of the feedback weights (backward net).
-
-        #TODO: hardcoded lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18] or lr=[0.35, 0.18]
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 0.18], momentum=0.9
+            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
         # NOTE: Not tuning this parameter:
-#        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08) #list_field(0.025,0.035)
-
+        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
         # NOTE: tuning a value per layer:
-        noise: List[float] = uniform(  # type: ignore
-            0.001, 0.1, default_factory=[0.025, 0.025, 0.035, 0.035].copy, shape=4
-        )
+        # noise: List[float] = uniform(  # type: ignore
+        #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
+        # )
         # NOTE: tuning a single value for all layers:
         # noise: float = uniform(0.001, 0.5, default=0.2)
 
@@ -198,11 +185,6 @@ class DTP(LightningModule):
         # TODO: Add a Callback class to compute and plot jacobians, if that's interesting.
         # jacobian: bool = False  # compute jacobians
 
-        # Type of activation to use.
-        activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
-        )
-
         # Step interval for creating and logging plots.
         plot_every: int = 1000
 
@@ -217,59 +199,51 @@ class DTP(LightningModule):
                     setattr(self, field.name, value.tolist())
 
     def __init__(
-        self, datamodule: LightningDataModule, hparams: "DTP.HParams", config: Config,
+        self,
+        datamodule: LightningDataModule,
+        network: nn.Sequential,
+        hparams: "DTP.HParams",
+        config: Config,
+        network_hparams: HyperParameters,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
-        self.datamodule = datamodule  # type: ignore
+        self.net_hp = network_hparams
         self.config = config
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.
             seed_everything(seed=self.config.seed, workers=True)
-
-        self.in_channels, self.img_h, self.img_w = datamodule.dims
-        self.n_classes = datamodule.num_classes
 
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
             [datamodule.batch_size, *datamodule.dims], device=self.device
         )
 
-        ## Create the forward and backward nets.
-        self.forward_net = self.create_forward_net()
+        # Create the forward and backward nets.
+        self.forward_net = network
         self.backward_net = self.create_backward_net()
 
         if self.hp.init_symetric_weights:
             logger.info(f"Initializing the backward net with symetric weights.")
             init_symetric_weights(self.forward_net, self.backward_net)
 
-        #TODO: hardcoded to work with LeNet
-
         # The number of iterations to perform for each of the layers in `self.backward_net`.
-        # self.feedback_iterations = self._align_values_with_backward_net(
-        #     self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
-        # )
-        fb_train_iter = self.hp.feedback_training_iterations
-        #nested_fb_train_iter = [fb_train_iter[x:x + 2] for x in range(0, len(fb_train_iter) - 1, 2)]
-        self.feedback_iterations = list(reversed(fb_train_iter))
-
-        # TODO: hardcoded to work with LeNet
-
+        self.feedback_iterations = self._align_values_with_backward_net(
+            self.hp.feedback_training_iterations,
+            default=0,
+            inputs_are_forward_ordered=True,
+        )
         # The noise scale for each feedback layer.
-        noise = self.hp.noise
-        #nested_noise = [noise[x:x + 2] for x in range(0, len(noise) - 1, 2)]
-        self.feedback_noise_scales = list(reversed(noise))
-        # self.feedback_noise_scales = self._align_values_with_backward_net(
-        #     self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
-        # )
+        self.feedback_noise_scales = self._align_values_with_backward_net(
+            self.hp.noise,
+            default=0.0,
+            inputs_are_forward_ordered=True,
+        )
         # The learning rate for each feedback layer.
-        #TODO: hardcoded to work with LeNet
         lrs_per_layer = self.hp.b_optim.lr
-        # self.feedback_lrs = self._align_values_with_backward_net(
-        #     lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
-        # )
-        #nested_lrs_per_layer = [lrs_per_layer[x:x + 2] for x in range(0, len(lrs_per_layer) - 1, 2)]
-        self.feedback_lrs = list(reversed(lrs_per_layer))
+        self.feedback_lrs = self._align_values_with_backward_net(
+            lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
+        )
 
         if self.config.debug:
             print(f"Forward net: ")
@@ -295,32 +269,31 @@ class DTP(LightningModule):
                 if i == N - 1:
                     # The last layer of the backward_net (the layer closest to the input) is not
                     # currently being trained, so we expect it to not have these parameters.
-                    #TODO: debug
-
-                    #assert lr == 0
-                    #assert noise == 0
-                    #assert iterations == 0
+                    assert lr == 0
+                    assert noise == 0
+                    assert iterations == 0
                     continue
                 if any(p.requires_grad for p in layer.parameters()):
                     # For any of the trainable layers in the backward net (except the last one), we
                     # expect to have positive values:
                     assert lr > 0
                     assert noise > 0
-                    #assert iterations > 0
+                    assert iterations > 0
                 else:
                     # Non-Trainable layers (e.g. Reshape) are not trained.
                     assert lr == 0
                     assert noise == 0
-                    #assert iterations == 0
+                    assert iterations == 0
         # Metrics:
         self.accuracy = Accuracy()
 
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
-                "datamodule": datamodule,
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
+                "net_hp": self.net_hp.to_dict(),
+                "net_type": type(self.hp).__name__,
             }
         )
 
@@ -338,14 +311,6 @@ class DTP(LightningModule):
         # self.supervised_metrics: List[Metrics]
         self._feedback_optimizers: Optional[List[Optional[Optimizer]]] = None
         self._forward_optimizer: Optional[Optimizer] = None
-
-    def create_forward_net(self) -> nn.Sequential:
-
-        network_type: str = self.config.network
-        network_class = self.config.available_networks[network_type]
-        network = network_class(in_channels=self.in_channels, n_classes=self.n_classes, channels=self.hp.channels)
-        return network
-
 
     def create_backward_net(self) -> nn.Sequential:
         # Pass an example input through the forward net so that we know the input/output shapes for
@@ -386,14 +351,20 @@ class DTP(LightningModule):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
+    def training_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+    ) -> float:  # type: ignore
         result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
         if not self.automatic_optimization:
             return None
         return result
 
     def validation_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
     ) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
@@ -401,7 +372,10 @@ class DTP(LightningModule):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
     ):
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
@@ -637,7 +611,9 @@ class DTP(LightningModule):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net, x, allow_grads_between_layers=False,
+            self.forward_net,
+            x,
+            allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y
@@ -794,9 +770,7 @@ class DTP(LightningModule):
         # the last index.
         configs: List[Dict] = []
         # NOTE: The last feedback layer (G_0) isn't trained, so it doesn't have an optimizer.
-#        print(len(self.backward_net))
-#        print(len(self.feedback_lrs))
-#        assert len(self.backward_net) == len(self.feedback_lrs)
+        assert len(self.backward_net) == len(self.feedback_lrs)
         for i, (feedback_layer, lr) in enumerate(zip(self.backward_net, self.feedback_lrs)):
             if i == (len(self.backward_net) - 1) or not is_trainable(feedback_layer):
                 # NOTE: No learning rate for the first feedback layer atm, although we very well

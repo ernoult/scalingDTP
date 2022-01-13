@@ -2,6 +2,7 @@
 """
 import os
 from dataclasses import dataclass
+from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Callable, ClassVar, Dict, Optional, Type
 from logging import getLogger as get_logger
@@ -28,8 +29,10 @@ from target_prop.datasets import (
     cifar10_normalization,
     imagenet32_normalization,
 )
+
 from target_prop.networks import ResNet18, SimpleVGG, LeNet
 from logging import getLogger as get_logger
+
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
@@ -46,6 +49,7 @@ class Config(Serializable):
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
         "cifar10": cifar10_normalization,
         "imagenet32": imagenet32_normalization,
+
     }
     available_networks: ClassVar[Dict[str, Type[nn.Sequential]]] = {
         "simple_vgg": SimpleVGG,
@@ -54,11 +58,11 @@ class Config(Serializable):
     }
 
     # Which dataset to use.
-
-
     dataset: str = choice(available_datasets.keys(), default="cifar10")
     # Which network to use.
     network: str = choice(available_networks.keys(), default="simple_vgg")
+
+
 
 
     # Directory where the dataset is to be downloaded. Uses the "DATA_DIR" environment
@@ -115,7 +119,12 @@ class Config(Serializable):
                 ]
             )
 
-            test_transform = Compose([ToTensor(), normalization_transform(),])
+            test_transform = Compose(
+                [
+                    ToTensor(),
+                    normalization_transform(),
+                ]
+            )
         # NOTE: We don't pass a seed to the datamodule constructor here, because we assume that the
         # train/val/test split is properly seeded with a fixed value already, and we don't want to
         # contaminate the train/val/test splits during sweeps!
@@ -131,16 +140,17 @@ class Config(Serializable):
         )
 
 
+from typing import Any, Callable, TypeVar, Union, overload
+
 from simple_parsing.helpers.serialization import encode, register_decoding_fn
 from simple_parsing.helpers.serialization.decoding import _register
-from typing import Union, TypeVar, Any, Callable, overload
 
 T = TypeVar("T")
 from typing_extensions import ParamSpec
 
 
 def register_decode(some_type: Type[T]):
-    """Register a decoding function for the type `some_type`. """
+    """Register a decoding function for the type `some_type`."""
 
     def wrapper(f: Callable[[Any], T]) -> Callable[[Any], T]:
         _register(some_type, f)

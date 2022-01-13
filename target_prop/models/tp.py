@@ -5,6 +5,7 @@ from typing import List, Union
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.config import Config
 from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn
@@ -15,18 +16,25 @@ logger = getLogger(__name__)
 
 
 class TargetProp(VanillaDTP):
-    """ Target Propagation (TP)."""
+    """Target Propagation (TP)."""
 
     @dataclass
     class HParams(VanillaDTP.HParams):
-        """ Hyper-Parameters of the model.
+        """Hyper-Parameters of the model.
 
-        This model inherits the same hyper-parameters and hyper-parameter priors as Vanilla DTP. 
+        This model inherits the same hyper-parameters and hyper-parameter priors as Vanilla DTP.
         TODO: The hyper-parameters for this model haven't been tuned yet.
         """
 
-    def __init__(self, datamodule: VisionDataModule, hparams: "TargetProp.HParams", config: Config):
-        super().__init__(datamodule, hparams, config)
+    def __init__(
+        self,
+        datamodule: VisionDataModule,
+        network: nn.Sequential,
+        hparams: "TargetProp.HParams",
+        config: Config,
+        network_hparams: HyperParameters,
+    ):
+        super().__init__(datamodule, network, hparams, config, network_hparams)
         self.hp: TargetProp.HParams
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:

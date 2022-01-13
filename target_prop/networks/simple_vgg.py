@@ -1,18 +1,31 @@
 from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
+from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
 
-available_activations = {"elu": nn.ELU, "relu": nn.ReLU}
+
+@dataclass
+class SimpleVGGHparams(HyperParameters):
+    channels: List[int] = list_field(128, 128, 256, 256, 512)
+    activation: Type[nn.Module] = choice(
+        {
+            "relu": nn.ReLU,
+            "elu": nn.ELU,
+        },
+        default=nn.ELU,
+    )
 
 
-def SimpleVGG(
-    in_channels=3, n_classes=10, channels=[128, 128, 256, 256, 512], activation_type="elu"
-):
+def simple_vgg(in_channels, n_classes, hparams):
     layers: OrderedDict[str, nn.Module] = OrderedDict()
-    activation = available_activations[activation_type]
+    activation: nn.Module = hparams.activation
 
-    channels = [in_channels] + channels
+    channels = [in_channels] + hparams.channels
     # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
     # iterable is exhausted. This gives us the right number of blocks.
     for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
