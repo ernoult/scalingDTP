@@ -306,12 +306,12 @@ class DTP(LightningModule):
                     # expect to have positive values:
                     assert lr > 0
                     assert noise > 0
-                    assert iterations > 0
+                    #assert iterations > 0
                 else:
                     # Non-Trainable layers (e.g. Reshape) are not trained.
                     assert lr == 0
                     assert noise == 0
-                    assert iterations == 0
+                    #assert iterations == 0
         # Metrics:
         self.accuracy = Accuracy()
 
