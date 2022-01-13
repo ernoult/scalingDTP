@@ -257,8 +257,8 @@ class DTP(LightningModule):
 
         # The noise scale for each feedback layer.
         noise = self.hp.noise
-        nested_noise = [noise[x:x + 2] for x in range(0, len(noise) - 1, 2)]
-        self.feedback_noise_scales = list(reversed(nested_noise))
+        #nested_noise = [noise[x:x + 2] for x in range(0, len(noise) - 1, 2)]
+        self.feedback_noise_scales = list(reversed(noise))
         # self.feedback_noise_scales = self._align_values_with_backward_net(
         #     self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
         # )
@@ -268,8 +268,8 @@ class DTP(LightningModule):
         # self.feedback_lrs = self._align_values_with_backward_net(
         #     lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
         # )
-        nested_lrs_per_layer = [lrs_per_layer[x:x + 2] for x in range(0, len(lrs_per_layer) - 1, 2)]
-        self.feedback_lrs = list(reversed(nested_lrs_per_layer))
+        #nested_lrs_per_layer = [lrs_per_layer[x:x + 2] for x in range(0, len(lrs_per_layer) - 1, 2)]
+        self.feedback_lrs = list(reversed(lrs_per_layer))
 
         if self.config.debug:
             print(f"Forward net: ")
