@@ -1,11 +1,10 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+from typing import List, Tuple, Type
 
 import torch.nn as nn
 import torch.nn.functional as F
-from simple_parsing.helpers import list_field
-from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
+from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.backward_layers import invert
 from target_prop.layers import AdaptiveAvgPool2d, Reshape
@@ -125,19 +124,26 @@ def invert_basic(module: BasicBlock) -> InvertedBasicBlock:
 
 @dataclass
 class ResNet18Hparams(HyperParameters):
-    block: nn.Module = categorical({"basic": BasicBlock}, default=BasicBlock)
+    block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
     use_batchnorm: bool = False
     num_blocks: List[int] = list_field(2, 2, 2, 2)
 
 
 @dataclass
 class ResNet34Hparams(HyperParameters):
-    block: nn.Module = categorical({"basic": BasicBlock}, default=BasicBlock)
+    block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
     use_batchnorm: bool = False
     num_blocks: List[int] = list_field(3, 4, 6, 3)
 
 
-def make_layer(block, planes, num_blocks, stride, in_planes, use_batchnorm):
+def make_layer(
+    block: Type[BasicBlock],
+    planes: int,
+    num_blocks: int,
+    stride: int,
+    in_planes: int,
+    use_batchnorm: bool,
+) -> Tuple[nn.Sequential, int]:
     strides = [stride] + [1] * (num_blocks - 1)
     layers = []
     for stride in strides:

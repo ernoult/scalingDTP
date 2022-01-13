@@ -153,9 +153,9 @@ def check_shapes_hook(
     if not hasattr(module, "enforce_shapes"):
         module.enforce_shapes = False
     # NOTE: not using hasattr since some layers might have type annotations with empty tuple or smt.
-    if getattr(module, "input_shape", ()) is ():
+    if getattr(module, "input_shape", ()) == ():
         module.input_shape = input_shape
-    if getattr(module, "output_shape", ()) is ():
+    if getattr(module, "output_shape", ()) == ():
         module.output_shape = output_shape
 
     # NOTE: This isinstance check works with the `Invertible` procol since the attributes are there.

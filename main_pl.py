@@ -25,6 +25,7 @@ from torch import nn
 import wandb
 from target_prop.config import Config
 from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
+from target_prop.utils import make_reproducible
 from target_prop.networks import (
     ResNet18Hparams,
     ResNet34Hparams,
@@ -97,49 +98,13 @@ def add_run_args(parser: ArgumentParser):
             ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
         ]:
             net_subparser = net_subparsers.add_parser(
-                option_str,
-                help=help_str + " with a " + net_help_str,
-                description=net_fn.__doc__,
+                option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,
             )
             net_subparser.add_arguments(model_type.HParams, dest="hparams")
             net_subparser.add_arguments(net_hparams, dest="network_hparams")
             net_subparser.add_arguments(Config, dest="config")
             net_subparser.set_defaults(network_type=net_fn)
 
-    # Fixes a weird little argparse bug with metavar.
-    subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
-
-
-def add_sweep_args(parser: ArgumentParser):
-    subparsers = parser.add_subparsers(
-        title="model",
-        description="Type of model to use for the sweep.",
-        required=True,
-        help=None,
-    )
-
-    for option_str, help_str, model_type in [
-        ("dtp", "Use DTP", DTP),
-        ("parallel_dtp", "Use the parallel variant of DTP", ParallelDTP),
-        ("vanilla_dtp", "Use 'vanilla' DTP", VanillaDTP),
-        ("tp", "Use 'vanilla' Target Propagation", TargetProp),
-        ("backprop", "Use regular backprop", BaselineModel),
-    ]:
-        subparser = subparsers.add_parser(option_str, help=help_str, description=model_type.__doc__)
-        # NOTE: Add the config to the subparsers.
-        subparser.add_arguments(Config, dest="config")
-        # NOTE: Don't add the command-line options for the arguments here, since they will get
-        # overwritten with sampled values.
-        # subparser.add_arguments(model_type.HParams, dest="hparams")
-        subparser.set_defaults(model_type=model_type)
-        subparser.add_argument(
-            "--max_epochs",
-            type=int,
-            default=10,
-            help="How many epochs to run for each configuration.",
-        )
-
-    parser.add_argument("--n-runs", "--n_runs", type=int, default=1, help="How many runs to do.")
     # Fixes a weird little argparse bug with metavar.
     subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
 
@@ -176,9 +141,7 @@ def run(
 
     # Create the network
     network: nn.Sequential = network_type(
-        in_channels=datamodule.dims[0],
-        n_classes=datamodule.num_classes,
-        hparams=network_hparams,
+        in_channels=datamodule.dims[0], n_classes=datamodule.num_classes, hparams=network_hparams,
     )
 
     # Create the model
@@ -206,7 +169,62 @@ def run(
     return test_accuracy
 
 
-def sweep(config: Config, model_type: Type[Model], n_runs: int = 1, **fixed_hparams):
+def add_sweep_args(parser: ArgumentParser):
+    subparsers = parser.add_subparsers(
+        title="model", description="Type of model to use for the sweep.", required=True, help=None,
+    )
+
+    for option_str, help_str, model_type in [
+        ("dtp", "Use DTP", DTP),
+        ("parallel_dtp", "Use the parallel variant of DTP", ParallelDTP),
+        ("vanilla_dtp", "Use 'vanilla' DTP", VanillaDTP),
+        ("tp", "Use 'vanilla' Target Propagation", TargetProp),
+        ("backprop", "Use regular backprop", BaselineModel),
+    ]:
+        subparser = subparsers.add_parser(option_str, help=help_str, description=model_type.__doc__)
+        # NOTE: Add the config to the subparsers.
+        # subparser.add_arguments(Config, dest="config")  # note: moved to the last subparser below.
+        # NOTE: Don't add the command-line options for the arguments here, since they will get
+        # overwritten with sampled values.
+        # subparser.add_arguments(model_type.HParams, dest="hparams")
+        subparser.set_defaults(model_type=model_type)
+
+        net_subparsers = subparser.add_subparsers(
+            title="network", description="Which network architecture to use", required=True
+        )
+
+        for option_str, net_help_str, net_fn, net_hparams in [
+            ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
+            ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
+            ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
+        ]:
+            net_subparser = net_subparsers.add_parser(
+                option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,
+            )
+            net_subparser.add_arguments(Config, dest="config")
+            net_subparser.set_defaults(network_hparams_type=net_hparams)
+            net_subparser.set_defaults(network_type=net_fn)
+            # NOTE: This will be a 'fixed' hyper-parameter. We don't want to sample it.
+            net_subparser.add_argument(
+                "--max_epochs",
+                type=int,
+                default=10,
+                help="How many epochs to run for each configuration.",
+            )
+
+    parser.add_argument("--n-runs", "--n_runs", type=int, default=1, help="How many runs to do.")
+    # Fixes a weird little argparse bug with metavar.
+    subparsers.metavar = "{" + ",".join(subparsers._name_parser_map.keys()) + "}"
+
+
+def sweep(
+    config: Config,
+    model_type: Type[Model],
+    network_type: Callable[..., nn.Sequential],
+    network_hparams_type: Type[HyperParameters],
+    n_runs: int = 1,
+    **fixed_hparams,
+):
     """Performs a hyper-parameter sweep.
 
     The hyper-parameters are sampled randomly from their priors. This then calls `run` with the
@@ -221,11 +239,14 @@ def sweep(config: Config, model_type: Type[Model], n_runs: int = 1, **fixed_hpar
 
     print(f"Type of model used: {model_type}")
     hparam_type = model_type.HParams
-    space_dict = hparam_type().get_orion_space()
-
-    print("Hyper-Parameter optimization search space:")
+    hparam_space_dict = hparam_type().get_orion_space()
+    network_hparam_space_dict = network_hparams_type().get_orion_space()
+    print("Algorithm HPO search space:")
     # print(space_dict)
-    print(json.dumps(space_dict, indent="\t"))
+    print(json.dumps(hparam_space_dict, indent="\t"))
+    print("Network HPO search space:")
+    print(json.dumps(network_hparam_space_dict, indent="\t"))
+
     if fixed_hparams:
         print(f"Fixed hyper-parameter values: {fixed_hparams}")
 
@@ -233,21 +254,40 @@ def sweep(config: Config, model_type: Type[Model], n_runs: int = 1, **fixed_hpar
     # not always the same.
     # NOTE: This is fine for now, since we use random search.
     run_hparams = []
+    run_network_hparams = []
     assert config.seed is not None
     with make_reproducible(seed=config.seed):
         for run_index in range(n_runs):
             hparams = hparam_type.sample()
+            network_hparams = network_hparams_type.sample()
             if fixed_hparams:
+                # Check if they are for the network or for the Model (algo) hparams:
                 # Fix some of the hyper-paremters
-                hparam_dict = hparams.to_dict()
-                hparam_dict.update(fixed_hparams)
-                hparams = hparam_type.from_dict(hparam_dict)
+                hparams_dict = hparams.to_dict()
+                from dataclasses import replace
+
+                hparams = replace(
+                    hparams, **{k: v for k, v in fixed_hparams.items() if hasattr(hparams, k)}
+                )
+                network_hparams = replace(
+                    network_hparams,
+                    **{k: v for k, v in fixed_hparams.items() if hasattr(network_hparams, k)},
+                )
             run_hparams.append(hparams)
+            run_network_hparams.append(network_hparams)
 
     performances = []
-    for run_index, run_hparams in enumerate(run_hparams):
+    for run_index, (run_hparams, network_hparams) in enumerate(
+        zip(run_hparams, run_network_hparams)
+    ):
         print(f"\n\n----------------- Starting run #{run_index+1}/{n_runs} -------------------\n\n")
-        performance = run(config=config, model_type=model_type, hparams=run_hparams)
+        performance = run(
+            config=config,
+            model_type=model_type,
+            hparams=run_hparams,
+            network_type=network_type,
+            network_hparams=network_hparams,
+        )
         performances.append(performance)
     return performances
 
