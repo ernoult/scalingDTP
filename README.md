@@ -14,7 +14,7 @@ python main_pl.py run dtp simple_vgg
 
 To use the modified version of the above DTP model, with "parallel" feedback weight training on CIFAR-10, use the following command:
 ```console
-python main_pl.py run simple_vgg parallel_dtp
+python main_pl.py run parallel_dtp simple_vgg
 ```
 
 ### ImageNet
