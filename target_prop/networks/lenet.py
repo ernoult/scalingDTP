@@ -50,12 +50,16 @@ def lenet(in_channels, n_classes, hparams):
             )
         )
         layers[f"conv_{i}"] = block
-    layers["fc"] = nn.Sequential(
+    layers["fc1"] = nn.Sequential(
         OrderedDict(
             reshape=Reshape(target_shape=(-1,)),
             linear1= nn.LazyLinear(out_features=512, bias=True),
-            rho=activation(),
-            linear2=nn.Linear(in_features=512, out_features=n_classes, bias=True)
+            rho=activation()
+        )
+    )
+    layers["fc2"] = nn.Sequential(
+        OrderedDict(
+            linear1=nn.Linear(in_features=512, out_features=n_classes, bias=True)
         )
     )
 
