@@ -30,9 +30,6 @@ def lenet(in_channels, n_classes, hparams):
     # iterable is exhausted. This gives us the right number of blocks.
     for i, (in_channels, out_channels) in enumerate(zip(channels[0:-1], channels[1:-1])):
 
-        if i == len(hparams.channels) - 1:
-
-
         block = nn.Sequential(
             OrderedDict(
                 conv=nn.Conv2d(
@@ -53,18 +50,19 @@ def lenet(in_channels, n_classes, hparams):
             )
         )
         layers[f"conv_{i}"] = block
-    layers["fc1"] = nn.Sequential(
+    layers["fc"] = nn.Sequential(
         OrderedDict(
             reshape=Reshape(target_shape=(-1,)),
             linear1= nn.LazyLinear(out_features=hparams.channels[-1], bias=True),
             rho=activation(),
+            linear2=nn.Linear(in_features=512, out_features=n_classes, bias=True)
         )
     )
-    layers["fc2"] = nn.Sequential(
-        OrderedDict(
-            linear2= nn.Linear(in_features=512, out_features=n_classes, bias=True)
-        )
-    )
+    # layers["fc2"] = nn.Sequential(
+    #     OrderedDict(
+    #         linear2= nn.Linear(in_features=512, out_features=n_classes, bias=True)
+    #     )
+    # )
     # layers["reshape"] = Reshape(target_shape=(-1,))
     # # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
     # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
