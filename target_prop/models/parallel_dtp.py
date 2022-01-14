@@ -132,6 +132,7 @@ class ParallelDTP(DTP):
             limit_train_batches=self.config.limit_train_batches,
             limit_val_batches=self.config.limit_val_batches,
             limit_test_batches=self.config.limit_test_batches,
+            checkpoint_callback=(not self.config.debug),
         )
 
     def training_step(  # type: ignore

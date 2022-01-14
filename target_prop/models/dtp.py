@@ -347,6 +347,7 @@ class DTP(LightningModule):
             limit_train_batches=self.config.limit_train_batches,
             limit_val_batches=self.config.limit_val_batches,
             limit_test_batches=self.config.limit_test_batches,
+            checkpoint_callback=(not self.config.debug),
         )
 
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
