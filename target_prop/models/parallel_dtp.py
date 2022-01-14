@@ -129,6 +129,9 @@ class ParallelDTP(DTP):
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
             logger=WandbLogger() if not self.config.debug else None,
+            limit_train_batches=self.config.limit_train_batches,
+            limit_val_batches=self.config.limit_val_batches,
+            limit_test_batches=self.config.limit_test_batches,
         )
 
     def training_step(  # type: ignore

@@ -71,6 +71,11 @@ class Config(Serializable):
     # Which device to use.
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Limit the number of train/val/test batches. Useful for quick debugging or unit testing.
+    limit_train_batches: Optional[int] = None
+    limit_val_batches: Optional[int] = None
+    limit_test_batches: Optional[int] = None
+
     def __post_init__(self):
         if self.seed is None:
             g = torch.Generator(device=self.device)

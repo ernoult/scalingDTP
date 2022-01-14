@@ -22,6 +22,7 @@ from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import MaxPool2d, Reshape, forward_all
 from target_prop.metrics import compute_dist_angle
 from target_prop.networks import Network
+from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
@@ -343,6 +344,9 @@ class DTP(LightningModule):
             reload_dataloaders_every_epoch=False,
             terminate_on_nan=True,
             logger=WandbLogger() if not self.config.debug else None,
+            limit_train_batches=self.config.limit_train_batches,
+            limit_val_batches=self.config.limit_val_batches,
+            limit_test_batches=self.config.limit_test_batches,
         )
 
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
