@@ -122,20 +122,6 @@ def invert_basic(module: BasicBlock) -> InvertedBasicBlock:
     return backward
 
 
-@dataclass
-class ResNet18Hparams(HyperParameters):
-    block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
-    use_batchnorm: bool = False
-    num_blocks: List[int] = list_field(2, 2, 2, 2)
-
-
-@dataclass
-class ResNet34Hparams(HyperParameters):
-    block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
-    use_batchnorm: bool = False
-    num_blocks: List[int] = list_field(3, 4, 6, 3)
-
-
 def make_layer(
     block: Type[BasicBlock],
     planes: int,
