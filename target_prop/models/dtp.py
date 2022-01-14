@@ -37,10 +37,10 @@ T = TypeVar("T")
 
 @dataclass
 class ForwardOptimizerConfig(OptimizerConfig):
-    """ Configuration of the optimizer for the forward weights.
-    
+    """Configuration of the optimizer for the forward weights.
+
     NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer. 
+    for the forward optimizer and the feedback optimizer.
     """
 
     # Type of Optimizer to use.
@@ -63,10 +63,10 @@ class ForwardOptimizerConfig(OptimizerConfig):
 
 @dataclass
 class FeedbackOptimizerConfig(OptimizerConfig):
-    """ Configuration of the optimizer for the forward weights.
-    
+    """Configuration of the optimizer for the forward weights.
+
     NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer. 
+    for the forward optimizer and the feedback optimizer.
     """
 
     # Type of Optimizer to use.
@@ -76,8 +76,8 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(
-        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
+    lr: List[float] = log_uniform(
+        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=3
     )
 
     # Learning rate of the optimizer.
@@ -131,19 +131,16 @@ class DTP(LightningModule):
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
-        # Channels per conv layer.
-        channels: List[int] = list_field(128, 128, 256, 256, 512)
-
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
         # NOTE: Not tuning these values:
-        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
+        #feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
         # NOTE: tuning a single value for all layers:
         # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
         # NOTE: IF we want to tune each value independantly:
-        # feedback_training_iterations: List[int] = uniform(
-        #     1, 60, shape=5, default_factory=[20, 30, 35, 55, 20].copy, discrete=True
-        # )
+        feedback_training_iterations: List[int] = uniform(
+            1, 60, shape=3, default_factory=[20, 55, 20].copy, discrete=True
+        )
 
         # Max number of training epochs in total.
         max_epochs: int = 90
@@ -155,11 +152,11 @@ class DTP(LightningModule):
 
         # The scale of the gaussian random variable in the feedback loss calculation.
         # NOTE: Not tuning this parameter:
-        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+        #noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
         # NOTE: tuning a value per layer:
-        # noise: List[float] = uniform(  # type: ignore
-        #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        # )
+        noise: List[float] = uniform(  # type: ignore
+            0.001, 0.5, default_factory=[0.4, 0.08, 0.08].copy, shape=3
+        )
         # NOTE: tuning a single value for all layers:
         # noise: float = uniform(0.001, 0.5, default=0.2)
 
@@ -188,11 +185,6 @@ class DTP(LightningModule):
         # TODO: Add a Callback class to compute and plot jacobians, if that's interesting.
         # jacobian: bool = False  # compute jacobians
 
-        # Type of activation to use.
-        activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
-        )
-
         # Step interval for creating and logging plots.
         plot_every: int = 1000
 
@@ -207,26 +199,28 @@ class DTP(LightningModule):
                     setattr(self, field.name, value.tolist())
 
     def __init__(
-        self, datamodule: LightningDataModule, hparams: "DTP.HParams", config: Config,
+        self,
+        datamodule: LightningDataModule,
+        network: nn.Sequential,
+        hparams: "DTP.HParams",
+        config: Config,
+        network_hparams: HyperParameters,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
-        self.datamodule = datamodule  # type: ignore
+        self.net_hp = network_hparams
         self.config = config
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.
             seed_everything(seed=self.config.seed, workers=True)
-
-        self.in_channels, self.img_h, self.img_w = datamodule.dims
-        self.n_classes = datamodule.num_classes
 
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
             [datamodule.batch_size, *datamodule.dims], device=self.device
         )
 
-        ## Create the forward and backward nets.
-        self.forward_net = self.create_forward_net()
+        # Create the forward and backward nets.
+        self.forward_net = network
         self.backward_net = self.create_backward_net()
 
         if self.hp.init_symetric_weights:
@@ -235,11 +229,15 @@ class DTP(LightningModule):
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
+            self.hp.feedback_training_iterations,
+            default=0,
+            inputs_are_forward_ordered=True,
         )
         # The noise scale for each feedback layer.
         self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
+            self.hp.noise,
+            default=0.0,
+            inputs_are_forward_ordered=True,
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
@@ -292,9 +290,10 @@ class DTP(LightningModule):
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
-                "datamodule": datamodule,
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
+                "net_hp": self.net_hp.to_dict(),
+                "net_type": type(self.hp).__name__,
             }
         )
 
@@ -312,40 +311,6 @@ class DTP(LightningModule):
         # self.supervised_metrics: List[Metrics]
         self._feedback_optimizers: Optional[List[Optional[Optimizer]]] = None
         self._forward_optimizer: Optional[Optimizer] = None
-
-    def create_forward_net(self) -> nn.Sequential:
-        layers: OrderedDict[str, nn.Module] = OrderedDict()
-
-        activation_type = self.hp.activation
-
-        channels = [self.in_channels] + self.hp.channels
-        # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
-        # iterable is exhausted. This gives us the right number of blocks.
-        for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
-            block = nn.Sequential(
-                OrderedDict(
-                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
-                    rho=activation_type(),
-                    # NOTE: Even though `return_indices` is `False` here, we're actually passing
-                    # the indices to the backward net for this layer through a "magic bridge".
-                    # We use `return_indices=False` here just so the layer doesn't also return
-                    # the indices in its forward pass.
-                    pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
-                    # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
-                    # pool=nn.AvgPool2d(kernel_size=2),
-                )
-            )
-            layers[f"conv_{i}"] = block
-        layers["fc"] = nn.Sequential(
-            OrderedDict(
-                reshape=Reshape(target_shape=(-1,)),
-                linear=nn.LazyLinear(out_features=self.n_classes, bias=True),
-            )
-        )
-        # layers["reshape"] = Reshape(target_shape=(-1,))
-        # # # NOTE: Using LazyLinear so we don't have to know the hidden size in advance
-        # layers["fc"] = nn.LazyLinear(out_features=self.n_classes, bias=True)
-        return nn.Sequential(layers)
 
     def create_backward_net(self) -> nn.Sequential:
         # Pass an example input through the forward net so that we know the input/output shapes for
@@ -386,14 +351,20 @@ class DTP(LightningModule):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
+    def training_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+    ) -> float:  # type: ignore
         result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
         if not self.automatic_optimization:
             return None
         return result
 
     def validation_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
     ) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
@@ -401,7 +372,10 @@ class DTP(LightningModule):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
     ):
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
@@ -524,6 +498,7 @@ class DTP(LightningModule):
                 # Compute the angle and distance for debugging the training of the
                 # feedback weights:
                 with torch.no_grad():
+                    #TODO: verify this distance is normalized by F_i
                     metrics = compute_dist_angle(F_i, G_i)
                     if isinstance(metrics, dict):
                         # NOTE: When a block has more than one trainable layer, we only report the
@@ -637,7 +612,9 @@ class DTP(LightningModule):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net, x, allow_grads_between_layers=False,
+            self.forward_net,
+            x,
+            allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y
@@ -800,7 +777,8 @@ class DTP(LightningModule):
                 # NOTE: No learning rate for the first feedback layer atm, although we very well
                 # could train it, it wouldn't change anything about the forward weights.
                 # Non-trainable layers also don't have an optimizer.
-                assert lr == 0.0, (i, lr, self.feedback_lrs, type(feedback_layer))
+                #assert lr == 0.0, (i, lr, self.feedback_lrs, type(feedback_layer))
+                pass
             else:
                 assert lr != 0.0
                 feedback_layer_optimizer = self.hp.b_optim.make_optimizer(feedback_layer, lrs=[lr])

@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from collections import OrderedDict, deque
-from typing import (
-    Tuple,
-    Type,
-    TypeVar,
-)
+from typing import Tuple, Type, TypeVar
 
 import torch
 from torch import Tensor, nn
+from torch.nn.common_types import _size_2_t, _size_any_t
 from torch.nn.modules.pooling import AdaptiveMaxPool2d
-from torch.nn.common_types import _size_any_t, _size_2_t
 
-from .backward_layers import invert, Invertible
+from .backward_layers import Invertible, invert
 
 ModuleType = TypeVar("ModuleType", bound=nn.Module, covariant=True)
 
@@ -37,10 +33,12 @@ def forward_each(module: nn.Sequential, xs: list[Tensor]) -> list[Tensor]:
 
 
 def forward_all(
-    module: nn.Sequential, x: Tensor, allow_grads_between_layers: bool = False,
+    module: nn.Sequential,
+    x: Tensor,
+    allow_grads_between_layers: bool = False,
 ) -> list[Tensor]:
-    """Gets the outputs of all forward layers for the given input. 
-    
+    """Gets the outputs of all forward layers for the given input.
+
     Parameters
     ----------
     x : Tensor
@@ -85,7 +83,9 @@ class Reshape(nn.Module, Invertible):
 @invert.register
 def invert_reshape(module: Reshape) -> Reshape:
     assert module.input_shape and module.output_shape, "Use the net before inverting."
-    return type(module)(target_shape=module.input_shape,)
+    return type(module)(
+        target_shape=module.input_shape,
+    )
 
 
 class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d, Invertible):
@@ -95,8 +95,8 @@ class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d, Invertible):
 
 
 @invert.register
-def invert_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
-    """ Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input! """
+def invert_adaptive_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
+    """Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input!"""
     assert module.input_shape and module.output_shape, "Use the net before inverting."
     return type(module)(
         output_size=module.input_shape[-2:],  # type: ignore
@@ -104,8 +104,7 @@ def invert_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
 
 
 class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
-    # TODO: use a magic_bridge deque that is shared from the forward to the backward
-    # net.
+    # NOTE: uses a magic_bridge deque that is shared from the forward to the backward layers
 
     def __init__(
         self,
@@ -115,7 +114,9 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
         magic_bridge: deque[Tensor] = None,
     ):
         super().__init__(
-            kernel_size=kernel_size, stride=stride, padding=padding,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
         )
         self.magic_bridge: deque[Tensor] | None = magic_bridge
 
@@ -138,6 +139,8 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
             # loss uses this backward layer twice in a row (once with y and again with y+noise)
             indices = self.magic_bridge[0]
             # indices = self.magic_bridge.pop()
+        if output_size is None and self.output_shape:
+            output_size = list(self.output_shape[-2:])
         return super().forward(input=input, indices=indices, output_size=output_size)
 
 
@@ -148,7 +151,9 @@ def invert_maxunpool2d(
     raise NotImplementedError("Never really need to invert a max Unpool layer.")
     assert module.input_shape and module.output_shape
     assert len(module.input_shape) > 2
-    return AdaptiveMaxPool2d(output_size=module.input_shape[-2:],)
+    return AdaptiveMaxPool2d(
+        output_size=module.input_shape[-2:],
+    )
 
 
 class MaxPool2d(nn.MaxPool2d, Invertible):
@@ -194,34 +199,48 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
 
 @invert.register
 def invert_maxpool2d(module: MaxPool2d, init_symetric_weights: bool = False) -> MaxUnpool2d:
-    return MaxUnpool2d(
+    m = MaxUnpool2d(
         kernel_size=module.kernel_size,
-        stride=None,  # todo: Not sure waht to do with this value here.
-        padding=0,  # todo
+        stride=module.stride,  # todo: double-check that this is correct
+        padding=module.padding,  # todo: double-check that this is correct
         magic_bridge=module.magic_bridge,
     )
+    m.output_shape = module.input_shape
+    m.input_shape = module.output_shape
+    return m
 
 
-class BatchUnNormalize(nn.Module):
-    """ TODO: Meant to be something like the 'inverse' of a batchnorm2d
+# class BatchUnNormalize(nn.Module):
+#     """ TODO: Meant to be something like the 'inverse' of a batchnorm2d
 
-    NOTE: No need to make this 'Invertible', because we don't really care about
-    inverting this, we moreso would like to obtain this from 'inverting' batchnorm2d.
-    """
+#     NOTE: No need to make this 'Invertible', because we don't really care about
+#     inverting this, we moreso would like to obtain this from 'inverting' batchnorm2d.
+#     """
 
-    def __init__(self, num_features: int, dtype=torch.float32):
-        super().__init__()
-        self.scale = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
-        torch.nn.init.xavier_uniform_(self.scale)
-        self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
+#     def __init__(self, num_features: int, dtype=torch.float32):
+#         super().__init__()
+#         self.scale = nn.Parameter(torch.ones(num_features, dtype=dtype), requires_grad=True)
+#         torch.nn.init.xavier_uniform_(self.scale)
+#         self.offset = nn.Parameter(torch.zeros(num_features, dtype=dtype), requires_grad=True)
 
-    def forward(self, input: Tensor) -> Tensor:
-        return input * self.scale + self.offset
+#     def forward(self, input: Tensor) -> Tensor:
+#         return input * self.scale + self.offset
+
+
+# @invert.register(nn.BatchNorm2d)
+# def invert_batchnorm(
+#     layer: nn.BatchNorm2d, init_symetric_weights: bool = False
+# ) -> BatchUnNormalize:
+#     # TODO: Is there a way to initialize symetric weights for BatchNorm?
+#     return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
 
 
 @invert.register(nn.BatchNorm2d)
-def invert_batchnorm(
-    layer: nn.BatchNorm2d, init_symetric_weights: bool = False
-) -> BatchUnNormalize:
-    # TODO: Is there a way to initialize symetric weights for BatchNorm?
-    return BatchUnNormalize(num_features=layer.num_features, dtype=layer.weight.dtype)
+def invert_batchnorm(layer: nn.BatchNorm2d, init_symetric_weights: bool = False) -> nn.BatchNorm2d:
+    return nn.BatchNorm2d(
+        num_features=layer.num_features,
+        eps=layer.eps,
+        momentum=layer.momentum,
+        affine=layer.affine,
+        track_running_stats=layer.track_running_stats,
+    )

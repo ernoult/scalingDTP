@@ -1,13 +1,7 @@
 from __future__ import annotations
 
 from functools import singledispatch
-from typing import (
-    Any,
-    OrderedDict,
-    Tuple,
-    TypeVar,
-    Union,
-)
+from typing import Any, OrderedDict, Tuple, TypeVar, Union
 
 try:
     from typing import Protocol, runtime_checkable
@@ -21,7 +15,7 @@ ModuleType = TypeVar("ModuleType", bound=nn.Module)
 
 @runtime_checkable
 class Invertible(Protocol):
-    """ A Module that is "easy to invert" since it has known input and output shapes.
+    """A Module that is "easy to invert" since it has known input and output shapes.
 
     It's easier to mark modules as invertible in-place than to create new subclass for every single
     nn.Module class that we want to potentially use in the forward net.
@@ -37,10 +31,10 @@ class Invertible(Protocol):
 @singledispatch
 def invert(layer: Invertible) -> Any:
     """Returns the module to be used to compute the 'backward' version of `layer`.
-    
+
     NOTE: All concrete handlers below usually assume that a layer has been marked as 'invertible'.
-    This is usually 
-    
+    This is usually
+
     Parameters
     ----------
     layer : nn.Module
@@ -63,23 +57,30 @@ def invert(layer: Invertible) -> Any:
 def invert_linear(layer: nn.Linear) -> nn.Linear:
     # NOTE: Not sure how to handle the bias term
     backward = type(layer)(
-        in_features=layer.out_features, out_features=layer.in_features, bias=layer.bias is not None,
+        in_features=layer.out_features,
+        out_features=layer.in_features,
+        bias=layer.bias is not None,
     )
     return backward
 
 
 @invert.register(nn.Sequential)
 def invert_sequential(module: nn.Sequential) -> nn.Sequential:
-    """ Returns a Module that can be used to compute or approximate the inverse
+    """Returns a Module that can be used to compute or approximate the inverse
     operation of `self`.
 
     NOTE: In the case of Sequential, the order of the layers in the returned network
     is reversed compared to the input.
     """
-    assert module.input_shape and module.output_shape, "Use the net before inverting."
+    # assert module.input_shape and module.output_shape, "Use the net before inverting."
     return type(module)(
         OrderedDict((name, invert(module)) for name, module in list(module._modules.items())[::-1]),
     )
+
+
+@invert.register(nn.Identity)
+def invert_identity(module: nn.Identity) -> nn.Identity:
+    return nn.Identity()
 
 
 @invert.register
@@ -116,13 +117,8 @@ def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
 
 
 @invert.register(nn.ReLU)
-def invert_activation(activation_layer: nn.Module) -> nn.Module:
-    # TODO: Return an identity function?
-    raise NotImplementedError(f"Activations aren't invertible by default!")
-    # NOTE: It may also be the case that this activation is misplaced (leading to the
-    # mis-alignment of layers in contiguous blocks of a network)
-    return nn.Identity()
-    # return copy.deepcopy(activation_layer)
+def invert_relu(activation_layer: nn.Module) -> nn.Module:
+    return nn.ReLU(inplace=False)
 
 
 @invert.register(nn.ELU)
@@ -131,10 +127,12 @@ def _invert_elu(activation_layer: nn.ELU) -> nn.Module:
 
 
 def check_shapes_hook(
-    module: Invertible, inputs: Tensor | tuple[Tensor, ...], outputs: Tensor | tuple[Tensor, ...],
+    module: Invertible,
+    inputs: Tensor | tuple[Tensor, ...],
+    outputs: Tensor | tuple[Tensor, ...],
 ) -> None:
-    """ Hook that sets the `input_shape` and `output_shape` attributes on the layers if not present.
-    
+    """Hook that sets the `input_shape` and `output_shape` attributes on the layers if not present.
+
     Also, if the `enforce_shapes` attribute is set to `True` on `module`, and the shapes don't match
     with their respective attributes, this will raise an error.
     """
@@ -155,9 +153,9 @@ def check_shapes_hook(
     if not hasattr(module, "enforce_shapes"):
         module.enforce_shapes = False
     # NOTE: not using hasattr since some layers might have type annotations with empty tuple or smt.
-    if getattr(module, "input_shape", ()) is ():
+    if getattr(module, "input_shape", ()) == ():
         module.input_shape = input_shape
-    if getattr(module, "output_shape", ()) is ():
+    if getattr(module, "output_shape", ()) == ():
         module.output_shape = output_shape
 
     # NOTE: This isinstance check works with the `Invertible` procol since the attributes are there.
@@ -178,7 +176,7 @@ def check_shapes_hook(
 
 @singledispatch
 def mark_as_invertible(module: ModuleType) -> Union[ModuleType, Invertible]:
-    """ Makes the module easier to "invert" by adding hooks that set the
+    """Makes the module easier to "invert" by adding hooks that set the
     `input_shape` and `output_shape` attributes. Modifies the module in-place.
     """
     if check_shapes_hook not in module._forward_hooks.values():
@@ -187,7 +185,9 @@ def mark_as_invertible(module: ModuleType) -> Union[ModuleType, Invertible]:
 
 
 @mark_as_invertible.register
-def mark_sequential_as_invertible(module: nn.Sequential,) -> Union[nn.Sequential, Invertible]:
+def mark_sequential_as_invertible(
+    module: nn.Sequential,
+) -> Union[nn.Sequential, Invertible]:
     if check_shapes_hook not in module._forward_hooks.values():
         module.register_forward_hook(check_shapes_hook)
     for layer in module:
