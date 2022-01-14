@@ -12,13 +12,14 @@ from torch import nn
 @dataclass
 class LeNetHparams(HyperParameters):
     channels: List[int] = list_field(32,64)
-    activation: Type[nn.Module] = categorical(
+    activation: Type[nn.Module] = choice(
         {
             "relu": nn.ReLU,
             "elu": nn.ELU,
         },
         default=nn.ELU,
     )
+
 
 def lenet(in_channels, n_classes, hparams):
 
