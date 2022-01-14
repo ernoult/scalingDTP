@@ -8,8 +8,5 @@ conda activate target_prop
 
 cd ~/target_prop/scalingDTP
 
-
-python main_pl.py run "$@" --data_dir $SLURM_TMPDIR --seed $SLURM_ARRAY_TASK_ID
-
-#python main_pl.py run "$@" --data_dir $SLURM_TMPDIR
+python main_pl.py run "$@" --data_dir $SLURM_TMPDIR
 
