@@ -213,7 +213,7 @@ def add_sweep_args(parser: ArgumentParser):
             net_subparser.add_argument(
                 "--max_epochs",
                 type=int,
-                default=10,
+                default=90,
                 help="How many epochs to run for each configuration.",
             )
 
