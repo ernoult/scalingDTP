@@ -73,7 +73,9 @@ def invert_sequential(module: nn.Sequential) -> nn.Sequential:
     is reversed compared to the input.
     """
     # assert module.input_shape and module.output_shape, "Use the net before inverting."
-    return type(module)(
+    # NOTE: Inverting a ResNet (which subclasses Sequential) doesn't try to create another ResNet!
+    # It just returns a Sequential.
+    return nn.Sequential(
         OrderedDict((name, invert(module)) for name, module in list(module._modules.items())[::-1]),
     )
 

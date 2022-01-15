@@ -122,20 +122,6 @@ def invert_basic(module: BasicBlock) -> InvertedBasicBlock:
     return backward
 
 
-@dataclass
-class ResNet18Hparams(HyperParameters):
-    block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
-    use_batchnorm: bool = False
-    num_blocks: List[int] = list_field(2, 2, 2, 2)
-
-
-@dataclass
-class ResNet34Hparams(HyperParameters):
-    block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
-    use_batchnorm: bool = False
-    num_blocks: List[int] = list_field(3, 4, 6, 3)
-
-
 def make_layer(
     block: Type[BasicBlock],
     planes: int,
@@ -152,43 +138,97 @@ def make_layer(
     return nn.Sequential(*layers), in_planes
 
 
-def resnet(in_channels, n_classes, hparams):
+class ResNet(nn.Sequential):
     """
-    ResNet18 with optional BatchNorm.
+    ResNet with optional BatchNorm.
     """
-    # Catch hparams
-    use_batchnorm = hparams.use_batchnorm
-    block = hparams.block
-    num_blocks = hparams.num_blocks
 
-    # Build ResNet
-    layers: OrderedDict[str, nn.Module] = OrderedDict()
-    layers["layer_0"] = nn.Sequential(
-        OrderedDict(
-            conv=nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1, bias=False),
-            bn=nn.BatchNorm2d(64) if use_batchnorm else nn.Identity(),
-            rho=nn.ReLU(),
-        )
-    )
+    @dataclass
+    class HParams(HyperParameters):
+        block: Type[BasicBlock] = choice({"basic": BasicBlock}, default=BasicBlock)
+        use_batchnorm: bool = False
+        num_blocks: List[int] = list_field(2, 2, 2, 2)
 
-    in_planes = 64
-    layers["layer_1"], in_planes = make_layer(
-        block, 64, num_blocks[0], stride=1, in_planes=in_planes, use_batchnorm=use_batchnorm
-    )
-    layers["layer_2"], in_planes = make_layer(
-        block, 128, num_blocks[1], stride=2, in_planes=in_planes, use_batchnorm=use_batchnorm
-    )
-    layers["layer_3"], in_planes = make_layer(
-        block, 256, num_blocks[2], stride=2, in_planes=in_planes, use_batchnorm=use_batchnorm
-    )
-    layers["layer_4"], in_planes = make_layer(
-        block, 512, num_blocks[3], stride=2, in_planes=in_planes, use_batchnorm=use_batchnorm
-    )
-    layers["fc"] = nn.Sequential(
-        OrderedDict(
-            pool=AdaptiveAvgPool2d(output_size=(1, 1)),  # NOTE: This is specific for 32x32 input!
-            reshape=Reshape(target_shape=(-1,)),
-            linear=nn.LazyLinear(out_features=n_classes, bias=True),
+    def __init__(self, in_channels: int, n_classes: int, hparams: "ResNet.HParams" = None):
+        # Catch hparams
+        hparams = hparams or self.HParams()
+        use_batchnorm = hparams.use_batchnorm
+        block_type = hparams.block
+        num_blocks = hparams.num_blocks
+
+        # Build ResNet
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        layers["layer_0"] = nn.Sequential(
+            OrderedDict(
+                conv=nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1, bias=False),
+                bn=nn.BatchNorm2d(64) if use_batchnorm else nn.Identity(),
+                rho=nn.ReLU(),
+            )
         )
-    )
-    return nn.Sequential(layers)
+
+        in_planes = 64
+        layers["layer_1"], in_planes = make_layer(
+            block_type,
+            64,
+            num_blocks[0],
+            stride=1,
+            in_planes=in_planes,
+            use_batchnorm=use_batchnorm,
+        )
+        layers["layer_2"], in_planes = make_layer(
+            block_type,
+            128,
+            num_blocks[1],
+            stride=2,
+            in_planes=in_planes,
+            use_batchnorm=use_batchnorm,
+        )
+        layers["layer_3"], in_planes = make_layer(
+            block_type,
+            256,
+            num_blocks[2],
+            stride=2,
+            in_planes=in_planes,
+            use_batchnorm=use_batchnorm,
+        )
+        layers["layer_4"], in_planes = make_layer(
+            block_type,
+            512,
+            num_blocks[3],
+            stride=2,
+            in_planes=in_planes,
+            use_batchnorm=use_batchnorm,
+        )
+        layers["fc"] = nn.Sequential(
+            OrderedDict(
+                pool=AdaptiveAvgPool2d(
+                    output_size=(1, 1)
+                ),  # NOTE: This is specific for 32x32 input!
+                reshape=Reshape(target_shape=(-1,)),
+                linear=nn.LazyLinear(out_features=n_classes, bias=True),
+            )
+        )
+        super().__init__(layers)
+        self.hparams = hparams
+
+
+class ResNet18(ResNet):
+    @dataclass
+    class HParams(ResNet.HParams):
+        block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
+        use_batchnorm: bool = False
+        num_blocks: List[int] = list_field(2, 2, 2, 2)
+
+
+class ResNet34(ResNet):
+    @dataclass
+    class HParams(ResNet.HParams):
+
+        block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
+        use_batchnorm: bool = False
+        num_blocks: List[int] = list_field(3, 4, 6, 3)
+
+
+resnet = ResNet
+ResNet18Hparams = ResNet18.HParams
+ResNet34Hparams = ResNet34.HParams
