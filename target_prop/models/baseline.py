@@ -41,14 +41,14 @@ class BaselineModel(LightningModule, ABC):
         # Hyper-parameters for the forward optimizer
         f_optim: OptimizerConfig = OptimizerConfig(type="adam", lr=3e-4)
         # Use of a learning rate scheduler.
-        scheduler: bool = False
+        scheduler: bool = True
 
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped.
-        early_stopping_patience: int = 5
+        early_stopping_patience: int = 0
 
     def __init__(
         self,
