@@ -2,7 +2,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
-from simple_parsing.helpers import list_field
+from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.layers import MaxPool2d, Reshape

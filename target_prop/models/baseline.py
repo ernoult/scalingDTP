@@ -39,7 +39,8 @@ class BaselineModel(LightningModule, ABC):
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        f_optim: OptimizerConfig = OptimizerConfig(type="adam", lr=3e-4)
+        type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
+        f_optim: OptimizerConfig = OptimizerConfig(type=type, lr=3e-4)
         # Use of a learning rate scheduler.
         scheduler: bool = True
 
