@@ -13,7 +13,6 @@ from target_prop.layers import AdaptiveAvgPool2d, Reshape
 class BasicBlock(nn.Module):
     """
     Basic residual block with optional BatchNorm.
-    Adapted from PyTorch ResNet: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py
     """
 
     expansion = 1
@@ -141,6 +140,13 @@ def make_layer(
 class ResNet(nn.Sequential):
     """
     ResNet with optional BatchNorm.
+    Adapted from PyTorch ResNet:
+    https://github.com/kuangliu/pytorch-cifar/blob/master/models/resnet.py
+
+    NOTE: This ResNet differs from standard ResNet in input layer. Here, we adopt ResNet
+    from pytorch-cifar repo linked above that uses conv layer with kernel size 3 to process
+    32x32 input whereas standard ResNet uses conv layer with kernel size 7 followed by maxpool
+    which is better suited for larger image sizes like 224x224.
     """
 
     @dataclass
