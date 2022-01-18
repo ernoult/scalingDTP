@@ -22,12 +22,14 @@ from torchvision.transforms import (
     ToTensor,
 )
 
+
 from target_prop.datasets import (
     CIFAR10DataModule,
     ImageNet32DataModule,
     cifar10_normalization,
     imagenet32_normalization,
 )
+
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
