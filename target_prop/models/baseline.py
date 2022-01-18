@@ -5,7 +5,7 @@ from abc import ABC
 from collections import OrderedDict
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Dict, List, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -28,6 +28,33 @@ T = TypeVar("T")
 logger = getLogger(__name__)
 
 
+
+@dataclass
+class ForwardOptimizerConfig(OptimizerConfig):
+    """Configuration of the optimizer for the forward weights.
+
+    NOTE: Creating a distinct class for this is currently the only way to specify different priors
+    for the forward optimizer and the feedback optimizer.
+    """
+
+    # Type of Optimizer to use.
+    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
+    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
+    # type: str = categorical(
+    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
+    # )
+
+    # Learning rate of the optimizer.
+    lr: float = log_uniform(1e-4, 1e-1, default=0.08)
+
+    # Weight decay coefficient.
+    weight_decay: Optional[float] = 0
+
+    # Momentum term to pass to SGD.
+    # NOTE: This value is only used with SGD, not with Adam.
+    momentum: float = 0.9
+
+
 class BaselineModel(LightningModule, ABC):
     """Baseline model that uses normal backpropagation."""
 
@@ -39,16 +66,19 @@ class BaselineModel(LightningModule, ABC):
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        f_optim: OptimizerConfig = OptimizerConfig(type="adam", lr=3e-4)
+        #f_optim: OptimizerConfig = OptimizerConfig(type=type, lr=3e-4)
+        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
+            type="sgd", lr=3e-4, weight_decay=1e-4, momentum=0.9
+        )
         # Use of a learning rate scheduler.
-        scheduler: bool = False
+        scheduler: bool = True
 
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped.
-        early_stopping_patience: int = 5
+        early_stopping_patience: int = 0
 
     def __init__(
         self,

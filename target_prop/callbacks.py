@@ -110,7 +110,9 @@ def comparison_with_backprop_gradients(
         # Same parameters should have gradients, regardless of if backprop or DTP is used.
         for parameter_name, backprop_gradient in backprop_grads.items():
             scaled_dtp_grad = scaled_dtp_grads[parameter_name]
-            distance, angle = compute_dist_angle(scaled_dtp_grad, backprop_gradient)
+            #TODO: double check that this distance is normalized by the backprop_gradients
+            #distance, angle = compute_dist_angle(scaled_dtp_grad, backprop_gradient)
+            distance, angle = compute_dist_angle(backprop_gradient, scaled_dtp_grad)
             distances[parameter_name] = distance
             angles[parameter_name] = angle
     return distances, angles

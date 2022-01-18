@@ -2,6 +2,9 @@ from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from simple_parsing.helpers.fields import choice
+from simple_parsing.helpers.hparams.hparam import log_uniform
+
 
 import torch
 import wandb
@@ -20,9 +23,11 @@ from torch import Tensor, nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 
+
 from .dtp import DTP
 from .dtp import FeedbackOptimizerConfig as _FeedbackOptimizerConfig
 from .dtp import ForwardOptimizerConfig as _ForwardOptimizerConfig
+
 from .utils import make_stacked_feedback_training_figure
 
 logger = get_logger(__name__)
@@ -89,6 +94,7 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
+
             type="adam",
             lr=3e-4,
         )
@@ -97,6 +103,7 @@ class ParallelDTP(DTP):
             0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
         )
         # Hyper-parameters for the forward optimizer
+
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
             type="adam",
             lr=3e-4,
