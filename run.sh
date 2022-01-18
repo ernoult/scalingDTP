@@ -9,4 +9,3 @@ conda activate target_prop
 cd ~/target_prop/scalingDTP
 
 python main_pl.py run "$@" --data_dir $SLURM_TMPDIR
-

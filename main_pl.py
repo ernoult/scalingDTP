@@ -1,4 +1,3 @@
-
 """ Script that runs Pytorch lightning version of the DTP models.
 
 Use `python main_pl.py --help` to see a list of all available arguments.
@@ -31,10 +30,8 @@ from target_prop.networks import (
     ResNet18Hparams,
     ResNet34Hparams,
     SimpleVGGHparams,
-    LeNetHparams,
     resnet,
     simple_vgg,
-    lenet,
 )
 
 HParams = TypeVar("HParams", bound=HyperParameters)
@@ -97,7 +94,6 @@ def add_run_args(parser: ArgumentParser):
 
         for option_str, net_help_str, net_fn, net_hparams in [
             ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
-            ("lenet", "LeNet-like architecture", lenet, LeNetHparams),
             ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
             ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
         ]:
@@ -199,23 +195,20 @@ def add_sweep_args(parser: ArgumentParser):
 
         for option_str, net_help_str, net_fn, net_hparams in [
             ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
-            ("lenet", "LeNet-like architecture", lenet, LeNetHparams),
             ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
             ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
         ]:
             net_subparser = net_subparsers.add_parser(
                 option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,
             )
-            net_subparser.add_arguments(model_type.HParams, dest="hparams")
             net_subparser.add_arguments(Config, dest="config")
-            net_subparser.add_arguments(net_hparams, dest="network_hparams")
-            #net_subparser.set_defaults(network_hparams_type=net_hparams)
+            net_subparser.set_defaults(network_hparams_type=net_hparams)
             net_subparser.set_defaults(network_type=net_fn)
-
-            net_subparser.set_defaults(network_type=net_fn)net_subparser.add_argument(
+            # NOTE: This will be a 'fixed' hyper-parameter. We don't want to sample it.
+            net_subparser.add_argument(
                 "--max_epochs",
                 type=int,
-                default=90,
+                default=10,
                 help="How many epochs to run for each configuration.",
             )
 
