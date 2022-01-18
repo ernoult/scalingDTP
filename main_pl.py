@@ -31,7 +31,9 @@ from target_prop.networks import (
     ResNet34Hparams,
     SimpleVGGHparams,
     resnet,
-    simple_vgg,
+    ResNet18,
+    ResNet34,
+    SimpleVGG,
 )
 
 HParams = TypeVar("HParams", bound=HyperParameters)
@@ -43,7 +45,7 @@ def main(parser: ArgumentParser = None):
     """Main script."""
     # Allow passing a parser in, in case this is used as a subparser action for another program.
     parser = parser or ArgumentParser(description=__doc__)
-
+    assert parser is not None
     action_subparsers = parser.add_subparsers(
         title="action", description="Which action to take.", required=True
     )
@@ -93,9 +95,9 @@ def add_run_args(parser: ArgumentParser):
         )
 
         for option_str, net_help_str, net_fn, net_hparams in [
-            ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
-            ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
-            ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
+            ("simple_vgg", "VGG-like architecture", SimpleVGG, SimpleVGG.HParams),
+            ("resnet18", "ResNet18 architecture", ResNet18, ResNet18.HParams),
+            ("resnet34", "ResNet34 architecture", ResNet34, ResNet34.HParams),
         ]:
             net_subparser = net_subparsers.add_parser(
                 option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,
@@ -194,9 +196,9 @@ def add_sweep_args(parser: ArgumentParser):
         )
 
         for option_str, net_help_str, net_fn, net_hparams in [
-            ("simple_vgg", "VGG-like architecture", simple_vgg, SimpleVGGHparams),
-            ("resnet18", "ResNet18 architecture", resnet, ResNet18Hparams),
-            ("resnet34", "ResNet34 architecture", resnet, ResNet34Hparams),
+            ("simple_vgg", "VGG-like architecture", SimpleVGG, SimpleVGG.HParams),
+            ("resnet18", "ResNet18 architecture", ResNet18, ResNet18.HParams),
+            ("resnet34", "ResNet34 architecture", ResNet34, ResNet34.HParams),
         ]:
             net_subparser = net_subparsers.add_parser(
                 option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,

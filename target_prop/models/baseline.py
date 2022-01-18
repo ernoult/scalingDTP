@@ -6,6 +6,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Tuple, Type, TypeVar, Union
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -14,7 +15,8 @@ from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams import HyperParameters, log_uniform
+from simple_parsing.helpers.hparams import log_uniform
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
@@ -24,6 +26,8 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
+from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
+from simple_parsing.helpers import subparsers
 
 T = TypeVar("T")
 logger = getLogger(__name__)
@@ -36,13 +40,19 @@ class BaselineModel(LightningModule, ABC):
     class HParams(HyperParameters):
         """Hyper-Parameters of the baseline model."""
 
+        # Arguments to be passed to the LR scheduler.
+        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
+            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
+            default_factory=CosineAnnealingLRConfig,
+        )
+        # Use of a learning rate scheduler.
+        use_scheduler: bool = False
+
         # Max number of training epochs in total.
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(type="adam", lr=3e-4)
-        # Use of a learning rate scheduler.
-        scheduler: bool = False
 
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
@@ -122,12 +132,7 @@ class BaselineModel(LightningModule, ABC):
         logits = self.forward_net(input)
         return logits
 
-    def shared_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-        phase: str,
-    ) -> Tensor:
+    def shared_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,) -> Tensor:
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
@@ -158,13 +163,14 @@ class BaselineModel(LightningModule, ABC):
         optimizer = self.hp.f_optim.make_optimizer(self.forward_net)
         optim_config: Dict[str, Any] = {"optimizer": optimizer}
 
-        if self.hp.scheduler:
+        if self.hp.use_scheduler:
             # `main.py` seems to be using a weight scheduler only for the forward weight
             # training.
+            lr_scheduler = self.hp.lr_scheduler.make_scheduler(optimizer)
             optim_config["lr_scheduler"] = {
-                "scheduler": CosineAnnealingLR(optimizer, T_max=85, eta_min=1e-5),
-                "interval": "epoch",  # called after each training epoch
-                "frequency": 1,
+                "scheduler": lr_scheduler,
+                "interval": self.hp.lr_scheduler.interval,
+                "frequency": self.hp.lr_scheduler.frequency,
             }
         return optim_config
 
