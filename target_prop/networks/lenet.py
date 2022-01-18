@@ -71,6 +71,6 @@ class LeNet(nn.Sequential):
         self.hparams = hparams
 
 lenet = LeNet
-LeNetparams = LeNet.HParams
+LeNetHparams = LeNet.HParams
 
 
