@@ -211,17 +211,16 @@ def add_sweep_args(parser: ArgumentParser):
 
             net_subparser.add_arguments(model_type.HParams, dest="hparams")
             net_subparser.add_arguments(Config, dest="config")
-            net_subparser.add_arguments(net_hparams, dest="network_hparams_type")
-            #net_subparser.set_defaults(network_hparams_type=net_hparams)
+            net_subparser.add_arguments(net_hparams, dest="network_hparams")
+#            net_subparser.set_defaults(network_hparams_type=net_hparams)
             net_subparser.set_defaults(network_type=net_fn)
 
-   
-            #net_subparser.add_argument(
-            #    "--max_epochs",
-            #    type=int,
-            #    default=90,
-             #   help="How many epochs to run for each configuration.",
-            #)
+#            net_subparser.add_argument(
+#                "--max_epochs",
+#                type=int,
+#                default=90,
+#                help="How many epochs to run for each configuration.",
+#            )
 
     parser.add_argument("--n-runs", "--n_runs", type=int, default=1, help="How many runs to do.")
     # Fixes a weird little argparse bug with metavar.
