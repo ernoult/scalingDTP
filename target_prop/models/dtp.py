@@ -30,7 +30,8 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification.accuracy import Accuracy
-
+from simple_parsing.helpers import subparsers
+from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
 from .utils import make_stacked_feedback_training_figure
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,14 @@ class DTP(LightningModule):
         "parallel" version of DTP, however the feedback layers still need to be updated in sequence.
         """
 
+        # Arguments to be passed to the LR scheduler.
+        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
+            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
+            default_factory=CosineAnnealingLRConfig,
+        )
+        # Use of a learning rate scheduler for the forward weights.
+        use_scheduler: bool = True
+
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
@@ -166,8 +175,6 @@ class DTP(LightningModule):
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
             type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
         )
-        # Use of a learning rate scheduler for the forward weights.
-        scheduler: bool = True
         # nudging parameter: Used when calculating the first target.
         # beta: float = 0.7  # NOTE: not tuning this value
         beta: float = uniform(0.01, 1.0, default=0.7)  # Adding it to HPO space
@@ -796,20 +803,20 @@ class DTP(LightningModule):
         forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
-        if self.hp.scheduler:
+        if self.hp.use_scheduler:
             # Using the same LR scheduler as the original code:
-            lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
+            lr_scheduler = self.hp.lr_scheduler.make_scheduler(forward_optimizer)
             lr_scheduler_config = {
                 # REQUIRED: The scheduler instance
                 "scheduler": lr_scheduler,
                 # The unit of the scheduler's step size, could also be 'step'.
                 # 'epoch' updates the scheduler on epoch end whereas 'step'
                 # updates it after a optimizer update.
-                "interval": "epoch",
+                "interval": self.hp.lr_scheduler.interval,
                 # How many epochs/steps should pass between calls to
                 # `scheduler.step()`. 1 corresponds to updating the learning
                 # rate after every epoch/step.
-                "frequency": 1,
+                "frequency": self.hp.lr_scheduler.frequency,
             }
             forward_optim_config["lr_scheduler"] = lr_scheduler_config
         configs.append(forward_optim_config)
