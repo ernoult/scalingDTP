@@ -9,14 +9,14 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 
 
-def cifar10_normalization():
+def cifar10_normalization(std=3):
     # From PL bolts
     # normalize = transforms.Normalize(
     #     mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
     #     std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
     # )
     normalize = transforms.Normalize(
-        mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010)
+        mean=(0.4914, 0.4822, 0.4465), std=(std * 0.2023, std * 0.1994, std * 0.2010)
     )
     return normalize
 

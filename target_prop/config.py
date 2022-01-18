@@ -91,10 +91,11 @@ class Config(Serializable):
             self.seed += int(array_task_id)
             logger.info(f"New seed: {self.seed}")
 
-    def make_datamodule(self, batch_size: int) -> LightningDataModule:
+    def make_datamodule(self, batch_size: int, model_type: str) -> LightningDataModule:
 
         datamodule_class = self.available_datasets[self.dataset]
         normalization_transform = self.normalization_transforms.get(self.dataset)
+        std = 1 if model_type == "backprop" or self.dataset == "imagenet32" else 3
         train_transform: Optional[Callable] = None
         test_transform: Optional[Callable] = None
         if normalization_transform is not None:
@@ -105,7 +106,7 @@ class Config(Serializable):
                     RandomHorizontalFlip(0.5),
                     RandomCrop(size=self.image_crop_size, padding=4, padding_mode="edge"),
                     ToTensor(),
-                    normalization_transform(),
+                    normalization_transform(std),
                 ]
             )
 
