@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
-from typing import Callable, ClassVar, Dict, Optional, Type
+from typing import Callable, ClassVar, Dict, Optional, Type, Union
 
 import torch
 
@@ -72,6 +72,11 @@ class Config(Serializable):
 
     # Which device to use.
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Limit the number of train/val/test batches. Useful for quick debugging or unit testing.
+    limit_train_batches: Union[int, float] = 1.0
+    limit_val_batches: Union[int, float] = 1.0
+    limit_test_batches: Union[int, float] = 1.0
 
     def __post_init__(self):
         if self.seed is None:
