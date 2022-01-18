@@ -140,6 +140,7 @@ class BaselineModel(LightningModule, ABC):
         accuracy = self.accuracy(probs, y)
         self.log(f"{phase}/accuracy", accuracy, prog_bar=True)
         self.log(f"{phase}/F_loss", loss, prog_bar=phase == "train")
+        self.log(f"F_lr", self.optimizers().param_groups[0]["lr"])
         return loss
 
     def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int) -> Tensor:  # type: ignore

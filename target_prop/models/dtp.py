@@ -418,6 +418,7 @@ class DTP(LightningModule):
                 # Unit testing.
                 forward_loss.backward()
             forward_optimizer.step()
+            self.log(f"F_lr", forward_optimizer.param_groups[0]["lr"])
             forward_loss = forward_loss.detach()
 
         last_layer_loss: Tensor = forward_training_outputs["layer_losses"][-1].detach()
@@ -525,6 +526,7 @@ class DTP(LightningModule):
                     # self.trainer is None in legacy unit tests
                     self.manual_backward(loss) if self.trainer is not None else loss.backward()
                     layer_optimizer.step()
+                    self.log(f"B_lr{layer_index}", layer_optimizer.param_groups[0]["lr"])
                     loss = loss.detach()
                 else:
                     assert isinstance(loss, Tensor) and not loss.requires_grad
