@@ -5,7 +5,7 @@ from abc import ABC
 from collections import OrderedDict
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Dict, List, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -17,6 +17,7 @@ from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import HyperParameters, log_uniform
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
+from target_prop.models.dtp import ForwardOptimizerConfig
 from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -39,7 +40,7 @@ class BaselineModel(LightningModule, ABC):
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        f_optim: OptimizerConfig = OptimizerConfig(type="adam", lr=3e-4)
+        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(type="adam", lr=3e-4)
         # Use of a learning rate scheduler.
         scheduler: bool = False
 
