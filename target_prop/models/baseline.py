@@ -133,7 +133,7 @@ class BaselineModel(LightningModule, ABC):
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=1,
-            track_grad_norm=False,
+            track_grad_norm=-1,
             accelerator=None,
             # NOTE: Not sure why but seems like they are still reloading them after each epoch!
             reload_dataloaders_every_epoch=False,
