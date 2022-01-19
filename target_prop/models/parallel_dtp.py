@@ -5,15 +5,17 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import wandb
-from pytorch_lightning import Trainer
+from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from simple_parsing.helpers import list_field, subparsers
 from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import uniform
 from simple_parsing.helpers.hparams.hparam import log_uniform
+from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all, forward_each
 from target_prop.metrics import compute_dist_angle
+from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
@@ -106,19 +108,26 @@ class ParallelDTP(DTP):
         )
         # Hyper-parameters for the forward optimizer
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="adam",
-            lr=3e-4,
-            weight_decay=1e-4,
+            type="adam", lr=3e-4, weight_decay=1e-4,
         )
         # nudging parameter: Used when calculating the first target.
         beta: float = uniform(0.01, 1.0, default=0.7)
 
-        def __post_init__(self):
-            super().__post_init__()
-            self.feedback_training_iterations = [1 for _ in self.channels]
-
-    def __init__(self, datamodule, network, hparams, config, network_hparams):
-        super().__init__(datamodule, network, hparams, config, network_hparams)
+    def __init__(
+        self,
+        datamodule: LightningDataModule,
+        network: Network,
+        hparams: "ParallelDTP.HParams",
+        config: Config,
+        network_hparams: Network.HParams = None,
+    ):
+        super().__init__(
+            datamodule=datamodule,
+            network=network,
+            hparams=hparams,
+            config=config,
+            network_hparams=network_hparams,
+        )
         # Here we can do automatic optimization, since we don't need to do multiple
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True

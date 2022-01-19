@@ -915,7 +915,7 @@ class DTP(LightningModule):
                 RuntimeWarning(
                     f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
                     f"given {len(values)} values! (values={values})\n"
-                    f"Either pass a single value for all layers, or a value for each layer."
+                    f"Either pass a single value for all layers, or a value for each layer.\n"
                     f"WARNING: This will only use the first {n_layers_that_need_a_value} values: "
                     f"{truncated_values}"
                 )
@@ -928,12 +928,14 @@ class DTP(LightningModule):
                 RuntimeWarning(
                     f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
                     f"only provided {len(values)} values! (values={values})\n"
-                    f"Either pass a single value for all layers, or a value for each layer."
+                    f"Either pass a single value for all layers, or a value for each layer.\n"
                     f"WARNING: This will duplicate the first value ({last_value}) for all remaining "
                     f"layers."
                 )
             )
-            values = values + [last_value for _ in range(n_layers_that_need_a_value - len(values))]
+            values = list(values) + [
+                last_value for _ in range(n_layers_that_need_a_value - len(values))
+            ]
             logger.warn(f"New values: {values}")
             assert len(values) == n_layers_that_need_a_value
 
