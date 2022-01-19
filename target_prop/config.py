@@ -25,6 +25,7 @@ from torchvision.transforms import (
 from target_prop.datasets import (
     CIFAR10DataModule,
     ImageNet32DataModule,
+    cifar10_3xstd_normalization,
     cifar10_normalization,
     imagenet32_normalization,
 )
@@ -39,10 +40,12 @@ class Config(Serializable):
 
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
         "cifar10": CIFAR10DataModule,
+        "cifar10_3xstd": CIFAR10DataModule,
         "imagenet32": ImageNet32DataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
         "cifar10": cifar10_normalization,
+        "cifar10_3xstd": cifar10_3xstd_normalization,
         "imagenet32": imagenet32_normalization,
     }
 
