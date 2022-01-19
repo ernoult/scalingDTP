@@ -13,6 +13,7 @@ from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.networks import Network
+from target_prop.networks.lenet import LeNet
 from target_prop.networks.resnet import ResNet18, ResNet34
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils import named_trainable_parameters
@@ -20,7 +21,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 
-networks = [SimpleVGG, ResNet18, ResNet34]
+networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
 
 
 class TestDTP:
@@ -43,6 +44,7 @@ class TestDTP:
             fast_dev_run=True,
             # accelerator="ddp",  # todo: debug DP/DDP
             logger=None,
+            checkpoint_callback=False,
         )
 
         if config.seed is not None:

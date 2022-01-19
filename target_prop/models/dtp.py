@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import warnings
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -889,13 +890,43 @@ class DTP(LightningModule):
         if isinstance(values, (int, float)):
             values = [values for _ in range(n_layers_that_need_a_value)]
 
-        backward_ordered_input = list(reversed(values)) if inputs_are_forward_ordered else values
-
-        if len(values) != n_layers_that_need_a_value:
-            raise ValueError(
-                f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
-                f"given {len(values)} values! (values={values})\n "
+        if len(values) > n_layers_that_need_a_value:
+            truncated_values = values[:n_layers_that_need_a_value]
+            # TODO: Eventually, either create a parameterized default value for the HParams for each
+            # dataset, or switch to Hydra, if it's easy to use and solves this neatly.
+            warnings.warn(
+                RuntimeWarning(
+                    f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+                    f"given {len(values)} values! (values={values})\n"
+                    f"Either pass a single value for all layers, or a value for each layer."
+                    f"WARNING: This will only use the first {n_layers_that_need_a_value} values: "
+                    f"{truncated_values}"
+                )
             )
+            values = truncated_values
+        elif len(values) < n_layers_that_need_a_value:
+            # TODO: Same as above.
+            last_value = values[-1]
+            warnings.warn(
+                RuntimeWarning(
+                    f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+                    f"only provided {len(values)} values! (values={values})\n"
+                    f"Either pass a single value for all layers, or a value for each layer."
+                    f"WARNING: This will duplicate the first value ({last_value}) for all remaining "
+                    f"layers."
+                )
+            )
+            values = values + [last_value for _ in range(n_layers_that_need_a_value - len(values))]
+            logger.warn(f"New values: {values}")
+            assert len(values) == n_layers_that_need_a_value
+
+        backward_ordered_input = list(reversed(values)) if inputs_are_forward_ordered else values
+        # TODO: Once above TODO is addressed, re-instate this policy.
+        # if len(values) != n_layers_that_need_a_value:
+        #     raise ValueError(
+        #         f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+        #         f"given {len(values)} values! (values={values})\n "
+        #     )
 
         values_left = backward_ordered_input.copy()
         values_per_layer: List[T] = []
