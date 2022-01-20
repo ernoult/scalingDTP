@@ -21,6 +21,11 @@ def imagenet32_normalization():
     return normalize
 
 
+def imagenet32_3xstd_normalization():
+    normalize = transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(3*0.229, 3*0.224, 3*0.225))
+    return normalize
+
+
 class ImageNet32Dataset(VisionDataset):
     """
     Downsampled ImageNet 32x32 Dataset.

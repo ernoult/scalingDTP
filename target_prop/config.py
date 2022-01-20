@@ -28,6 +28,7 @@ from target_prop.datasets import (
     cifar10_3xstd_normalization,
     cifar10_normalization,
     imagenet32_normalization,
+    imagenet32_3xstd_normalization
 )
 
 logger = get_logger(__name__)
@@ -42,11 +43,13 @@ class Config(Serializable):
         "cifar10": CIFAR10DataModule,
         "cifar10_3xstd": CIFAR10DataModule,
         "imagenet32": ImageNet32DataModule,
+        "imagenet32_3xstd": ImageNet32DataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
         "cifar10": cifar10_normalization,
         "cifar10_3xstd": cifar10_3xstd_normalization,
         "imagenet32": imagenet32_normalization,
+        "imagenet32_3xstd": imagenet32_3xstd_normalization,
     }
 
     # Which dataset to use.
