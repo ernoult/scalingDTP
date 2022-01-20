@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import warnings
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,8 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification.accuracy import Accuracy
-
+from simple_parsing.helpers import subparsers
+from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
 from .utils import make_stacked_feedback_training_figure
 
 logger = logging.getLogger(__name__)
@@ -130,6 +132,14 @@ class DTP(LightningModule):
         "parallel" version of DTP, however the feedback layers still need to be updated in sequence.
         """
 
+        # Arguments to be passed to the LR scheduler.
+        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
+            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
+            default_factory=CosineAnnealingLRConfig,
+        )
+        # Use of a learning rate scheduler for the forward weights.
+        use_scheduler: bool = True
+
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
@@ -166,8 +176,6 @@ class DTP(LightningModule):
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
             type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
         )
-        # Use of a learning rate scheduler for the forward weights.
-        scheduler: bool = True
         # nudging parameter: Used when calculating the first target.
         # beta: float = 0.7  # NOTE: not tuning this value
         beta: float = uniform(0.01, 1.0, default=0.7)  # Adding it to HPO space
@@ -418,6 +426,7 @@ class DTP(LightningModule):
                 # Unit testing.
                 forward_loss.backward()
             forward_optimizer.step()
+            self.log(f"F_lr", forward_optimizer.param_groups[0]["lr"])
             forward_loss = forward_loss.detach()
 
         last_layer_loss: Tensor = forward_training_outputs["layer_losses"][-1].detach()
@@ -525,6 +534,8 @@ class DTP(LightningModule):
                     # self.trainer is None in legacy unit tests
                     self.manual_backward(loss) if self.trainer is not None else loss.backward()
                     layer_optimizer.step()
+                    if self.trainer is not None:
+                        self.log(f"B_lr{layer_index}", layer_optimizer.param_groups[0]["lr"])
                     loss = loss.detach()
                 else:
                     assert isinstance(loss, Tensor) and not loss.requires_grad
@@ -794,20 +805,20 @@ class DTP(LightningModule):
         forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
-        if self.hp.scheduler:
+        if self.hp.use_scheduler:
             # Using the same LR scheduler as the original code:
-            lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
+            lr_scheduler = self.hp.lr_scheduler.make_scheduler(forward_optimizer)
             lr_scheduler_config = {
                 # REQUIRED: The scheduler instance
                 "scheduler": lr_scheduler,
                 # The unit of the scheduler's step size, could also be 'step'.
                 # 'epoch' updates the scheduler on epoch end whereas 'step'
                 # updates it after a optimizer update.
-                "interval": "epoch",
+                "interval": self.hp.lr_scheduler.interval,
                 # How many epochs/steps should pass between calls to
                 # `scheduler.step()`. 1 corresponds to updating the learning
                 # rate after every epoch/step.
-                "frequency": 1,
+                "frequency": self.hp.lr_scheduler.frequency,
             }
             forward_optim_config["lr_scheduler"] = lr_scheduler_config
         configs.append(forward_optim_config)
@@ -870,6 +881,23 @@ class DTP(LightningModule):
             `default`: 0
 
             Output:  [0.18, 0 (default), 8e-3, 8e-3, 3.5e-4, 1e-4, 0 (never trained)]
+
+        Parameters
+        ----------
+        values : List[T]
+            List of values for each trainable layer.
+        default : T
+            The value to set for non-trainable layers in the feedback network.
+        inputs_are_forward_ordered : bool, optional
+            Wether the inputs are given in a forward-aligned order or not. When they aren't, they
+            are aligned with the trainable layers in the feedback network.
+            Defaults to False.
+
+        Returns
+        -------
+        List[T]
+            List of values, one per layer in the backward net, with the non-trainable layers
+            assigned the value of `default`.
         """
         n_layers_that_need_a_value = sum(map(is_trainable, self.backward_net))
         # Don't count the last layer of the backward net (i.e. G_0), since we don't
@@ -877,15 +905,47 @@ class DTP(LightningModule):
         n_layers_that_need_a_value -= 1
 
         if isinstance(values, (int, float)):
-            values = [values for _ in range(n_layers_that_need_a_value)]
+            values = [values for _ in range(n_layers_that_need_a_value)]  # type: ignore
+
+        if len(values) > n_layers_that_need_a_value:
+            truncated_values = values[:n_layers_that_need_a_value]
+            # TODO: Eventually, either create a parameterized default value for the HParams for each
+            # dataset, or switch to Hydra, if it's easy to use and solves this neatly.
+            warnings.warn(
+                RuntimeWarning(
+                    f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+                    f"given {len(values)} values! (values={values})\n"
+                    f"Either pass a single value for all layers, or a value for each layer.\n"
+                    f"WARNING: This will only use the first {n_layers_that_need_a_value} values: "
+                    f"{truncated_values}"
+                )
+            )
+            values = truncated_values
+        elif len(values) < n_layers_that_need_a_value:
+            # TODO: Same as above.
+            last_value = values[-1]
+            warnings.warn(
+                RuntimeWarning(
+                    f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+                    f"only provided {len(values)} values! (values={values})\n"
+                    f"Either pass a single value for all layers, or a value for each layer.\n"
+                    f"WARNING: This will duplicate the first value ({last_value}) for all remaining "
+                    f"layers."
+                )
+            )
+            values = list(values) + [
+                last_value for _ in range(n_layers_that_need_a_value - len(values))
+            ]
+            logger.warn(f"New values: {values}")
+            assert len(values) == n_layers_that_need_a_value
 
         backward_ordered_input = list(reversed(values)) if inputs_are_forward_ordered else values
-
-        if len(values) != n_layers_that_need_a_value:
-            raise ValueError(
-                f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
-                f"given {len(values)} values! (values={values})\n "
-            )
+        # TODO: Once above TODO is addressed, re-instate this policy.
+        # if len(values) != n_layers_that_need_a_value:
+        #     raise ValueError(
+        #         f"There are {n_layers_that_need_a_value} layers that need a value, but we were "
+        #         f"given {len(values)} values! (values={values})\n "
+        #     )
 
         values_left = backward_ordered_input.copy()
         values_per_layer: List[T] = []

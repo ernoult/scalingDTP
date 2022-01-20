@@ -5,21 +5,23 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import wandb
-from pytorch_lightning import Trainer
+from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
-from simple_parsing.helpers import list_field
+from simple_parsing.helpers import list_field, subparsers
 from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import uniform
 from simple_parsing.helpers.hparams.hparam import log_uniform
+from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all, forward_each
 from target_prop.metrics import compute_dist_angle
+from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
-
+from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
 from .dtp import DTP
 from .dtp import FeedbackOptimizerConfig as _FeedbackOptimizerConfig
 from .dtp import ForwardOptimizerConfig as _ForwardOptimizerConfig
@@ -79,6 +81,14 @@ class ParallelDTP(DTP):
     class HParams(DTP.HParams):
         """HParams of the Parallel model."""
 
+        # Arguments to be passed to the LR scheduler.
+        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
+            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
+            default_factory=CosineAnnealingLRConfig,
+        )
+        # Use of a learning rate scheduler for the optimizer of the forward weights.
+        use_scheduler: bool = False
+
         # Number of training steps for the feedback weights per batch.
         # In the case of this parallel model, this parameter can't be changed and is fixed to 1.
         feedback_training_iterations: List[int] = list_field(default_factory=[1].copy, cmd=False)
@@ -98,21 +108,26 @@ class ParallelDTP(DTP):
         )
         # Hyper-parameters for the forward optimizer
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="adam",
-            lr=3e-4,
-            weight_decay=1e-4,
+            type="adam", lr=3e-4, weight_decay=1e-4,
         )
-        # Use of a learning rate scheduler for the forward weights.
-        scheduler: bool = True
         # nudging parameter: Used when calculating the first target.
         beta: float = uniform(0.01, 1.0, default=0.7)
 
-        def __post_init__(self):
-            super().__post_init__()
-            self.feedback_training_iterations = [1 for _ in self.channels]
-
-    def __init__(self, datamodule, network, hparams, config, network_hparams):
-        super().__init__(datamodule, network, hparams, config, network_hparams)
+    def __init__(
+        self,
+        datamodule: LightningDataModule,
+        network: Network,
+        hparams: "ParallelDTP.HParams",
+        config: Config,
+        network_hparams: Network.HParams = None,
+    ):
+        super().__init__(
+            datamodule=datamodule,
+            network=network,
+            hparams=hparams,
+            config=config,
+            network_hparams=network_hparams,
+        )
         # Here we can do automatic optimization, since we don't need to do multiple
         # sequential optimization steps per batch ourselves.
         self.automatic_optimization = True
@@ -302,13 +317,13 @@ class ParallelDTP(DTP):
         forward_optim_config: Dict[str, Any] = {
             "optimizer": forward_optimizer,
         }
-        if self.hp.scheduler:
+        if self.hp.use_scheduler:
             # Using the same LR scheduler as the original code:
-            lr_scheduler = CosineAnnealingLR(forward_optimizer, T_max=85, eta_min=1e-5)
+            lr_scheduler = self.hp.lr_scheduler.make_scheduler(forward_optimizer)
             forward_optim_config["lr_scheduler"] = {
                 "scheduler": lr_scheduler,
-                "interval": "epoch",
-                "frequency": 1,
+                "interval": self.hp.lr_scheduler.interval,
+                "frequency": self.hp.lr_scheduler.frequency,
             }
         return [feedback_optim_config, forward_optim_config]
 
