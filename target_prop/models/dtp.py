@@ -80,7 +80,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(
+    lr: List[float] = log_uniform(
         1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
     )
 
@@ -199,7 +199,7 @@ class DTP(LightningModule):
         # jacobian: bool = False  # compute jacobians
 
         # Step interval for creating and logging plots.
-        plot_every: int = 1000
+        plot_every: int = 10000
 
         def __post_init__(self):
             super().__post_init__()
