@@ -30,6 +30,7 @@ from target_prop.networks import (
     ResNet18,
     ResNet34,
     SimpleVGG,
+    SimpleVGG2,
     LeNet,
 )
 
@@ -93,6 +94,7 @@ def add_run_args(parser: ArgumentParser):
 
         for option_str, net_help_str, net_fn, net_hparams in [
             ("simple_vgg", "VGG-like architecture", SimpleVGG, SimpleVGG.HParams),
+            ("simple_vgg2", "VGG-like 2.0 architecture", SimpleVGG2, SimpleVGG2.HParams),
             ("resnet18", "ResNet18 architecture", ResNet18, ResNet18.HParams),
             ("resnet34", "ResNet34 architecture", ResNet34, ResNet34.HParams),
             ("lenet", "LeNet-like architecture", LeNet, LeNet.HParams),
@@ -197,6 +199,7 @@ def add_sweep_args(parser: ArgumentParser):
 
         for option_str, net_help_str, net_fn, net_hparams in [
             ("simple_vgg", "VGG-like architecture", SimpleVGG, SimpleVGG.HParams),
+            ("simple_vgg2", "VGG-like 2.0 architecture", SimpleVGG2, SimpleVGG2.HParams),
             ("resnet18", "ResNet18 architecture", ResNet18, ResNet18.HParams),
             ("resnet34", "ResNet34 architecture", ResNet34, ResNet34.HParams),
             ("lenet", "LeNet-like architecture", LeNet, LeNet.HParams),
