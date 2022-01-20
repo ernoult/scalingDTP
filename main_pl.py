@@ -224,7 +224,7 @@ def sweep(
     network_type: Callable[..., nn.Sequential],
     network_hparams_type: Type[HyperParameters],
     n_runs: int = 1,
-    **fixed_hparams,`
+    **fixed_hparams,
 ):
     """Performs a hyper-parameter sweep.
 
