@@ -1,6 +1,8 @@
+from dataclasses import dataclass
+import dataclasses
 import logging
 from collections import OrderedDict
-from typing import ClassVar, Dict, Iterable, List, Optional, Tuple, Type, TypeVar
+from typing import ClassVar, List, Optional, Type
 
 import pytest
 import torch
@@ -13,6 +15,7 @@ from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.networks import Network
+from target_prop.networks.lenet import LeNet
 from target_prop.networks.resnet import ResNet18, ResNet34
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils import named_trainable_parameters
@@ -20,22 +23,43 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 
-networks = [SimpleVGG, ResNet18, ResNet34]
+networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
 
 
 class TestDTP:
     # The type of model to test.
     model_class: ClassVar[Type[DTP]] = DTP
 
+    @pytest.fixture(params=networks, name="network_type")
+    @classmethod
+    def network_type(cls, request):
+        """ Fixture that yields each type of network. """
+        net_type = request.param
+        yield net_type
+
+    @pytest.fixture(name="debug_hparams")
+    @classmethod
+    def debug_hparams(cls, network_type: Type[Network]):
+        """Hyper-parameters to use for debugging, depending on the network type."""
+        default_hps = cls.model_class.HParams()
+        # Reduce the number of iterations, so that tests run much quicker.
+        shorter_feedback_training_iterations = [2 for _ in default_hps.feedback_training_iterations]
+        return dataclasses.replace(
+            default_hps,
+            feedback_training_iterations=shorter_feedback_training_iterations,
+            max_epochs=1,
+        )
+
     @pytest.mark.parametrize("dataset", ["cifar10"])
-    @pytest.mark.parametrize("network_type", networks)
-    def test_fast_dev_run(self, dataset: str, network_type: Type[Network]):
+    def test_fast_dev_run(
+        self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams
+    ):
         """ Run a fast dev run using a single batch of data for training/validation/testing. """
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
         # all made for Cifar10 (e.g. hard-set to 5 layers). This would make the test uglier, as we'd
         # have to pass different values for each dataset.
         config = Config(dataset=dataset, num_workers=0, debug=True)
-        hparams = self.model_class.HParams()
+        hparams = debug_hparams
         trainer = Trainer(
             max_epochs=1,
             gpus=torch.cuda.device_count(),
@@ -43,6 +67,7 @@ class TestDTP:
             fast_dev_run=True,
             # accelerator="ddp",  # todo: debug DP/DDP
             logger=None,
+            checkpoint_callback=False,
         )
 
         if config.seed is not None:
@@ -83,20 +108,22 @@ class TestDTP:
     @pytest.mark.timeout(30)
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("seed", [123, 456])
-    @pytest.mark.parametrize("network_type", networks)
     def test_run_is_reproducible_given_seed(
-        self, dataset: str, network_type: Type[Network], seed: int
+        self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
+        """ Checks that `run` produces the same result when passed the same args and seed. """
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
             network_hparams=network_type.HParams(),
+            hparams=debug_hparams,
             seed=seed,
         )
         perf_2 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
             network_hparams=network_type.HParams(),
+            hparams=debug_hparams,
             seed=seed,
         )
         assert perf_1 == perf_2
@@ -105,17 +132,24 @@ class TestDTP:
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("seed", [123, 456])
     @pytest.mark.parametrize("network_type", networks)
-    def test_seed_has_impact(self, dataset: str, network_type: Type[Network], seed: int):
+    def test_seed_has_impact(
+        self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
+    ):
+        """ Tests that when `run` is passed different seeds, the results are different.
+        TODO: Sometimes fails (e.g. when seed=456), whereby the results are the same for both runs. 
+        """
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
             network_hparams=network_type.HParams(),
+            hparams=debug_hparams,
             seed=seed,
         )
         perf_2 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
             network_hparams=network_type.HParams(),
+            hparams=debug_hparams,
             seed=seed + 1,
         )
         assert perf_1 != perf_2
@@ -124,7 +158,8 @@ class TestDTP:
         self,
         dataset: str,
         network_type: Type[Network],
-        network_hparams: HyperParameters,
+        network_hparams: Network.HParams,
+        hparams: HyperParameters,
         seed: int,
         batches: int = 1,
     ) -> float:
@@ -139,7 +174,6 @@ class TestDTP:
             limit_val_batches=batches,
             limit_test_batches=batches,
         )
-        hparams = self.model_class.HParams(max_epochs=1)
         # trainer = Trainer(
         #     max_epochs=1,
         #     gpus=torch.cuda.device_count(),

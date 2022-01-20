@@ -27,13 +27,10 @@ from target_prop.config import Config
 from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 from target_prop.utils import make_reproducible
 from target_prop.networks import (
-    ResNet18Hparams,
-    ResNet34Hparams,
-    SimpleVGGHparams,
-    resnet,
     ResNet18,
     ResNet34,
     SimpleVGG,
+    LeNet,
 )
 
 HParams = TypeVar("HParams", bound=HyperParameters)
@@ -98,6 +95,7 @@ def add_run_args(parser: ArgumentParser):
             ("simple_vgg", "VGG-like architecture", SimpleVGG, SimpleVGG.HParams),
             ("resnet18", "ResNet18 architecture", ResNet18, ResNet18.HParams),
             ("resnet34", "ResNet34 architecture", ResNet34, ResNet34.HParams),
+            ("lenet", "LeNet-like architecture", LeNet, LeNet.HParams),
         ]:
             net_subparser = net_subparsers.add_parser(
                 option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,
@@ -199,6 +197,7 @@ def add_sweep_args(parser: ArgumentParser):
             ("simple_vgg", "VGG-like architecture", SimpleVGG, SimpleVGG.HParams),
             ("resnet18", "ResNet18 architecture", ResNet18, ResNet18.HParams),
             ("resnet34", "ResNet34 architecture", ResNet34, ResNet34.HParams),
+            ("lenet", "LeNet-like architecture", LeNet, LeNet.HParams),
         ]:
             net_subparser = net_subparsers.add_parser(
                 option_str, help=help_str + " with a " + net_help_str, description=net_fn.__doc__,
