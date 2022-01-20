@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 from typing import Any, Dict, List, Tuple, Type, TypeVar, Union
 
 import torch
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from pytorch_lightning import LightningDataModule
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
@@ -63,7 +63,7 @@ class BaselineModel(LightningModule, ABC):
 
     def __init__(
         self,
-        datamodule: VisionDataModule,
+        datamodule: LightningDataModule,
         network: nn.Sequential,
         hparams: HParams,
         config: Config,

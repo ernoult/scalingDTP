@@ -5,7 +5,7 @@ from logging import getLogger
 from typing import List, Union
 
 import torch
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from pytorch_lightning import LightningDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import categorical, log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
@@ -46,7 +46,7 @@ class VanillaDTP(DTP):
 
     def __init__(
         self,
-        datamodule: VisionDataModule,
+        datamodule: LightningDataModule,
         network: nn.Sequential,
         hparams: "VanillaDTP.HParams",
         config: Config,
