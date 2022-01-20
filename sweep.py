@@ -27,11 +27,11 @@ if __name__ == "__main__":
         [
             "--b_optim.type sgd --b_optim.momentum 0.9 --b_optim.lr 1e-4 3.5e-4 8e-3 8e-3 0.18",  # CIFAR10 default
             "--b_optim.type adam --b_optim.lr 1e-4 3.5e-4 8e-3 8e-3 1e-3",
-            # "--b_optim.type adam --b_optim.lr 1e-4, 3.5e-4, 8e-3, 8e-3, 1e-2",
+            # "--b_optim.type adam --b_optim.lr 1e-4 3.5e-4 8e-3 8e-3 1e-2",
         ],
         [
-            "f_optim.lr 0.08",  # CIFAR10 default
-            "f_optim.lr 0.01",
+            "--f_optim.lr 0.08",  # CIFAR10 default
+            "--f_optim.lr 0.01",
             # "f_optim.lr 0.005",
             # "f_optim.lr 0.001",
         ],
