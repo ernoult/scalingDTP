@@ -35,6 +35,7 @@ class LeNet(nn.Sequential):
                         kernel_size=5,
                         stride=1,
                         padding=2,  # in Meuleman code padding=2
+
                     ),
                     rho=activation(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
@@ -64,3 +65,4 @@ class LeNet(nn.Sequential):
 
 lenet = LeNet
 LeNetHparams = LeNet.HParams
+
