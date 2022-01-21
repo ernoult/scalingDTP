@@ -1,10 +1,11 @@
 import os
 import pdb
+import torch
 from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Union
 
 from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision.datasets import MNIST
 from torchvision import transforms
 
@@ -27,6 +28,7 @@ class MNISTDataModule(LightningDataModule):
     def __init__(
         self,
         data_dir: Optional[str] = None,
+        val_split: Union[int, float] = 0.2,
         num_workers: int = 0,
         normalize: bool = False,
         batch_size: int = 32,
@@ -42,6 +44,7 @@ class MNISTDataModule(LightningDataModule):
 
         Args:
             data_dir: Where to save/load the data
+            val_split: Percent (float) or number (int) of samples to use for the validation split
             num_workers: How many workers to use for loading data
             normalize: If true applies image normalize
             batch_size: How many samples per batch to load
@@ -54,6 +57,7 @@ class MNISTDataModule(LightningDataModule):
 
         super().__init__(*args, **kwargs)
         self.data_dir = data_dir if data_dir is not None else os.getcwd()
+        self.val_split = val_split,
         self.num_workers = num_workers
         self.normalize = normalize
         self.batch_size = batch_size
@@ -84,18 +88,21 @@ class MNISTDataModule(LightningDataModule):
                 if self.train_transforms is None
                 else self.train_transforms
             )
-            test_transforms = (
-                self.default_transforms() if self.test_transforms is None else self.test_transforms
-            )
 
             dataset_train = self.dataset_cls(
                 self.data_dir, train=True, transform=train_transforms, **self.EXTRA_ARGS
             )
-            dataset_test = self.dataset_cls(
-                self.data_dir, train=False, transform=test_transforms, **self.EXTRA_ARGS
+
+            train_length = len(dataset_train)
+            val_length = int(self.val_split*train_length)
+            dataset_train, dataset_val = random_split(
+                dataset_train,
+                [train_length - val_length, val_length],
+                generator=torch.Generator().manual_seed(self.seed)
             )
+
             self.dataset_train = dataset_train
-            self.dataset_val = dataset_test
+            self.dataset_val = dataset_val
 
         if stage == "test" or stage is None:
             test_transforms = (
