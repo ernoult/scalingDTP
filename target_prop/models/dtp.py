@@ -296,7 +296,7 @@ class DTP(LightningModule):
                     assert iterations == 0
         # Metrics:
         self.accuracy = Accuracy()
-
+        self.top5_accuracy = Accuracy(top_k=5)
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
@@ -642,8 +642,9 @@ class DTP(LightningModule):
 
             # self.trainer is None in some unit tests which only use PL module
             if self.trainer is not None:
-                accuracy = self.accuracy(torch.softmax(logits, -1), labels)
-                self.log(f"{phase}/accuracy", accuracy, prog_bar=True)
+                probs = torch.softmax(logits, -1)
+                self.log(f"{phase}/accuracy", self.accuracy(probs, labels), prog_bar=True)
+                self.log(f"{phase}/top5_accuracy", self.top5_accuracy(probs, labels))
 
             temp_logits = logits.detach().clone()
             temp_logits.requires_grad_(True)

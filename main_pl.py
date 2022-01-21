@@ -164,9 +164,11 @@ def run(
     test_results = trainer.test(model, datamodule=datamodule, verbose=True)
 
     wandb.finish()
-    test_accuracy: float = test_results[0]["test/accuracy"]
-    print(f"Test accuracy: {test_accuracy:.1%}")
-    return test_accuracy
+    top1_accuracy: float = test_results[0]["test/accuracy"]
+    top5_accuracy: float = test_results[0]["test/top5_accuracy"]
+    print(f"Test top1 accuracy: {top1_accuracy:.1%}")
+    print(f"Test top5 accuracy: {top5_accuracy:.1%}")
+    return top1_accuracy, top5_accuracy
 
 
 def add_sweep_args(parser: ArgumentParser):

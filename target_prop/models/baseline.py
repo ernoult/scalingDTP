@@ -94,7 +94,7 @@ class BaselineModel(LightningModule, ABC):
 
         # Metrics:
         self.accuracy = Accuracy()
-
+        self.top5_accuracy = Accuracy(top_k=5)
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
@@ -141,10 +141,11 @@ class BaselineModel(LightningModule, ABC):
         loss = F.cross_entropy(logits, y, reduction="mean")
 
         probs = torch.softmax(logits, -1)
-        accuracy = self.accuracy(probs, y)
-        self.log(f"{phase}/accuracy", accuracy, prog_bar=True)
+        self.log(f"{phase}/accuracy", self.accuracy(probs, y), prog_bar=True)
+        self.log(f"{phase}/top5_accuracy", self.top5_accuracy(probs, y))
         self.log(f"{phase}/F_loss", loss, prog_bar=phase == "train")
-        self.log(f"F_lr", self.optimizers().param_groups[0]["lr"])
+        if phase == "train":
+            self.log(f"F_lr", self.optimizers().param_groups[0]["lr"])
         return loss
 
     def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int) -> Tensor:  # type: ignore
