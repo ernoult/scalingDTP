@@ -1,10 +1,11 @@
 import os
 import pdb
+import torch
 from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Union
 
 from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision import transforms
 from torchvision.datasets import CIFAR10
 
@@ -38,6 +39,7 @@ class CIFAR10DataModule(LightningDataModule):
     def __init__(
         self,
         data_dir: Optional[str] = None,
+        val_split: int = 5000,
         num_workers: int = 0,
         normalize: bool = False,
         batch_size: int = 32,
@@ -53,6 +55,7 @@ class CIFAR10DataModule(LightningDataModule):
 
         Args:
             data_dir: Where to save/load the data
+            val_split: how many of the training images to use for the validation split
             num_workers: How many workers to use for loading data
             normalize: If true applies image normalize
             batch_size: How many samples per batch to load
@@ -65,6 +68,7 @@ class CIFAR10DataModule(LightningDataModule):
 
         super().__init__(*args, **kwargs)
         self.data_dir = data_dir if data_dir is not None else os.getcwd()
+        self.val_split = val_split
         self.num_workers = num_workers
         self.normalize = normalize
         self.batch_size = batch_size
@@ -72,6 +76,8 @@ class CIFAR10DataModule(LightningDataModule):
         self.shuffle = shuffle
         self.pin_memory = pin_memory
         self.drop_last = drop_last
+        self.num_samples = 60000 - val_split
+
 
     @property
     def num_samples(self) -> int:
@@ -101,11 +107,20 @@ class CIFAR10DataModule(LightningDataModule):
             dataset_train = self.dataset_cls(
                 self.data_dir, train=True, transform=train_transforms, **self.EXTRA_ARGS
             )
+
+            train_length = len(dataset_train)
+
+            dataset_train, dataset_val = random_split(
+                dataset_train,
+                [train_length - self.val_split, self.val_split],
+                generator=torch.Generator().manual_seed(self.seed)
+            )
+
             dataset_test = self.dataset_cls(
                 self.data_dir, train=False, transform=test_transforms, **self.EXTRA_ARGS
             )
             self.dataset_train = dataset_train
-            self.dataset_val = dataset_test
+            self.dataset_val = dataset_val
 
         if stage == "test" or stage is None:
             test_transforms = (
