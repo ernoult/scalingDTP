@@ -101,7 +101,7 @@ class BaselineModel(LightningModule, ABC):
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
                 "net_hp": self.net_hp.to_dict(),
-                "net_type": type(self.hp).__name__,
+                "net_type": type(self.forward_net).__name__,
             }
         )
         self.trainer: Trainer  # type: ignore
