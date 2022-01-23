@@ -55,7 +55,7 @@ class ForwardOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: float = log_uniform(1e-4, 1e-1, default=0.08)
+    lr: float = log_uniform(1e-4, 1e-1, default=0.05)
 
     # Weight decay coefficient.
     weight_decay: Optional[float] = 1e-4
@@ -177,7 +177,7 @@ class DTP(LightningModule):
 
         # Hyper-parameters for the forward optimizer
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="sgd", lr=0.08, weight_decay=1e-4, momentum=0.9
+            type="sgd", lr=0.05, weight_decay=1e-4, momentum=0.9
         )
         # nudging parameter: Used when calculating the first target.
         # beta: float = 0.7  # NOTE: not tuning this value
