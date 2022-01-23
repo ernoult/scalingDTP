@@ -12,7 +12,7 @@ import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers import choice, list_field, subparsers
 from simple_parsing.helpers.hparams.hparam import log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
@@ -25,14 +25,14 @@ from target_prop.metrics import compute_dist_angle
 from target_prop.networks import Network
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.optimizer_config import OptimizerConfig
+from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils import is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification.accuracy import Accuracy
-from simple_parsing.helpers import subparsers
-from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
+
 from .utils import make_stacked_feedback_training_figure
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,10 @@ class DTP(LightningModule):
 
         # Arguments to be passed to the LR scheduler.
         lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
+            {
+                "step": StepLRConfig,
+                "cosine": CosineAnnealingLRConfig,
+            },
             default_factory=CosineAnnealingLRConfig,
         )
         # Use of a learning rate scheduler for the forward weights.
@@ -521,7 +524,7 @@ class DTP(LightningModule):
                         distance, angle = 0, 0
                         for k, v in metrics.items():
                             if v != (0, 0):
-                                distance, angle = k, v
+                                distance, angle = v
                                 break
                     else:
                         distance, angle = metrics
