@@ -109,10 +109,10 @@ class MNISTDataModule(LightningDataModule):
     @abstractmethod
     def default_transforms(self) -> Callable:
         """Default transform for the dataset."""
-        if self.normalize:
-            mnist_transforms = transforms.Compose([transforms.ToTensor(), mnist_normalization()])
-        else:
-            mnist_transforms = transforms.Compose([transforms.ToTensor()])
+        #if self.normalize:
+         #   mnist_transforms = transforms.Compose([transforms.ToTensor(), mnist_normalization()])
+        #else:
+        mnist_transforms = transforms.Compose([transforms.ToTensor()])
         return mnist_transforms
 
 
