@@ -59,7 +59,7 @@ class BaselineModel(LightningModule, ABC):
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped.
-        early_stopping_patience: int = 5
+        early_stopping_patience: int = 0
 
     def __init__(
         self,
