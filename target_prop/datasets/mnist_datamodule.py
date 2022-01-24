@@ -11,7 +11,7 @@ from torchvision import transforms
 
 def mnist_normalization():
     # From PL bolts
-    normalize = transforms.Normalize((0.1307,), (0.3081,))
+    normalize = transforms.Normalize((0.5,), (0.5,))
     return normalize
 
 
@@ -109,10 +109,10 @@ class MNISTDataModule(LightningDataModule):
     @abstractmethod
     def default_transforms(self) -> Callable:
         """Default transform for the dataset."""
-        #if self.normalize:
-         #   mnist_transforms = transforms.Compose([transforms.ToTensor(), mnist_normalization()])
-        #else:
-        mnist_transforms = transforms.Compose([transforms.ToTensor()])
+        if self.normalize:
+            mnist_transforms = transforms.Compose([transforms.ToTensor(), mnist_normalization()])
+        else:
+            mnist_transforms = transforms.Compose([transforms.ToTensor()])
         return mnist_transforms
 
 
