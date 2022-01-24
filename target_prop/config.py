@@ -23,8 +23,10 @@ from torchvision.transforms import (
 )
 
 from target_prop.datasets import (
+    MNISTDataModule,
     CIFAR10DataModule,
     ImageNet32DataModule,
+    mnist_normalization,
     cifar10_3xstd_normalization,
     cifar10_normalization,
     imagenet32_normalization,
@@ -39,11 +41,13 @@ class Config(Serializable):
     """Configuration options for the experiment (not hyper-parameters)."""
 
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
+        "mnist": MNISTDataModule,
         "cifar10": CIFAR10DataModule,
         "cifar10_3xstd": CIFAR10DataModule,
         "imagenet32": ImageNet32DataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
+        "mnist": mnist_normalization,
         "cifar10": cifar10_normalization,
         "cifar10_3xstd": cifar10_3xstd_normalization,
         "imagenet32": imagenet32_normalization,
@@ -69,7 +73,7 @@ class Config(Serializable):
 
     # Size of the random crop for training.
     # TODO: Might have to use a different value for imagenet.
-    image_crop_size: int = 32
+    image_crop_size: int = 28
 
     # Which device to use.
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
