@@ -12,7 +12,7 @@ import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers import choice, list_field, field
 from simple_parsing.helpers.hparams.hparam import log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
@@ -80,7 +80,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(
+    lr: List[float] = log_uniform(
         1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
     )
 
@@ -133,10 +133,8 @@ class DTP(LightningModule):
         """
 
         # Arguments to be passed to the LR scheduler.
-        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
-            default_factory=CosineAnnealingLRConfig,
-        )
+        lr_scheduler: CosineAnnealingLRConfig = field(default_factory=CosineAnnealingLRConfig)
+
         # Use of a learning rate scheduler for the forward weights.
         use_scheduler: bool = True
 
