@@ -20,14 +20,20 @@ if __name__ == "__main__":
         ],
         [
             "--num_workers 4",
-        ],        
+        ],
+        [
+            "--dataset imagenet32",
+        ],
+        [
+            "--seed 124",
+            "--seed 125",
+            "--seed 126",
+            "--seed 127",
+        ],
         [
             "--type sgd --lr 0.01 --use_scheduler true",
             "--type sgd --lr 0.05 --use_scheduler true",
             # "--b_optim.type adam --b_optim.lr 1e-4 3.5e-4 8e-3 8e-3 1e-2",
-        ],
-        [
-            "--dataset imagenet32",
         ],
         [
             "step",
@@ -35,12 +41,6 @@ if __name__ == "__main__":
         [
             "--step_size 30",
             "--step_size 45",
-        ],
-        [
-            "--seed 124",
-            "--seed 125",
-            "--seed 126",
-            "--seed 127",
         ]
     ]
     init_commands = f"module load python/3.8 && source /scratch/{user}/py38/bin/activate && cd /scratch/{user}/scalingDTP && export WANDB_MODE=offline"
