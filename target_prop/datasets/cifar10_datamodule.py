@@ -105,16 +105,23 @@ class CIFAR10DataModule(LightningDataModule):
                 self.data_dir, train=True, transform=train_transforms, **self.EXTRA_ARGS
             )
 
-            train_length = len(dataset_train)
-
-            dataset_train, dataset_val = random_split(
-                dataset_train,
-                [train_length - self.val_split, self.val_split],
-                generator=torch.Generator().manual_seed(self.seed)
+            test_transforms = (
+                self.default_transforms() if self.test_transforms is None else self.test_transforms
+            )
+            dataset_test = self.dataset_cls(
+                self.data_dir, train=False, transform=test_transforms, **self.EXTRA_ARGS
             )
 
+            train_length = len(dataset_train)
+
+            # dataset_train, dataset_val = random_split(
+            #     dataset_train,
+            #     [train_length - self.val_split, self.val_split],
+            #     generator=torch.Generator().manual_seed(self.seed)
+            # )
+
             self.dataset_train = dataset_train
-            self.dataset_val = dataset_val
+            self.dataset_val = dataset_test
 
         if stage == "test" or stage is None:
             test_transforms = (
