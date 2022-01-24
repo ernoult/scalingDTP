@@ -11,7 +11,7 @@ from torchvision import transforms
 
 def mnist_normalization():
     # From PL bolts
-    normalize = transforms.Normalize((0.1307,), (0.3081,))
+    normalize = transforms.Normalize((0.5,), (0.5,))
     return normalize
 
 
@@ -114,7 +114,6 @@ class MNISTDataModule(LightningDataModule):
         else:
             mnist_transforms = transforms.Compose([transforms.ToTensor()])
         return mnist_transforms
-
 
     def train_dataloader(self, *args: Any, **kwargs: Any) -> DataLoader:
         """The train dataloader."""

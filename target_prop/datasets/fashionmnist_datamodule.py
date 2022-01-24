@@ -7,8 +7,15 @@ from typing import Any, Callable, List, Optional, Union
 from pytorch_lightning import LightningDataModule
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
-from torchvision import transforms as transform_lib
+from torchvision import transforms
 from torchvision.datasets import FashionMNIST
+
+
+
+def fashionmnist_normalization():
+    # From PL bolts
+    normalize = transforms.Normalize((0.5,), (0.5,))
+    return normalize
 
 
 class FashionMNISTDataModule(LightningDataModule):
@@ -87,8 +94,8 @@ class FashionMNISTDataModule(LightningDataModule):
         """
         Saves FashionMNIST files to data_dir
         """
-        FashionMNIST(self.data_dir, train=True, download=True, transform=transform_lib.ToTensor())
-        FashionMNIST(self.data_dir, train=False, download=True, transform=transform_lib.ToTensor())
+        self.dataset_cls(self.data_dir, train=True, download=True)
+        self.dataset_cls(self.data_dir, train=False, download=True)
 
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -122,87 +129,14 @@ class FashionMNISTDataModule(LightningDataModule):
             )
             self.dataset_test = dataset_test
 
-    def train_dataloader(self, batch_size=32, transforms=None):
-        """
-        FashionMNIST train set removes a subset to use for validation
-
-        Args:
-            batch_size: size of batch
-            transforms: custom transforms
-        """
-        transforms = transforms or self.train_transforms or self._default_transforms()
-
-        dataset = FashionMNIST(self.data_dir, train=True, download=False, transform=transforms)
-        train_length = len(dataset)
-        dataset_train, _ = random_split(
-            dataset,
-            [train_length - self.val_split, self.val_split],
-            generator=torch.Generator().manual_seed(self.seed)
-        )
-        loader = DataLoader(
-            dataset_train,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            drop_last=True,
-            pin_memory=True
-        )
-        return loader
-
-    def val_dataloader(self, batch_size=32, transforms=None):
-        """
-        FashionMNIST val set uses a subset of the training set for validation
-
-        Args:
-            batch_size: size of batch
-            transforms: custom transforms
-        """
-        transforms = transforms or self.val_transforms or self._default_transforms()
-
-        dataset = FashionMNIST(self.data_dir, train=True, download=True, transform=transforms)
-        train_length = len(dataset)
-        _, dataset_val = random_split(
-            dataset,
-            [train_length - self.val_split, self.val_split],
-            generator=torch.Generator().manual_seed(self.seed)
-        )
-        loader = DataLoader(
-            dataset_val,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            drop_last=True,
-            pin_memory=True
-        )
-        return loader
-
-    def test_dataloader(self, batch_size=32, transforms=None):
-        """
-        FashionMNIST test set uses the test split
-
-        Args:
-            batch_size: size of batch
-            transforms: custom transforms
-        """
-        transforms = transforms or self.test_transforms or self._default_transforms()
-
-        dataset = FashionMNIST(self.data_dir, train=False, download=False, transform=transforms)
-        loader = DataLoader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            drop_last=True,
-            pin_memory=True
-        )
-        return loader
-
-    def _default_transforms(self):
-        mnist_transforms = transform_lib.Compose([
-            transform_lib.ToTensor()
-        ])
-        return mnist_transforms
-
+    @abstractmethod
+    def default_transforms(self) -> Callable:
+        """Default transform for the dataset."""
+        if self.normalize:
+            fashionmnist_transforms = transforms.Compose([transforms.ToTensor(), fashionmnist_normalization()])
+        else:
+            fashionmnist_transforms = transforms.Compose([transforms.ToTensor()])
+        return fashionmnist_transforms
 
     def train_dataloader(self, *args: Any, **kwargs: Any) -> DataLoader:
         """The train dataloader."""
