@@ -65,4 +65,3 @@ class LeNet(nn.Sequential):
 
 lenet = LeNet
 LeNetHparams = LeNet.HParams
-
