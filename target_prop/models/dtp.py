@@ -574,11 +574,8 @@ class DTP(LightningModule):
                 if iterations_i > 0:
                     self.log(f"{phase}/B_avg_loss[{layer_index}]", avg_iter_loss)
                 self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
-            # NOTE: Logging all the distances and angles for each layer, which isn't ideal!
-            # What would be nicer would be to log this as a small, light-weight plot showing the
-            # evolution of the distances / angles for each layer.
-            # self.log(f"{self.phase}/B_angles[{layer_index}]", iteration_angles)
-            # self.log(f"{self.phase}/B_distances[{layer_index}]", iteration_distances)
+                self.log(f"{phase}/B_angle[{layer_index}]", iteration_angles[-1])
+                self.log(f"{phase}/B_distance[{layer_index}]", iteration_distances[-1])
 
         if (
             self.training
