@@ -19,9 +19,35 @@ python main_pl.py run parallel_dtp simple_vgg
 
 ### ImageNet
 
-To train with DTP on downsampled ImageNet 32x32 dataset, do:
+To train with DTP on ImageNet 32x32 dataset, do:
 ```
-python main_pl.py run dtp <architecture> --dataset imagenet32
+python main_pl.py run dtp simple_vgg \
+--batch_size 256 \
+--num_workers 4 \
+--dataset imagenet32 \
+--seed 123 \
+--f_optim.type sgd \
+--f_optim.lr 0.01 \
+--feedback_training_iterations 25 35 40 60 25 \
+--b_optim.type sgd \
+--b_optim.momentum 0.9 \
+--b_optim.lr 1e-4 3.5e-4 8e-3 8e-3 0.18 \
+--use_scheduler true \
+cosine
+```
+
+To train with backprop baseline on ImageNet 32x32 dataset, do:
+```
+python main_pl.py run backprop simple_vgg \
+--batch_size 256 \
+--num_workers 4 \
+--dataset imagenet32 \
+--seed 123 \
+--type sgd \
+--lr 0.01 \
+--use_scheduler true \
+step \
+--step_size 30
 ```
 
 
