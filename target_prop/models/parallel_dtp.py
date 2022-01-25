@@ -253,6 +253,11 @@ class ParallelDTP(DTP):
                         if is_trainable(reversed_backward_net[i])
                     ]
                 )
+            if self.trainer is not None:
+                for layer_index, (distance, angle) in enumerate(zip(layer_distance, layer_angle)):
+                    self.log(f"{phase}/B_distance[{layer_index}]", distance)
+                    self.log(f"{phase}/B_angle[{layer_index}]", angle)
+
             # NOTE: Have to add the 'iterations' dimension, since it's used in the sequential model.
             layer_distances = torch.as_tensor(layer_distance).reshape([len(layer_distance), 1])
             layer_angles = torch.as_tensor(layer_angle).reshape([len(layer_distance), 1])
