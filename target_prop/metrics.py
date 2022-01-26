@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import numpy as np
 import torch
 from torch import Tensor, nn
+from torch.linalg import norm
 
 from target_prop.networks.resnet import BasicBlock, InvertedBasicBlock
 
@@ -25,14 +26,15 @@ def _compute_dist_angle_between_weights(
 ) -> Tuple[float, float]:
     F = forward_weight
     G = feedback_weight
+    # Compute distance
     dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
 
-    F_flat = F.flatten(1) if F.ndim > 1 else F.unsqueeze(0)
-    G_flat = G.flatten(1) if G.ndim > 1 else G.unsqueeze(0)
-    cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
-        ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
-    )
-    angle_rad = torch.acos(cos_angle).mean()
+    # Compute angle
+    eps = 1e-8  # Small value to avoid division by zero
+    F_flat = F.flatten()
+    G_flat = G.flatten()
+    cos_angle = torch.dot(F_flat, G_flat) / (norm(F_flat) * norm(G_flat) + eps)
+    angle_rad = torch.acos(cos_angle)
     angle = torch.rad2deg(angle_rad)
     return dist.item(), angle.item()
 
