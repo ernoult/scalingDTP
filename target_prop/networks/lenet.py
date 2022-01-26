@@ -14,14 +14,20 @@ class LeNet(nn.Sequential):
     class HParams(HyperParameters):
         channels: List[int] = list_field(32, 64)
         activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
+            {
+                "relu": nn.ReLU,
+                "elu": nn.ELU,
+            },
+            default=nn.ELU,
         )
+        bias: bool = True
 
     def __init__(self, in_channels: int, n_classes: int, hparams: "LeNet.HParams" = None):
         hparams = hparams or self.HParams()
         layers: OrderedDict[str, nn.Module] = OrderedDict()
         activation: Type[nn.Module] = hparams.activation
         channels = [in_channels] + hparams.channels
+        bias: bool = hparams.bias
 
         # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest
         # iterable is exhausted. This gives us the right number of blocks.
@@ -50,12 +56,12 @@ class LeNet(nn.Sequential):
         layers["fc1"] = nn.Sequential(
             OrderedDict(
                 reshape=Reshape(target_shape=(-1,)),
-                linear1=nn.LazyLinear(out_features=512, bias=True),
+                linear1=nn.LazyLinear(out_features=512, bias=bias),
                 rho=activation(),
             )
         )
         layers["fc2"] = nn.Sequential(
-            OrderedDict(linear1=nn.Linear(in_features=512, out_features=n_classes, bias=True))
+            OrderedDict(linear1=nn.Linear(in_features=512, out_features=n_classes, bias=bias))
         )
 
         super().__init__(layers)
