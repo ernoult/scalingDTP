@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import contextlib
 import warnings
 from logging import getLogger as get_logger
@@ -75,6 +76,8 @@ class CompareToBackpropCallback(Callback):
         )
 
         prefix = "/BackpropComparison"
+        json_file_angles = "bp_weight_angles.json"
+        json_file_distances = "bp_weight_angles.json"
         if trainer.logger is not None:
             trainer.logger.log_metrics(
                 {
@@ -88,6 +91,17 @@ class CompareToBackpropCallback(Callback):
                     for parameter_name, angle in angles.items()
                 }
             )
+            with open(json_file_angles, "a") as data:
+                for parameter_name, angle in angles.items():
+                    info = {parameter_name: angle}
+                    data.write(json.dumps(info))
+                data.close()
+
+            with open(json_file_distances, "a") as data:
+                for parameter_name, distance in distances.items():
+                    info = {parameter_name: distance}
+                    data.write(json.dumps(info))
+                data.close()
         else:
             for parameter_name, distance in distances.items():
                 logger.debug(f"{prefix}/distance/{parameter_name}: {distance}")
