@@ -9,19 +9,12 @@ from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
 
 
-
-
-
 class LeNet(nn.Sequential):
     @dataclass
     class HParams(HyperParameters):
         channels: List[int] = list_field(32, 64)
         activation: Type[nn.Module] = choice(
-            {
-                "relu": nn.ReLU,
-                "elu": nn.ELU,
-            },
-            default=nn.ELU,
+            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
         )
 
     def __init__(self, in_channels: int, n_classes: int, hparams: "LeNet.HParams" = None):
@@ -41,7 +34,7 @@ class LeNet(nn.Sequential):
                         out_channels,
                         kernel_size=5,
                         stride=1,
-                        padding=2, # in Meuleman code padding=2
+                        padding=2,  # in Meuleman code padding=2
                     ),
                     rho=activation(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
@@ -57,18 +50,17 @@ class LeNet(nn.Sequential):
         layers["fc1"] = nn.Sequential(
             OrderedDict(
                 reshape=Reshape(target_shape=(-1,)),
-                linear1= nn.LazyLinear(out_features=512, bias=True),
-                rho=activation()
+                linear1=nn.LazyLinear(out_features=512, bias=True),
+                rho=activation(),
             )
         )
         layers["fc2"] = nn.Sequential(
-            OrderedDict(
-                linear1=nn.Linear(in_features=512, out_features=n_classes, bias=True)
-            )
+            OrderedDict(linear1=nn.Linear(in_features=512, out_features=n_classes, bias=True))
         )
 
         super().__init__(layers)
         self.hparams = hparams
 
+
 lenet = LeNet
-LeNetparams = LeNet.HParams
+LeNetHparams = LeNet.HParams
