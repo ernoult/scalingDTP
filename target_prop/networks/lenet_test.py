@@ -1,3 +1,11 @@
+"""
+Numerical tests for Theorems 4.2 and 4.3.
+
+Run the following from project root to execute tests:
+
+pytest target_prop/networks/lenet_test.py -s
+"""
+
 import pdb
 from dataclasses import dataclass
 from typing import (
