@@ -122,7 +122,6 @@ class TestLeNet:
         self._setup_feedback_optimizers(dtp_model)
 
         # Run feedback weight training
-        # pdb.set_trace()
         outputs = dtp_model.feedback_loss(data, label, phase="train")
 
         # Check angles and distances
@@ -135,8 +134,6 @@ class TestLeNet:
         # Make sure that converged output layer angle is less than 8 degrees
         assert layer_angles[-1] < 8.0
 
-    # @pytest.mark.parametrize("noise", [0.1])
-    # @pytest.mark.parametrize("dtp_model", [dtp_no_bias_model])
     def test_dtp_forward_updates_match_backprop_with_symmetric_init(
         self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP
     ):
