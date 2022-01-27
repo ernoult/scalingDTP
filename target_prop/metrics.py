@@ -34,6 +34,7 @@ def _compute_dist_angle_between_weights(
     F_flat = F.flatten()
     G_flat = G.flatten()
     cos_angle = torch.dot(F_flat, G_flat) / (norm(F_flat) * norm(G_flat) + eps)
+    cos_angle = torch.clamp(cos_angle, max=1.0, min=-1.0)  # Clip for numerical precision
     angle_rad = torch.acos(cos_angle)
     angle = torch.rad2deg(angle_rad)
     return dist.item(), angle.item()
