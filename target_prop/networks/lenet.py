@@ -8,10 +8,12 @@ from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
 
+from target_prop.networks.network import Network
 
-class LeNet(nn.Sequential):
+
+class LeNet(nn.Sequential, Network):
     @dataclass
-    class HParams(HyperParameters):
+    class HParams(Network.HParams):
         channels: List[int] = list_field(32, 64)
         activation: Type[nn.Module] = choice(
             {

@@ -29,15 +29,17 @@ from target_prop.datasets import (
     cifar10_normalization,
     imagenet32_normalization,
 )
+from target_prop.wandb_utils import LoggedToWandb
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
 
 
 @dataclass
-class Config(Serializable):
+class Config(Serializable, LoggedToWandb):
     """Configuration options for the experiment (not hyper-parameters)."""
 
+    _stored_at_key: ClassVar[str] = "config"
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
         "cifar10": CIFAR10DataModule,
         "cifar10_3xstd": CIFAR10DataModule,

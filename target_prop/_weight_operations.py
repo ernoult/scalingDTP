@@ -26,15 +26,25 @@ def weight_b_sym_conv2d(forward_layer: nn.Conv2d, backward_layer: nn.ConvTranspo
         # NOTE: I guess the transposition isn't needed here?
         backward_layer.weight.data = forward_layer.weight.data
 
+    if forward_layer.bias is not None:
+        assert backward_layer.bias is not None
+        forward_layer.bias.data.zero_()
+        backward_layer.bias.data.zero_()
+    else:
+        assert backward_layer.bias is None
+
 
 @init_symetric_weights.register(nn.Linear)
 def weight_b_sym_linear(forward_layer: nn.Linear, backward_layer: nn.Linear) -> None:
     assert forward_layer.in_features == backward_layer.out_features
     assert forward_layer.out_features == backward_layer.in_features
-    # TODO: Not sure how this would work if a bias term was used, so assuming we don't
-    # have one for now.
-    assert forward_layer.bias is None and backward_layer.bias is None
-    # assert forward_layer.bias is not None == backward_layer.bias is not None
+    # TODO: Double check that this bias term initialization is ok.
+    if forward_layer.bias is None:
+        assert backward_layer.bias is None
+    else:
+        assert backward_layer.bias is not None
+        forward_layer.bias.data.zero_()
+        backward_layer.bias.data.zero_()
 
     with torch.no_grad():
         # NOTE: I guess the transposition isn't needed here?

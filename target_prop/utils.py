@@ -1,13 +1,14 @@
 from __future__ import annotations
 import contextlib
 import warnings
+from importlib_metadata import collections
 from torch.distributions import Normal as Normal_
 from torch import Tensor
-from typing import Any, TypeVar, Union, Iterable, Tuple
+from typing import Any, Dict, List, TypeVar, Union, Iterable, Tuple
 from simple_parsing.helpers import field
 from torch import nn
 from torch.nn.parameter import Parameter
-
+T = TypeVar("T")
 V = TypeVar("V", bound=Union[int, float])
 
 

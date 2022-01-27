@@ -20,6 +20,7 @@ from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
+from target_prop.models.model import Model
 from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -33,11 +34,11 @@ T = TypeVar("T")
 logger = getLogger(__name__)
 
 
-class BaselineModel(LightningModule, ABC):
+class BaselineModel(LightningModule, Model):
     """Baseline model that uses normal backpropagation."""
 
     @dataclass
-    class HParams(HyperParameters):
+    class HParams(Model.HParams):
         """Hyper-Parameters of the baseline model."""
 
         # Arguments to be passed to the LR scheduler.

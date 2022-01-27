@@ -2,11 +2,11 @@ from __future__ import annotations
 import contextlib
 import warnings
 from logging import getLogger as get_logger
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING, Union
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
-from torch import Tensor
+from torch import Tensor, nn
 from torch.nn import functional as F
 
 from target_prop.layers import forward_all
@@ -116,9 +116,12 @@ def comparison_with_backprop_gradients(
     return distances, angles
 
 
-def get_backprop_grads(model: DTP, x: Tensor, y: Tensor) -> Dict[str, Tensor]:
+def get_backprop_grads(model: Union[DTP, nn.Sequential], x: Tensor, y: Tensor) -> Dict[str, Tensor]:
     # Get the normal backprop loss and gradients:
-    forward_net = model.forward_net
+    if hasattr(model, "forward_net"):
+        forward_net = model.forward_net
+    else:
+        forward_net = model
     # Clear out the gradients.
     forward_net.zero_grad()
 
