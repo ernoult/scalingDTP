@@ -23,11 +23,15 @@ from torchvision.transforms import (
 )
 
 from target_prop.datasets import (
+    MNISTDataModule,
     CIFAR10DataModule,
     ImageNet32DataModule,
+    FashionMNISTDataModule,
+    mnist_normalization,
     cifar10_3xstd_normalization,
     cifar10_normalization,
     imagenet32_normalization,
+    fashionmnist_normalization,
 )
 
 logger = get_logger(__name__)
@@ -39,14 +43,18 @@ class Config(Serializable):
     """Configuration options for the experiment (not hyper-parameters)."""
 
     available_datasets: ClassVar[Dict[str, Type[LightningDataModule]]] = {
+        "mnist": MNISTDataModule,
         "cifar10": CIFAR10DataModule,
         "cifar10_3xstd": CIFAR10DataModule,
         "imagenet32": ImageNet32DataModule,
+        "fashion_mnist": FashionMNISTDataModule,
     }
     normalization_transforms: ClassVar[Dict[str, Callable[[], Transform]]] = {
+        "mnist": mnist_normalization,
         "cifar10": cifar10_normalization,
         "cifar10_3xstd": cifar10_3xstd_normalization,
         "imagenet32": imagenet32_normalization,
+        "fashion_mnist": fashionmnist_normalization,
     }
 
     # Which dataset to use.
