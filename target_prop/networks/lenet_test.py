@@ -2,12 +2,14 @@
 Numerical tests for Theorems 4.2 and 4.3.
 
 Run the following from project root to execute tests:
-
 pytest target_prop/networks/lenet_test.py -s
 """
 
+import os
 import pdb
+from collections import defaultdict
 from dataclasses import dataclass
+from email.policy import default
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -22,6 +24,7 @@ from typing import (
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pytest
 import seaborn as sns
 import torch
@@ -35,7 +38,7 @@ from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.models.dtp import FeedbackOptimizerConfig, ForwardOptimizerConfig
 from target_prop.networks import LeNet
-from target_prop.utils import is_trainable
+from target_prop.utils import is_trainable, named_trainable_parameters
 
 
 def count_parameters(model):
@@ -91,14 +94,24 @@ def dtp_no_bias_model(dtp_hparams: HyperParameters):
 
 
 class TestLeNet:
-    # @pytest.mark.skip("skip for now")
+    angles_data = {}
+
+    @pytest.mark.skip("skip for now")
+    @pytest.mark.parametrize("num_iters", [5000])
     @pytest.mark.parametrize("noise", [0.1])
     @pytest.mark.parametrize("lr", [0.03])
+    @pytest.mark.parametrize("seed", [123])
     def test_feedback_weight_training(
-        self, dtp_hparams: DTP.HParams, dtp_model: DTP, noise: float, lr: float
+        self,
+        dtp_hparams: DTP.HParams,
+        dtp_model: DTP,
+        num_iters: int,
+        noise: float,
+        lr: float,
+        seed: int,
     ):
         # Fix seed
-        seed_everything(seed=123, workers=True)
+        seed_everything(seed=seed, workers=True)
         if torch.cuda.is_available():
             device = torch.device("cuda")
 
@@ -116,7 +129,6 @@ class TestLeNet:
         # Setup DTP model with LeNet hyperparams
         # NOTE: we just train output layer feedback weights to align with forward on
         # a single batch, so we set all the other layer iterations to 0 for now
-        num_iters = 5000
         dtp_model = dtp_model.to(device)
         dtp_model.feedback_iterations = [num_iters, 0, 0, 0]
         dtp_model.feedback_noise_scales[0] = noise
@@ -142,15 +154,65 @@ class TestLeNet:
         # Make sure that converged output layer angle is less than 8 degrees
         assert layer_angles[-1] < 8.0
 
-    def test_dtp_forward_updates_match_backprop_with_symmetric_init(
-        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP
+    # @pytest.mark.skip("skip for now")
+    @pytest.mark.parametrize("seed", [123, 124, 125, 126, 127])
+    def test_dtp_forward_updates_are_orthogonal_to_backprop_with_random_init(
+        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, seed: int
     ):
         # Fix seed
         dtp_model = dtp_no_bias_model  # rename for ease
-        seed_everything(seed=123, workers=True)
-        # if torch.cuda.is_available():
-        #     device = torch.device("cuda")
-        device = torch.device("cpu")
+        seed_everything(seed=seed, workers=True)
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        # device = torch.device("cpu")
+
+        # Setup CIFAR10 datamodule
+        config = Config(dataset="cifar10", num_workers=0, debug=True)
+        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule.prepare_data()
+        datamodule.setup(stage="fit")
+
+        # Get a batch
+        data, label = next(iter(datamodule.train_dataloader()))
+        data = data.to(device)
+        label = label.to(device)
+
+        # Setup DTP model with random weights
+        dtp_model = dtp_model.to(device)
+
+        # Get backprop and DTP grads for a batch
+        from target_prop.callbacks import get_backprop_grads, get_dtp_grads
+
+        backprop_grads = get_backprop_grads(dtp_model, data, label)
+        dtp_grads = get_dtp_grads(dtp_model, data, label, temp_beta=dtp_model.hp.beta)
+
+        # Compare gradients by angles and distances
+        distances: Dict[str, float] = {}
+        angles: Dict[str, float] = {}
+        for (bp_param, bp_grad), (dtp_param, dtp_grad) in zip(
+            backprop_grads.items(), dtp_grads.items()
+        ):
+            assert bp_param == dtp_param
+            distance, angle = compute_dist_angle(bp_grad, dtp_grad)
+            distances[bp_param] = distance
+            angles[bp_param] = angle
+
+        # Print angles for each layer
+        self.angles_data[f"random_init_{seed}"] = angles
+        for key, value in angles.items():
+            print(key, value)
+
+    # @pytest.mark.skip("skip for now")
+    @pytest.mark.parametrize("seed", [123, 124, 125, 126, 127])
+    def test_dtp_forward_updates_match_backprop_with_symmetric_init(
+        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, seed: int
+    ):
+        # Fix seed
+        dtp_model = dtp_no_bias_model  # rename for ease
+        seed_everything(seed=seed, workers=True)
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        # device = torch.device("cpu")
 
         # Setup CIFAR10 datamodule
         config = Config(dataset="cifar10", num_workers=0, debug=True)
@@ -167,13 +229,13 @@ class TestLeNet:
         init_symetric_weights(dtp_model.forward_net, dtp_model.backward_net)
         dtp_model = dtp_model.to(device)
 
-        # Get backprop and DTP grads
+        # Get backprop and DTP grads for a batch
         from target_prop.callbacks import get_backprop_grads, get_dtp_grads
 
         backprop_grads = get_backprop_grads(dtp_model, data, label)
         dtp_grads = get_dtp_grads(dtp_model, data, label, temp_beta=dtp_model.hp.beta)
 
-        # Compare gradients
+        # Compare gradients by angles and distances
         distances: Dict[str, float] = {}
         angles: Dict[str, float] = {}
         for (bp_param, bp_grad), (dtp_param, dtp_grad) in zip(
@@ -185,9 +247,137 @@ class TestLeNet:
             angles[bp_param] = angle
 
         # Print angles for each layer
+        self.angles_data[f"symmetric_init_{seed}"] = angles
         for key, value in angles.items():
             print(key, value)
         return True
+
+    @pytest.mark.parametrize("num_iters", [[5000, 5000, 5000]])
+    @pytest.mark.parametrize("noise", [[0.2, 0.2, 0.1]])  # layer order: [first, ..., last]
+    @pytest.mark.parametrize("lrs", [[1e-4, 2.5e-3, 0.01]])  # layer order: [first, ..., last]
+    @pytest.mark.parametrize("seed", [123, 124, 125, 126, 127])
+    def test_dtp_forward_updates_match_backprop_with_ldrl_init(
+        self,
+        dtp_hparams: DTP.HParams,
+        dtp_no_bias_model: DTP,
+        num_iters: List[int],
+        noise: List[float],
+        lrs: List[float],
+        seed: int,
+    ):
+        # Fix seed
+        print("noise: ", noise)
+        print("lrs: ", lrs)
+        print("num_iters: ", num_iters)
+        dtp_model = dtp_no_bias_model  # rename for ease
+        seed_everything(seed=seed, workers=True)
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        # device = torch.device("cpu")
+
+        # Setup CIFAR10 datamodule
+        config = Config(dataset="cifar10", num_workers=0, debug=True)
+        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule.prepare_data()
+        datamodule.setup(stage="fit")
+
+        # Get a batch
+        data, label = next(iter(datamodule.train_dataloader()))
+        data = data.to(device)
+        label = label.to(device)
+
+        # Setup DTP model with LeNet hyperparams
+        dtp_model = dtp_model.to(device)
+
+        # Assert lengths for LeNet
+        assert len(num_iters) == 3
+        assert len(noise) == 3
+        assert len(lrs) == 3
+
+        # Do feedback weight training (L-DRL)
+        # Add [0] for first feedback layer which is never trained
+        dtp_model.feedback_iterations = num_iters[::-1] + [0]  # reverse order for feedback training
+        dtp_model.feedback_noise_scales = noise[::-1] + [0]
+        dtp_model.feedback_lrs = lrs[::-1] + [0]
+        self._setup_feedback_optimizers(dtp_model)
+        outputs = dtp_model.feedback_loss(data, label, phase="train")
+
+        # Inspect angles between forward and backward layers after L-DRL
+        layer_angles = outputs["layer_angles"]
+        layer_names = [name for name, _ in named_trainable_parameters(dtp_model.forward_net)]
+        layer_names = layer_names[1:]  # skip first layer since it's never trained
+        assert len(layer_names) == len(layer_angles)
+        for i in range(len(layer_angles)):
+            name = layer_names[i]
+            angle = layer_angles[i][-1]  # pick last iteration angle
+            print(f"[{name}] angle between F & G after L-DRL: {angle}")
+
+        # Get backprop and DTP grads for a batch
+        from target_prop.callbacks import get_backprop_grads, get_dtp_grads
+
+        backprop_grads = get_backprop_grads(dtp_model, data, label)
+        dtp_grads = get_dtp_grads(dtp_model, data, label, temp_beta=dtp_model.hp.beta)
+
+        # Compare gradients by angles and distances
+        distances: Dict[str, float] = {}
+        angles: Dict[str, float] = {}
+        for (bp_param, bp_grad), (dtp_param, dtp_grad) in zip(
+            backprop_grads.items(), dtp_grads.items()
+        ):
+            assert bp_param == dtp_param
+            distance, angle = compute_dist_angle(bp_grad, dtp_grad)
+            distances[bp_param] = distance
+            angles[bp_param] = angle
+
+        # Print angles for each layer
+        self.angles_data[f"l-drl_init_{seed}"] = angles
+        for key, value in angles.items():
+            print(key, value)
+        return True
+
+    # @pytest.mark.skip("skip for now")
+    @pytest.mark.parametrize("path", ["./data"])  # skip this test if you don't want to plot
+    def test_angle_plot(self, path: str):
+        # Build pandas dataframe for plotting
+        pd_angles_data = defaultdict(list)
+        for init_scheme_seed in self.angles_data.keys():
+            init_scheme = " ".join(init_scheme_seed.split("_")[:-1])
+            seed = init_scheme_seed.split("_")[-1]
+            for param_name, angle in self.angles_data[init_scheme_seed].items():
+                pd_angles_data["seed"].append(seed)
+                pd_angles_data["init_scheme"].append(init_scheme)
+                pd_angles_data["param"].append(param_name)
+                pd_angles_data["angle"].append(angle)
+        df = pd.DataFrame(data=pd_angles_data)
+
+        # Save data
+        print("angle data:")
+        print(df)
+        df.to_csv(
+            os.path.join(path, "angle_data.csv"),
+            encoding="utf-8",
+            index=False,
+        )
+
+        # Save figure
+        file_path = os.path.join(path, "angle_plot.png")
+        sns.set_theme(style="whitegrid")  # "darkgrid" also looks nice
+        fig = sns.catplot(
+            data=df,
+            x="init_scheme",
+            y="angle",
+            hue="param",
+            kind="bar",
+            height=5,
+            aspect=1.5,
+            alpha=0.9,
+            legend_out=False,
+            errwidth=2,
+            capsize=0.05,
+        )
+        fig.set_axis_labels("", "angle")
+        fig.legend.set_title("params")
+        plt.savefig(file_path, bbox_inches="tight")
 
     def _line_plot(self, x, y, name, x_label=None, y_label=None):
         sns.set_theme(style="darkgrid")
