@@ -4,7 +4,7 @@ import seaborn as sns
 
 # Read data
 data_path = "./data/angle_data.csv"
-save_path = "./data/angle_plot.png"
+save_path = "./data/angle_plot.pdf"
 df = pd.read_csv(data_path)
 
 # Save figure
@@ -24,4 +24,4 @@ fig = sns.catplot(
 )
 fig.set_axis_labels("", "angle")
 fig.legend.set_title("params")
-plt.savefig(save_path, bbox_inches="tight")
+plt.savefig(save_path, format="pdf", bbox_inches="tight")

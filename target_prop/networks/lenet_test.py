@@ -360,7 +360,7 @@ class TestLeNet:
         )
 
         # Save figure
-        file_path = os.path.join(path, "angle_plot.png")
+        file_path = os.path.join(path, "angle_plot.pdf")
         sns.set_theme(style="whitegrid")  # "darkgrid" also looks nice
         fig = sns.catplot(
             data=df,
@@ -377,7 +377,7 @@ class TestLeNet:
         )
         fig.set_axis_labels("", "angle")
         fig.legend.set_title("params")
-        plt.savefig(file_path, bbox_inches="tight")
+        plt.savefig(file_path, format="pdf", bbox_inches="tight")
 
     def _line_plot(self, x, y, name, x_label=None, y_label=None):
         sns.set_theme(style="darkgrid")
