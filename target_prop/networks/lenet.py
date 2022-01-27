@@ -48,7 +48,7 @@ class LeNet(nn.Sequential):
                     # the indices to the backward net for this layer through a "magic bridge".
                     # We use `return_indices=False` here just so the layer doesn't also return
                     # the indices in its forward pass.
-                    pool=MaxPool2d(kernel_size=3, stride=2, return_indices=False),
+                    pool=MaxPool2d(kernel_size=3, stride=2, padding=1, return_indices=False),
                     # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
                     # pool=nn.AvgPool2d(kernel_size=2),
                 )
