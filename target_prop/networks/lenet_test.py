@@ -102,7 +102,7 @@ class TestLeNet:
         if torch.cuda.is_available():
             device = torch.device("cuda")
 
-        # Setup CIFAR10 datamodule with batch size 1
+        # Setup CIFAR10 datamodule
         config = Config(dataset="cifar10", num_workers=0, debug=False)
         datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
         datamodule.prepare_data()
@@ -152,7 +152,7 @@ class TestLeNet:
         #     device = torch.device("cuda")
         device = torch.device("cpu")
 
-        # Setup CIFAR10 datamodule with batch size 1
+        # Setup CIFAR10 datamodule
         config = Config(dataset="cifar10", num_workers=0, debug=True)
         datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
         datamodule.prepare_data()
