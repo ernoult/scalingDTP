@@ -25,6 +25,10 @@ from typing import OrderedDict
 from torch import Tensor
 
 
+from torch.utils.data import DataLoader
+from torch import Tensor
+
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -54,7 +58,10 @@ def seed(request):
     """ Fixture that seeds all the randomness, and provides the random seed used. 
     
     When another fixture uses this one, it is also re-run for every seed here, and has its
-    randomness seeded.
+    randomness seeded. 
+
+    Starting from this fixture, a "graph" of fixtures is created, where every node that follows is
+    using the same seed as its parent, etc.
     """
     seed = request.param
     print(f"Runnign tests with seed {seed}")
@@ -81,6 +88,7 @@ def feedback_lrs(request):
 
 @pytest.fixture(scope="module")
 def dtp_hparams():
+    """Fixture that returns the hyper-parameters of L-DRL algo (DTP) """
     return DTP.HParams(
         feedback_training_iterations=[41, 51, 24],
         batch_size=256,
@@ -96,29 +104,6 @@ def dtp_hparams():
         init_symetric_weights=False,
     )
 
-    @dataclass
-    class DTPLeNetHParams(DTP.HParams):
-        """DTP defaults for LeNet."""
-
-        feedback_training_iterations: List[int] = list_field(41, 51, 24)
-        batch_size: int = 256
-        noise: List[float] = list_field(0.41640228838517584, 0.3826261146623929, 0.1395382069358601)
-        beta: float = 0.4655
-        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="sgd",
-            lr=[0.0007188427494432325, 0.00012510321884615596, 0.03541466958291287],
-            momentum=0.9,
-        )
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="sgd", lr=0.03618, weight_decay=1e-4, momentum=0.9
-        )
-
-        max_epochs: int = 90
-        init_symetric_weights: bool = False
-
-    hparams = DTPLeNetHParams()
-    return hparams
-
 
 @pytest.fixture(scope="module")
 def config(seed: int):
@@ -130,15 +115,9 @@ def datamodule(config: Config, dtp_hparams: DTP.HParams):
     return config.make_datamodule(batch_size=dtp_hparams.batch_size)
 
 
-from torch.utils.data import DataLoader
-from torch import Tensor
-
-
 @pytest.fixture(scope="module")
 def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
-    """ Yields a batch of data, for the given seed. 
-    TODO: Double-check that the data is different for each seed.
-    """
+    """ Yields a batch of data, for the given seed. """
     # Setup CIFAR10 datamodule
     datamodule.prepare_data()
     datamodule.setup(stage="fit")
@@ -232,8 +211,6 @@ def dtp_no_bias_model(
     config: Config,
     dtp_hparams: DTP.HParams,
 ):
-    # weird bug:
-    datamodule.batch_size = dtp_hparams.batch_size
     model = DTP(datamodule=datamodule, network=no_bias_network, hparams=dtp_hparams, config=config,)
     model.to(device=config.device)
     return model
@@ -289,6 +266,7 @@ def num_iters(request):
 
 class TestLeNet:
     angles_data = {}
+    distance_data = {}
 
     @pytest.mark.skip("skip for now")
     @pytest.mark.parametrize("num_iters", [5000])
@@ -398,6 +376,7 @@ class TestLeNet:
 
         # Print angles for each layer
         self.angles_data[f"random_init_{seed}"] = angles
+        self.distance_data[f"random_init_{seed}"] = distances
         for key, value in angles.items():
             print(key, value)
 
@@ -447,6 +426,7 @@ class TestLeNet:
 
         # Print angles for each layer
         self.angles_data[f"symmetric_init_{seed}"] = angles
+        self.distance_data[f"symmetric_init_{seed}"] = distances
         for key, value in angles.items():
             print(key, value)
         return True
@@ -528,6 +508,7 @@ class TestLeNet:
 
         # Print angles for each layer
         self.angles_data[f"l-drl_init_{seed}"] = angles
+        self.distance_data[f"l-drl_init_{seed}"] = distances
         for key, value in angles.items():
             print(key, value)
         return True
@@ -549,12 +530,13 @@ class TestLeNet:
             initial_weights=initial_weights,
             network_hparams=no_bias_network.hparams,
             backprop_gradients=backprop_grads_no_bias,
-            beta=1e-5,
+            beta=dtp_hparams.beta,
             n_pretraining_iterations=0,
             seed=seed,
         )
 
         self.angles_data[f"drl_init_{seed}"] = angles
+        self.distance_data[f"drl_init_{seed}"] = distances
 
     def test_meulemans_trained(
         self,
@@ -579,30 +561,30 @@ class TestLeNet:
         )
 
         self.angles_data[f"drl_{seed}"] = angles
-        # assert False, distances.keys()
-        # TODO: Create a distances data attribute and store the data there.
-        # self.distances_data[f"drl_init_{seed}"] = distances
+        self.distance_data[f"drl_{seed}"] = distances
 
     # @pytest.mark.skip("skip for now")
     @pytest.mark.parametrize("path", ["./data"])  # skip this test if you don't want to plot
     def test_angle_plot(self, path: str):
         # Build pandas dataframe for plotting
-        pd_angles_data = defaultdict(list)
+        pd_data = defaultdict(list)
         for init_scheme_seed in self.angles_data.keys():
             init_scheme = " ".join(init_scheme_seed.split("_")[:-1])
             seed = init_scheme_seed.split("_")[-1]
             for param_name, angle in self.angles_data[init_scheme_seed].items():
-                pd_angles_data["seed"].append(seed)
-                pd_angles_data["init_scheme"].append(init_scheme)
-                pd_angles_data["param"].append(param_name)
-                pd_angles_data["angle"].append(angle)
-        df = pd.DataFrame(data=pd_angles_data)
+                distance = self.distance_data[init_scheme_seed][param_name]
+                pd_data["seed"].append(seed)
+                pd_data["init_scheme"].append(init_scheme)
+                pd_data["param"].append(param_name)
+                pd_data["angle"].append(angle)
+                pd_data["distance"].append(distance)
+        df = pd.DataFrame(data=pd_data)
 
         # Save data
-        print("angle data:")
+        print("data:")
         print(df)
         df.to_csv(
-            os.path.join(path, "angle_data.csv"), encoding="utf-8", index=False,
+            os.path.join(path, "data.csv"), encoding="utf-8", index=False,
         )
 
         # Save figure
