@@ -17,6 +17,12 @@ To use the modified version of the above DTP model, with "parallel" feedback wei
 python main_pl.py run parallel_dtp simple_vgg
 ```
 
+To run backprop baseline, do:
+```
+python main_pl.py run backprop simple_vgg --dataset cifar10 --num_workers 8 --seed 123 --early_stopping_patience 0 --type sgd --lr 0.05 --use_scheduler true cosine
+```
+
+
 ### ImageNet
 
 To train with DTP on downsampled ImageNet 32x32 dataset, do:
