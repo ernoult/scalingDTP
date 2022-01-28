@@ -5,8 +5,7 @@ from abc import ABC
 from collections import OrderedDict
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
-from typing import Any, Dict, List, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -14,20 +13,19 @@ from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers import choice, list_field, subparsers
 from simple_parsing.helpers.hparams import log_uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
 from target_prop.optimizer_config import OptimizerConfig
+from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
-from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
-from simple_parsing.helpers import subparsers
 
 T = TypeVar("T")
 logger = getLogger(__name__)
@@ -42,24 +40,27 @@ class BaselineModel(LightningModule, ABC):
 
         # Arguments to be passed to the LR scheduler.
         lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
+            {
+                "step": StepLRConfig,
+                "cosine": CosineAnnealingLRConfig,
+            },
             default_factory=CosineAnnealingLRConfig,
         )
         # Use of a learning rate scheduler.
-        use_scheduler: bool = False
+        use_scheduler: bool = True
 
         # Max number of training epochs in total.
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(type="adam", lr=3e-4)
+        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(type="sgd", lr=0.05)
 
         # batch size
         batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped.
-        early_stopping_patience: int = 5
+        early_stopping_patience: int = 0
 
     def __init__(
         self,
@@ -131,7 +132,12 @@ class BaselineModel(LightningModule, ABC):
         logits = self.forward_net(input)
         return logits
 
-    def shared_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,) -> Tensor:
+    def shared_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
+    ) -> Tensor:
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
