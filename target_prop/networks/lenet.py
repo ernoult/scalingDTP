@@ -59,7 +59,7 @@ class LeNet(nn.Sequential, Network):
         layers["fc1"] = nn.Sequential(
             OrderedDict(
                 reshape=Reshape(target_shape=(-1,)),
-                linear1=nn.LazyLinear(out_features=512, bias=bias),
+                linear1=nn.Linear(in_features=4096, out_features=512, bias=bias),
                 rho=activation(),
             )
         )

@@ -130,75 +130,6 @@ def datamodule(config: Config, dtp_hparams: DTP.HParams):
     return config.make_datamodule(batch_size=dtp_hparams.batch_size)
 
 
-@pytest.fixture(scope="module")
-def initial_weights(seed: int, datamodule: LightningDataModule):
-    """ Module-wide fixture that gives initial weights for each seed. """
-    net = LeNet(
-        in_channels=datamodule.dims[0],
-        n_classes=datamodule.num_classes,  # type: ignore
-        hparams=LeNet.HParams(bias=True),
-    )
-    state_dict = net.state_dict()
-    yield state_dict
-
-
-@pytest.fixture(scope="function")
-def network(
-    datamodule: LightningDataModule, config: Config, initial_weights: OrderedDict[str, Tensor],
-):
-    # NOTE: The network / model fixtures have to be function-scoped, so that training the network
-    # doesn't affect other runs. This was correctly done before, no worries.
-    net = LeNet(
-        in_channels=datamodule.dims[0],
-        n_classes=datamodule.num_classes,  # type: ignore
-        hparams=LeNet.HParams(bias=True),
-    )
-    net.load_state_dict(initial_weights, strict=True)
-    net.to(device=config.device)
-    return net
-
-
-@pytest.fixture(scope="function")
-def no_bias_network(
-    datamodule: LightningDataModule, config: Config, initial_weights: OrderedDict[str, Tensor]
-):
-    net = LeNet(
-        in_channels=datamodule.dims[0],
-        n_classes=datamodule.num_classes,  # type: ignore
-        hparams=LeNet.HParams(bias=False),
-    )
-    # Load, but ignore the biases.
-    missing, unexpected = net.load_state_dict(initial_weights, strict=False)
-    assert not missing
-    assert all("bias" in param_name for param_name in unexpected)
-    net.to(device=config.device)
-    return net
-
-
-@pytest.fixture(scope="function")
-def dtp_model(
-    network: LeNet, config: Config, datamodule: LightningDataModule, dtp_hparams: DTP.HParams,
-):
-    # config = Config(dataset="cifar10", num_workers=0, debug=False)
-    # datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
-    # network = LeNet(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)  # type: ignore
-    dtp_model = DTP(datamodule=datamodule, hparams=dtp_hparams, config=config, network=network)
-    dtp_model.to(device=config.device)
-    return dtp_model
-
-
-@pytest.fixture(scope="function")
-def dtp_no_bias_model(
-    no_bias_network: LeNet,
-    datamodule: LightningDataModule,
-    config: Config,
-    dtp_hparams: DTP.HParams,
-):
-    model = DTP(datamodule=datamodule, network=no_bias_network, hparams=dtp_hparams, config=config,)
-    model.to(device=config.device)
-    return model
-
-
 from torch.utils.data import DataLoader
 from torch import Tensor
 
@@ -224,6 +155,91 @@ def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
 
 
 @pytest.fixture(scope="module")
+def initial_weights(seed: int, datamodule: LightningDataModule, x_and_y: Tuple[Tensor, Tensor]):
+    """ Module-wide fixture that gives initial weights for a given seed. """
+    net = LeNet(
+        in_channels=datamodule.dims[0],
+        n_classes=datamodule.num_classes,  # type: ignore
+        hparams=LeNet.HParams(bias=True),
+    )
+    x, y = x_and_y
+    net.to(device=x.device)
+    _ = net(x)  # initialize lazy weights.
+    state_dict = net.state_dict()
+    yield state_dict
+
+
+@pytest.fixture(scope="function")
+def network(
+    datamodule: LightningDataModule,
+    config: Config,
+    initial_weights: OrderedDict[str, Tensor],
+    x_and_y: Tuple[Tensor, Tensor],
+):
+    # NOTE: The network / model fixtures have to be function-scoped, so that training the network
+    # doesn't affect other runs. This was correctly done before, no worries.
+    net = LeNet(
+        in_channels=datamodule.dims[0],
+        n_classes=datamodule.num_classes,  # type: ignore
+        hparams=LeNet.HParams(bias=True),
+    )
+    net.load_state_dict(initial_weights, strict=True)
+    net.to(device=config.device)
+    x, _ = x_and_y
+    _ = net(x)  # dummy forward pass just to initialize the lazy layers.
+    return net
+
+
+@pytest.fixture(scope="function")
+def no_bias_network(
+    datamodule: LightningDataModule,
+    config: Config,
+    initial_weights: OrderedDict[str, Tensor],
+    x_and_y: Tuple[Tensor, Tensor],
+):
+    net = LeNet(
+        in_channels=datamodule.dims[0],
+        n_classes=datamodule.num_classes,  # type: ignore
+        hparams=LeNet.HParams(bias=False),
+    )
+    # Load, but ignore the biases.
+    missing, unexpected = net.load_state_dict(initial_weights, strict=False)
+    assert not missing
+    assert all("bias" in param_name for param_name in unexpected)
+    net.to(device=config.device)
+    # mark_as_invertible(net)
+    x, _ = x_and_y
+    _ = net(x)  # dummy forward pass just to initialize the lazy layers, if any.
+    return net
+
+
+@pytest.fixture(scope="function")
+def dtp_model(
+    network: LeNet, config: Config, datamodule: LightningDataModule, dtp_hparams: DTP.HParams,
+):
+    # config = Config(dataset="cifar10", num_workers=0, debug=False)
+    # datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+    # network = LeNet(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)  # type: ignore
+    dtp_model = DTP(datamodule=datamodule, hparams=dtp_hparams, config=config, network=network)
+    dtp_model.to(device=config.device)
+    return dtp_model
+
+
+@pytest.fixture(scope="function")
+def dtp_no_bias_model(
+    no_bias_network: LeNet,
+    datamodule: LightningDataModule,
+    config: Config,
+    dtp_hparams: DTP.HParams,
+):
+    # weird bug:
+    datamodule.batch_size = dtp_hparams.batch_size
+    model = DTP(datamodule=datamodule, network=no_bias_network, hparams=dtp_hparams, config=config,)
+    model.to(device=config.device)
+    return model
+
+
+@pytest.fixture(scope="module")
 def backprop_grads(
     x_and_y: Tuple[Tensor, Tensor],
     datamodule: LightningDataModule,
@@ -233,7 +249,11 @@ def backprop_grads(
     # NOTE: We want to compute these backprop gradients only once per seed and reuse them in all
     # tests. Therefore, we need to create a network here that is used only for those.
     x, y = x_and_y
-    network = LeNet(in_channels=x.shape[1], n_classes=10, hparams=LeNet.HParams(bias=True))
+    network = LeNet(
+        in_channels=x.shape[1],
+        n_classes=datamodule.num_classes,  # type: ignore
+        hparams=LeNet.HParams(bias=True),
+    )
     network.load_state_dict(initial_weights, strict=True)
     network.to(x.device)
     grads = get_backprop_grads(network, x=x, y=y)
@@ -251,7 +271,7 @@ def backprop_grads_no_bias(
     # NOTE: We want to compute these backprop gradients only once per seed and reuse them in all
     # tests. Therefore, we need to create a network here that is used only for those.
     x, y = x_and_y
-    network = LeNet(in_channels=x.shape[1], n_classes=10, hparams=LeNet.HParams(bias=True))
+    network = LeNet(in_channels=x.shape[1], n_classes=10, hparams=LeNet.HParams(bias=False))
     missing, unexpected = network.load_state_dict(initial_weights, strict=False)
     assert not missing
     assert all("bias" in param_name for param_name in unexpected)
@@ -516,8 +536,9 @@ class TestLeNet:
         self,
         x_and_y: Tuple[Tensor, Tensor],
         no_bias_network: LeNet,
+        initial_weights: Dict[str, Tensor],
         dtp_hparams: DTP.HParams,
-        backprop_grads: Dict[str, Tensor],
+        backprop_grads_no_bias: Dict[str, Tensor],
         seed: int,
     ):
         x, y = x_and_y
@@ -525,8 +546,9 @@ class TestLeNet:
             x=x,
             y=y,
             network=no_bias_network,
+            initial_weights=initial_weights,
             network_hparams=no_bias_network.hparams,
-            backprop_gradients=backprop_grads,
+            backprop_gradients=backprop_grads_no_bias,
             beta=1e-5,
             n_pretraining_iterations=0,
             seed=seed,
@@ -538,8 +560,9 @@ class TestLeNet:
         self,
         x_and_y: Tuple[Tensor, Tensor],
         no_bias_network: LeNet,
+        initial_weights: Dict[str, Tensor],
         dtp_hparams: DTP.HParams,
-        backprop_grads: Dict[str, Tensor],
+        backprop_grads_no_bias: Dict[str, Tensor],
         seed: int,
     ):
         x, y = x_and_y
@@ -547,9 +570,10 @@ class TestLeNet:
             x=x,
             y=y,
             network=no_bias_network,
+            initial_weights=initial_weights,
             network_hparams=no_bias_network.hparams,
-            backprop_gradients=backprop_grads,
-            beta=1e-5,
+            backprop_gradients=backprop_grads_no_bias,
+            beta=dtp_hparams.beta,
             n_pretraining_iterations=5000,
             seed=seed,
         )
@@ -667,6 +691,7 @@ def meulemans(
     x: Tensor,
     y: Tensor,
     network: LeNet,
+    initial_weights: Dict[str, Tensor],
     network_hparams: LeNet.HParams,
     backprop_gradients: Dict[str, Tensor],
     beta: float,
@@ -679,12 +704,17 @@ def meulemans(
     """
     x = x.cuda()
     y = y.cuda()
-    initial_network_weights = network.state_dict()
 
     from meulemans_dtp import main
     from meulemans_dtp.lib import train, builders, utils
     from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
     from meulemans_dtp.final_configs.cifar10_DDTPConv import config
+
+    # Double-check that the network is at it's initial state.
+    _initial_weights = network.state_dict()
+    for k, param in _initial_weights.items():
+        assert torch.allclose(param, initial_weights[k])
+    initial_network_weights = network.state_dict()
 
     # -- Get the arguments.
     # TODO: Eventually, use this typed class for the arg parsing instead of theirs. But for now,
@@ -737,10 +767,7 @@ def meulemans(
         meulemans_net=meulemans_network, x=x, y=y
     )
     _check_bp_grads_are_identical(
-        our_network=network,
-        meulemans_net=meulemans_network,
-        our_backprop_grads=backprop_gradients,
-        meulemans_backprop_grads=meulemans_backprop_grads,
+        our_backprop_grads=backprop_gradients, meulemans_backprop_grads=meulemans_backprop_grads,
     )
 
     # Q: the lrs have to be the same between the different models?
@@ -936,17 +963,17 @@ def _check_outputs_are_identical(
 
 
 def _check_bp_grads_are_identical(
-    our_network: Network,
-    meulemans_net: DDTPConvNetworkCIFAR,
-    our_backprop_grads: Dict[str, Tensor],
-    meulemans_backprop_grads: Dict[str, Tensor],
+    our_backprop_grads: Dict[str, Tensor], meulemans_backprop_grads: Dict[str, Tensor],
 ):
     # Compares our BP gradients and theirs: they should be identical.
     # If not, then there's probably a difference between our network and theirs (e.g. activation).
     # NOTE: Since the activation is different, we don't actually run this check.
+
+    their_backprop_grads = translate_back(meulemans_backprop_grads)
+    assert set(our_backprop_grads.keys()) == set(their_backprop_grads.keys())
     for param_name, dtp_bp_grad in our_backprop_grads.items():
-        meulemans_param_name = our_network_param_names_to_theirs[type(our_network)][param_name]
-        meulemans_bp_grad = meulemans_backprop_grads[meulemans_param_name]
+        meulemans_bp_grad = their_backprop_grads[param_name]
+
         if meulemans_bp_grad is None:
             if dtp_bp_grad is not None:
                 raise RuntimeError(
@@ -954,6 +981,7 @@ def _check_bp_grads_are_identical(
                     f"DTP model has one!"
                 )
             continue
+
         assert meulemans_bp_grad.shape == dtp_bp_grad.shape
         if not torch.allclose(dtp_bp_grad, meulemans_bp_grad):
             raise RuntimeError(
@@ -962,6 +990,6 @@ def _check_bp_grads_are_identical(
                 f"\t{dtp_bp_grad}\n"
                 f"\tTheir backprop gradient:\n"
                 f"\t{meulemans_bp_grad}\n"
-                f"\tTotal absolute differentce:\n"
+                f"\tTotal absolute difference:\n"
                 f"\t{(dtp_bp_grad - meulemans_bp_grad).abs().sum()=}\n"
             )

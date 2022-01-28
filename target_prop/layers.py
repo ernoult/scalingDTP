@@ -71,6 +71,10 @@ class Reshape(nn.Module, Invertible):
         outputs = inputs.reshape([inputs.shape[0], *self.target_shape])
         if self.target_shape == (-1,):
             self.target_shape = outputs.shape[1:]
+        if not self.input_shape:
+            self.input_shape = inputs.shape[1:]
+        if not self.output_shape:
+            self.output_shape = outputs.shape[1:]
         return outputs
 
     def extra_repr(self) -> str:
@@ -83,9 +87,10 @@ class Reshape(nn.Module, Invertible):
 @invert.register
 def invert_reshape(module: Reshape) -> Reshape:
     assert module.input_shape and module.output_shape, "Use the net before inverting."
-    return type(module)(
-        target_shape=module.input_shape,
-    )
+    layer = type(module)(target_shape=module.input_shape)
+    layer.output_shape = module.input_shape
+    layer.input_shape = module.output_shape
+    return layer
 
 
 class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d, Invertible):
