@@ -7,15 +7,17 @@ from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, unif
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
+from .network import Network
 
 
-class SimpleVGG(nn.Sequential):
+class SimpleVGG(nn.Sequential, Network):
     @dataclass
-    class HParams(HyperParameters):
+    class HParams(Network.HParams):
         channels: List[int] = list_field(128, 128, 256, 256, 512)
         activation: Type[nn.Module] = choice(
             {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
         )
+        bias: bool = True
 
     def __init__(self, in_channels: int, n_classes: int, hparams: "SimpleVGG.HParams" = None):
         hparams = hparams or self.HParams()
@@ -28,7 +30,14 @@ class SimpleVGG(nn.Sequential):
         for i, (in_channels, out_channels) in enumerate(zip(channels[0:], channels[1:])):
             block = nn.Sequential(
                 OrderedDict(
-                    conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1,),
+                    conv=nn.Conv2d(
+                        in_channels,
+                        out_channels,
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                        bias=hparams.bias,
+                    ),
                     rho=activation(),
                     # NOTE: Even though `return_indices` is `False` here, we're actually passing
                     # the indices to the backward net for this layer through a "magic bridge".
@@ -43,7 +52,7 @@ class SimpleVGG(nn.Sequential):
         layers["fc"] = nn.Sequential(
             OrderedDict(
                 reshape=Reshape(target_shape=(-1,)),
-                linear=nn.LazyLinear(out_features=n_classes, bias=True),
+                linear=nn.LazyLinear(out_features=n_classes, bias=hparams.bias),
             )
         )
         super().__init__(layers)

@@ -113,6 +113,7 @@ def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
         padding=(p_h, p_w),
         # TODO: Get this value programmatically.
         output_padding=(s_h - 1, s_w - 1),
+        bias=layer.bias is not None,
         # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
     )
     return backward

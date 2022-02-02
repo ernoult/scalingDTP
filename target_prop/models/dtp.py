@@ -22,6 +22,7 @@ from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import MaxPool2d, Reshape, forward_all
 from target_prop.metrics import compute_dist_angle
+from target_prop.models.model import Model
 from target_prop.networks import Network
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.optimizer_config import OptimizerConfig
@@ -80,7 +81,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(
+    lr: List[float] = log_uniform(
         1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
     )
 
@@ -96,7 +97,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     momentum: float = 0.9
 
 
-class DTP(LightningModule):
+class DTP(LightningModule, Model):
     """ Differential Target Propagation algorithm, implemented as a LightningModule.
 
     This is (as far as I know) exactly equivalent with @ernoult's implementation.
@@ -122,7 +123,7 @@ class DTP(LightningModule):
     """
 
     @dataclass
-    class HParams(HyperParameters):
+    class HParams(Model.HParams):
         """Hyper-Parameters of the model.
 
         The number of noise samples to use per iteration is set by `feedback_samples_per_iteration`.
@@ -229,12 +230,12 @@ class DTP(LightningModule):
 
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
-            [datamodule.batch_size, *datamodule.dims], device=self.device
+            [datamodule.batch_size, *datamodule.dims], device=config.device
         )
 
         # Create the forward and backward nets.
-        self.forward_net = network
-        self.backward_net = self.create_backward_net()
+        self.forward_net = network.to(config.device)
+        self.backward_net = self.create_backward_net().to(config.device)
 
         if self.hp.init_symetric_weights:
             logger.info(f"Initializing the backward net with symetric weights.")
@@ -333,7 +334,7 @@ class DTP(LightningModule):
 
         assert example_out.requires_grad
         # Get the "pseudo-inverse" of the forward network:
-        backward_net: nn.Sequential = invert(self.forward_net)  # type: ignore
+        backward_net: nn.Sequential = invert(self.forward_net).to(self.config.device)  # type: ignore
 
         # Pass the output of the forward net for the `example_input_array` through the
         # backward net, to check that the backward net is indeed able to recover the

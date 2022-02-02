@@ -8,6 +8,7 @@ from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop.backward_layers import invert
 from target_prop.layers import AdaptiveAvgPool2d, Reshape
+from .network import Network
 
 
 class BasicBlock(nn.Module):
@@ -137,7 +138,7 @@ def make_layer(
     return nn.Sequential(*layers), in_planes
 
 
-class ResNet(nn.Sequential):
+class ResNet(nn.Sequential, Network):
     """
     ResNet with optional BatchNorm.
     Adapted from PyTorch ResNet:
@@ -150,7 +151,7 @@ class ResNet(nn.Sequential):
     """
 
     @dataclass
-    class HParams(HyperParameters):
+    class HParams(Network.HParams):
         block: Type[BasicBlock] = choice({"basic": BasicBlock}, default=BasicBlock)
         use_batchnorm: bool = False
         num_blocks: List[int] = list_field(2, 2, 2, 2)

@@ -19,6 +19,9 @@ def compute_dist_angle(
     raise NotImplementedError((forward_module, backward_module))
 
 
+from torch.linalg import norm
+
+
 @compute_dist_angle.register(Tensor)
 @compute_dist_angle.register(nn.Parameter)
 def _compute_dist_angle_between_weights(
