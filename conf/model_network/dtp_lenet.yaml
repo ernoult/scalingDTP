@@ -1,0 +1,15 @@
+# @package _global_
+model:
+  b_optim:
+    lr:
+    - 0.001
+    - 0.008
+    - 0.018
+  feedback_training_iterations:
+  - 123
+  - 2
+  - 20
+  noise:
+  - 0.4
+  - 0.2
+  - 0.08

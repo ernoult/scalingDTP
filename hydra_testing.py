@@ -45,28 +45,29 @@ class Options(LoadableFromHydra):
     # The network to be used.
     network: Network.HParams = field(default_factory=SimpleVGG.HParams)
     # Type of learning rate scheduler.
-    lr_scheduler: Optional[LRSchedulerConfig] = field(default_factory=CosineAnnealingLRConfig)
+    # lr_scheduler: Optional[LRSchedulerConfig] = field(default_factory=CosineAnnealingLRConfig)
     dataset: str = choice("mnist", "cifar10", default="cifar10")
 
-    def __post_init__(self):
-        assert False, type(self.model)
-        self.model = hydra.utils.instantiate(self.model)
+
+# TODO: Use the __subclasses__ of the types to find all the "structured configs" we know of.
 
 
 cs = ConfigStore.instance()
-# cs.store(name="config", node=Options)
+cs.store(name="base_config", node=Options)
 
-DTP.HParams.cs_store(group="model", name="base_dtp")
-ParallelDTP.HParams.cs_store(group="model", name="base_parallel_dtp")
-VanillaDTP.HParams.cs_store(group="model", name="base_vanilla_dtp")
-TargetProp.HParams.cs_store(group="model", name="base_target_prop")
+Model.HParams.cs_store(group="model", name="base_model")
 
-SimpleVGG.HParams.cs_store(group="network", name="base_simple_vgg")
-LeNet.HParams.cs_store(group="network", name="base_lenet")
-ResNet18.HParams.cs_store(group="network", name="base_resnet18")
-ResNet34.HParams.cs_store(group="network", name="base_resnet34")
+DTP.HParams.cs_store(group="model", name="dtp")
+ParallelDTP.HParams.cs_store(group="model", name="parallel_dtp")
+VanillaDTP.HParams.cs_store(group="model", name="vanilla_dtp")
+TargetProp.HParams.cs_store(group="model", name="target_prop")
 
-LRSchedulerConfig.cs_store(group="lr_scheduler", name="base_scheduler")
+SimpleVGG.HParams.cs_store(group="network", name="simple_vgg")
+LeNet.HParams.cs_store(group="network", name="lenet")
+ResNet18.HParams.cs_store(group="network", name="resnet18")
+ResNet34.HParams.cs_store(group="network", name="resnet34")
+
+LRSchedulerConfig.cs_store(group="lr_scheduler", name="scheduler")
 StepLRConfig.cs_store(group="lr_scheduler", name="step")
 CosineAnnealingLRConfig.cs_store(group="lr_scheduler", name="cosine")
 
@@ -85,17 +86,8 @@ CosineAnnealingLRConfig.cs_store(group="lr_scheduler", name="cosine")
 @hydra.main(config_path="conf", config_name="config")
 def main(config: DictConfig) -> None:
     print(os.getcwd())
-    # print(cfg)
-    # model_type = cfg["model"]
-    # hparams: Model.HParams =
-    # NOTE: How to know which type of object to parse.
-    # args_dict: Dict = OmegaConf.to_container(cfg)
-    options = hydra.utils.instantiate(config)
-    print(type(options), options)
-
-    # assert False, options
-    # print(args_dict)
-
+    options = Options.from_dictconfig(config)
+    print(options.model)
     return
     options: Options = Options.from_dict(args_dict)
     print(options)

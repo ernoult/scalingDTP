@@ -61,7 +61,7 @@ class FeedbackOptimizerConfig(_FeedbackOptimizerConfig):
     # )
 
     # Learning rate of the optimizer.
-    lr: float = log_uniform(1e-6, 1e-1, default=4e-3)
+    lr: List[float] = log_uniform(1e-6, 1e-1, default_factory=[4e-3].copy)
 
     # Weight decay coefficient.
     weight_decay: Optional[float] = log_uniform(1e-9, 1e-3, default=1e-4)
@@ -102,7 +102,7 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="adam", lr=3e-4,
+            type="adam", lr=[3e-4],
         )
         # The scale of the gaussian random variable in the feedback loss calculation.
         noise: List[float] = uniform(  # type: ignore
