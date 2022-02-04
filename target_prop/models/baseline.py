@@ -15,7 +15,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field, subparsers
 from simple_parsing.helpers.hparams import log_uniform
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
@@ -41,10 +41,7 @@ class BaselineModel(LightningModule, Model):
 
         # Arguments to be passed to the LR scheduler.
         lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {
-                "step": StepLRConfig,
-                "cosine": CosineAnnealingLRConfig,
-            },
+            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
             default_factory=CosineAnnealingLRConfig,
         )
         # Use of a learning rate scheduler.
@@ -133,12 +130,7 @@ class BaselineModel(LightningModule, Model):
         logits = self.forward_net(input)
         return logits
 
-    def shared_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-        phase: str,
-    ) -> Tensor:
+    def shared_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,) -> Tensor:
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`

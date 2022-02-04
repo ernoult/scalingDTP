@@ -8,10 +8,10 @@ import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import categorical, log_uniform, uniform
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.utils import repeat_batch
+from target_prop.utils.utils import repeat_batch
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer

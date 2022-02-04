@@ -152,7 +152,6 @@ class ResNet(nn.Sequential, Network):
 
     @dataclass
     class HParams(Network.HParams):
-        block: Type[BasicBlock] = choice({"basic": BasicBlock}, default=BasicBlock)
         use_batchnorm: bool = False
         num_blocks: List[int] = list_field(2, 2, 2, 2)
 
@@ -160,7 +159,7 @@ class ResNet(nn.Sequential, Network):
         # Catch hparams
         hparams = hparams or self.HParams()
         use_batchnorm = hparams.use_batchnorm
-        block_type = hparams.block
+        block_type = BasicBlock
         num_blocks = hparams.num_blocks
 
         # Build ResNet
@@ -222,7 +221,6 @@ class ResNet(nn.Sequential, Network):
 class ResNet18(ResNet):
     @dataclass
     class HParams(ResNet.HParams):
-        block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
         use_batchnorm: bool = False
         num_blocks: List[int] = list_field(2, 2, 2, 2)
 
@@ -230,8 +228,6 @@ class ResNet18(ResNet):
 class ResNet34(ResNet):
     @dataclass
     class HParams(ResNet.HParams):
-
-        block: Type[nn.Module] = choice({"basic": BasicBlock}, default=BasicBlock)
         use_batchnorm: bool = False
         num_blocks: List[int] = list_field(3, 4, 6, 3)
 

@@ -15,19 +15,12 @@ class LeNet(nn.Sequential, Network):
     @dataclass
     class HParams(Network.HParams):
         channels: List[int] = list_field(32, 64)
-        activation: Type[nn.Module] = choice(
-            {
-                "relu": nn.ReLU,
-                "elu": nn.ELU,
-            },
-            default=nn.ELU,
-        )
         bias: bool = True
 
     def __init__(self, in_channels: int, n_classes: int, hparams: "LeNet.HParams" = None):
         hparams = hparams or self.HParams()
         layers: OrderedDict[str, nn.Module] = OrderedDict()
-        activation: Type[nn.Module] = hparams.activation
+        activation: Type[nn.Module] = hparams.activation_class
         channels = [in_channels] + hparams.channels
         bias: bool = hparams.bias
 

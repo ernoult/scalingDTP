@@ -1,11 +1,12 @@
 import numpy as np
 from simple_parsing.helpers.fields import choice
-from simple_parsing.helpers.hparams import HyperParameters, log_uniform
+from simple_parsing.helpers.hparams import log_uniform
 import torch
-from target_prop.utils import get_list_of_values
+from target_prop.utils.utils import get_list_of_values
 from typing import Any, ClassVar, Dict, Type, List, Optional, Union
 from dataclasses import dataclass
 from torch.optim.optimizer import Optimizer
+from target_prop.utils.hparams import HyperParameters
 from torch import nn
 import logging
 

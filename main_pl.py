@@ -19,13 +19,12 @@ from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing import ArgumentParser
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from torch import nn
+from target_prop.utils.hparams import HyperParametersfrom torch import nn
 
 import wandb
 from target_prop.config import Config
 from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
-from target_prop.utils import make_reproducible
+from target_prop.utils.utils import make_reproducible
 from target_prop.networks import (
     ResNet18,
     ResNet34,

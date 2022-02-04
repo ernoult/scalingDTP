@@ -18,10 +18,10 @@ from target_prop.networks import Network
 from target_prop.networks.lenet import LeNet
 from target_prop.networks.resnet import ResNet18, ResNet34
 from target_prop.networks.simple_vgg import SimpleVGG
-from target_prop.utils import named_trainable_parameters
+from target_prop.utils.utils import named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.utils.hparams import HyperParameters
 
 networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
 

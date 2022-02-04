@@ -6,7 +6,7 @@ from logging import getLogger
 import torch
 from torch import Tensor, nn
 
-from target_prop.utils import repeat_batch, split_batch
+from target_prop.utils.utils import repeat_batch, split_batch
 
 logger = getLogger(__name__)
 

@@ -12,7 +12,7 @@ import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field, subparsers
+from simple_parsing.helpers import choice, list_field, subparsers, field
 from simple_parsing.helpers.hparams.hparam import log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
@@ -26,8 +26,12 @@ from target_prop.models.model import Model
 from target_prop.networks import Network
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
-from target_prop.utils import is_trainable
+from target_prop.scheduler_config import (
+    CosineAnnealingLRConfig,
+    LRSchedulerConfig,
+    StepLRConfig,
+)
+from target_prop.utils.utils import is_trainable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -134,13 +138,7 @@ class DTP(LightningModule, Model):
         """
 
         # Arguments to be passed to the LR scheduler.
-        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {
-                "step": StepLRConfig,
-                "cosine": CosineAnnealingLRConfig,
-            },
-            default_factory=CosineAnnealingLRConfig,
-        )
+        lr_scheduler: LRSchedulerConfig = field(default_factory=CosineAnnealingLRConfig)
         # Use of a learning rate scheduler for the forward weights.
         use_scheduler: bool = True
 
@@ -243,15 +241,11 @@ class DTP(LightningModule, Model):
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations,
-            default=0,
-            inputs_are_forward_ordered=True,
+            self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
         )
         # The noise scale for each feedback layer.
         self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise,
-            default=0.0,
-            inputs_are_forward_ordered=True,
+            self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
@@ -369,20 +363,14 @@ class DTP(LightningModule, Model):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-    ) -> float:  # type: ignore
+    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
         result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
         if not self.automatic_optimization:
             return None
         return result
 
     def validation_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
     ) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
@@ -390,10 +378,7 @@ class DTP(LightningModule, Model):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-        phase: str,
+        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
     ):
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
@@ -629,9 +614,7 @@ class DTP(LightningModule, Model):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net,
-            x,
-            allow_grads_between_layers=False,
+            self.forward_net, x, allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y

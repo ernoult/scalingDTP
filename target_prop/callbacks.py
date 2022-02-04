@@ -11,7 +11,7 @@ from torch.nn import functional as F
 
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
-from target_prop.utils import named_trainable_parameters
+from target_prop.utils.utils import named_trainable_parameters
 
 logger = get_logger(__name__)
 

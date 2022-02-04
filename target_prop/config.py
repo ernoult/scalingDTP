@@ -29,7 +29,7 @@ from target_prop.datasets import (
     cifar10_normalization,
     imagenet32_normalization,
 )
-from target_prop.wandb_utils import LoggedToWandb
+from target_prop.utils.wandb_utils import LoggedToWandb
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
@@ -112,12 +112,7 @@ class Config(Serializable, LoggedToWandb):
                 ]
             )
 
-            test_transform = Compose(
-                [
-                    ToTensor(),
-                    normalization_transform(),
-                ]
-            )
+            test_transform = Compose([ToTensor(), normalization_transform(),])
         # NOTE: We don't pass a seed to the datamodule constructor here, because we assume that the
         # train/val/test split is properly seeded with a fixed value already, and we don't want to
         # contaminate the train/val/test splits during sweeps!

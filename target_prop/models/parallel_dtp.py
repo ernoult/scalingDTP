@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from simple_parsing import field
 
 import torch
 import wandb
@@ -17,11 +18,15 @@ from target_prop.layers import forward_all, forward_each
 from target_prop.metrics import compute_dist_angle
 from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.utils import is_trainable
+from target_prop.utils.utils import is_trainable
 from torch import Tensor, nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
-from target_prop.scheduler_config import StepLRConfig, CosineAnnealingLRConfig
+from target_prop.scheduler_config import (
+    LRSchedulerConfig,
+    StepLRConfig,
+    CosineAnnealingLRConfig,
+)
 from .dtp import DTP
 from .dtp import FeedbackOptimizerConfig as _FeedbackOptimizerConfig
 from .dtp import ForwardOptimizerConfig as _ForwardOptimizerConfig
@@ -82,10 +87,8 @@ class ParallelDTP(DTP):
         """HParams of the Parallel model."""
 
         # Arguments to be passed to the LR scheduler.
-        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
-            default_factory=CosineAnnealingLRConfig,
-        )
+        lr_scheduler: LRSchedulerConfig = field(default_factory=CosineAnnealingLRConfig)
+
         # Use of a learning rate scheduler for the optimizer of the forward weights.
         use_scheduler: bool = False
 
@@ -99,8 +102,7 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="adam",
-            lr=3e-4,
+            type="adam", lr=3e-4,
         )
         # The scale of the gaussian random variable in the feedback loss calculation.
         noise: List[float] = uniform(  # type: ignore

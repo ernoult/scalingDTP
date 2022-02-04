@@ -5,7 +5,7 @@ from typing import List, Union
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
 from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn

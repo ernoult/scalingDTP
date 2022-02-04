@@ -9,7 +9,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.utils.hparams import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
@@ -25,7 +25,7 @@ from target_prop.legacy import (
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.networks.simple_vgg import SimpleVGG
-from target_prop.utils import is_trainable, named_trainable_parameters
+from target_prop.utils.utils import is_trainable, named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
 
