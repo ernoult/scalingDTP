@@ -17,6 +17,8 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification.accuracy import Accuracy
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+
 
 import wandb
 from target_prop._weight_operations import init_symetric_weights
@@ -199,11 +201,11 @@ class DTP(LightningModule, Model):
 
     def __init__(
         self,
-        datamodule: LightningDataModule,
+        datamodule: VisionDataModule,
         network: Network,
         hparams: "DTP.HParams",
         config: Config,
-        network_hparams: HyperParameters = None,
+        network_hparams: Network.HParams = None,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams

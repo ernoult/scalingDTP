@@ -37,9 +37,6 @@ class Options(LoadableFromHydra):
     # The network to be used.
     network: Network.HParams = field(default_factory=SimpleVGG.HParams)
 
-    # Other configuration options.
-    config: Config = field(default_factory=Config)
-
     # Keyword arguments for the Trainer constructor.
     trainer: Dict = field(default_factory=dict)
 
@@ -98,9 +95,11 @@ def main(raw_options: DictConfig) -> None:
 
     dataset: DatasetConfig = options.dataset
 
-    if options.seed:
-        seed_everything(seed=options.config.seed, workers=True)
+    # NOTE: In the process of moving the args from `Config` to this top-level `Options` class.
+    config: Config = Config(seed=options.seed, debug=options.debug)
 
+    if options.seed:
+        seed_everything(seed=options.seed, workers=True)
     model_hparams = model_hparams
 
     root_logger = logging.getLogger()
@@ -119,11 +118,11 @@ def main(raw_options: DictConfig) -> None:
 
     # Create the model
     model: Model = model_type(
-        datamodule=datamodule,
         network=network,
+        datamodule=datamodule,
         hparams=model_hparams,
-        config=options.config,
         network_hparams=network_hparams,
+        config=config,
     )
     assert isinstance(model, LightningModule)
 
@@ -133,21 +132,22 @@ def main(raw_options: DictConfig) -> None:
     ]
     from pytorch_lightning.loggers import LightningLoggerBase
 
-    # Create the logger(s):
-    loggers: List[LightningLoggerBase] = [
-        hydra.utils.instantiate(logger_dict) for logger_dict in options.logger.values()
-    ]
-
     # --- Create the trainer.. ---
 
     trainer_kwargs = options.trainer
 
-    if options.config.debug:
-        print(f"Setting the max_epochs to 1, since '--debug' was passed.")
+    if options.debug:
+        logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
         trainer_kwargs["max_epochs"] = 1
+        loggers = []
         root_logger.setLevel(logging.DEBUG)
+    else:
+        # Create the logger(s):
+        loggers: List[LightningLoggerBase] = [
+            hydra.utils.instantiate(logger_dict) for logger_dict in options.logger.values()
+        ]
 
-    trainer: Trainer = hydra.utils.instantiate(trainer_kwargs, callbacks=callbacks)
+    trainer: Trainer = hydra.utils.instantiate(trainer_kwargs, callbacks=callbacks, logger=loggers)
 
     # --- Run the experiment. ---
     trainer.fit(model, datamodule=datamodule)

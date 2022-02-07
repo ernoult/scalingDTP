@@ -28,5 +28,7 @@ class Network(Protocol):
             super().__post_init__()
             self.activation_class: Type[nn.Module] = activations[self.activation]
 
+    hparams: "Network.HParams"
+
     def __init__(self, in_channels: int, n_classes: int, hparams: HParams = None):
         ...

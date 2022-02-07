@@ -10,4 +10,4 @@ max_epochs: 90
 resume_from_checkpoint: null
 
 # number of validation steps to execute at the beginning of the training
-num_sanity_val_steps: 0
+# num_sanity_val_steps: 0
