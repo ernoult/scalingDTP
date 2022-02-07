@@ -3,9 +3,8 @@ import dataclasses
 from numpy import safe_eval
 from omegaconf import DictConfig, OmegaConf
 import omegaconf
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters as _HyperParameters
 from dataclasses import dataclass
-from typing import Callable, ClassVar, Any, Dict, Optional, Type, TypeVar, Union
+from typing import Callable, ClassVar, Any, Dict, Optional, Set, Type, TypeVar, Union
 from simple_parsing.helpers.serialization.serializable import Serializable
 from pathlib import Path
 import importlib
@@ -34,7 +33,7 @@ class LoadableFromHydra(Serializable):
     @classmethod
     def hydra_extra_dict(cls) -> Dict:
         return {
-            "_target_": cls.get_target(),
+            # "_target_": cls.get_target(),
             # "_convert_": "all",
             # "defaults": ["base_" + cls._name],
         }
@@ -42,7 +41,7 @@ class LoadableFromHydra(Serializable):
     @classmethod
     def from_dictconfig(cls: Type[L], config: DictConfig) -> L:
         actual_type = config._metadata.object_type
-        assert issubclass(actual_type, Serializable)
+        assert inspect.isclass(actual_type) and issubclass(actual_type, Serializable), actual_type
         obj = OmegaConf.to_object(config)
         assert isinstance(obj, cls)
         return obj
@@ -70,9 +69,9 @@ class LoadableFromHydra(Serializable):
         # assert False, name_without_base
         group_dir = Path("conf") / group
         cs = ConfigStore.instance()
-        name_without_base = name.split("base_", maxsplit=1)[1] if name.startswith("base_") else name
-        name_with_base = "base_" + name_without_base
-        cs.store(group=group, name=name_without_base, node=default)
+        # name_without_base = name.split("base_", maxsplit=1)[1] if name.startswith("base_") else name
+        # name_with_base = "base_" + name_without_base
+        cs.store(group=group, name=name, node=default)
 
         # with open(group_dir / f"{name_without_base}.yaml", "w") as f:
         #     yaml.dump({"defaults": [name_with_base]})
@@ -117,6 +116,37 @@ def get_full_name(object_type: Type) -> str:
     return object_type.__module__ + "." + object_type.__qualname__
 
 
+def get_all_subclasses(t: Type) -> Set[Type]:
+    subclasses = t.__subclasses__()
+    result = set()
+    for sub in subclasses:
+        result.add(sub)
+        result.update(get_all_subclasses(sub))
+    return result
+
+
+def get_outer_class(inner_class: Type) -> Type:
+    inner_full_name = get_full_name(inner_class)
+    parent_full_name, _, _ = inner_full_name.rpartition(".")
+    outer_class_module, _, outer_class_name = parent_full_name.rpartition(".")
+    # assert False, (container_class_module, class_name, child_name)
+    mod = importlib.import_module(outer_class_module)
+    return getattr(mod, outer_class_name)
+
+
+import re
+
+
+def camel_case(name):
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
+# names_to_subclass = {camel_case(t.__qualname__): t for t in get_all_subclasses(Model.HParams)}
+# names_to_subclass = {name.rpartition(".h_params")[0]: t for name, t in names_to_subclass.items()}
+# names_to_subclass["backprop"] = names_to_subclass.pop("baseline_model")
+
+
 def _validate_get(self: DictConfig, key: Any, value: Any = None) -> None:
     is_typed = self._is_typed()
 
@@ -140,3 +170,26 @@ from omegaconf.errors import ConfigAttributeError
 # Hacky, but it works.
 omegaconf.DictConfig._validate_get = _validate_get
 # setattr(omegaconf.DictConfig, "_validate_get", _validate_get)
+import omegaconf._utils
+
+from omegaconf._utils import type_str as _type_str, _resolve_optional
+import sys
+import inspect
+
+
+def type_str(t: Any) -> str:
+    # Little 'patch', so the names are a bit more useful for inner classes. Otherwise we get
+    # "HParams is not a subclass of HParams", which isn't very helpful.
+    their_value = _type_str(t)
+    if (
+        hasattr(t, "__name__")
+        and hasattr(t, "__qualname__")
+        and their_value == t.__name__
+        and t.__qualname__ != t.__name__
+    ):
+        print(f"Returning {t.__qualname__} (qualname) instead of {t.__name__} (name).")
+        return t.__qualname__
+    return their_value
+
+
+omegaconf._utils.type_str = type_str

@@ -54,10 +54,6 @@ class ForwardOptimizerConfig(OptimizerConfig):
 
     # Type of Optimizer to use.
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
-    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
-    # type: str = categorical(
-    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
-    # )
 
     # Learning rate of the optimizer.
     lr: float = log_uniform(1e-4, 1e-1, default=0.05)
@@ -80,9 +76,6 @@ class FeedbackOptimizerConfig(OptimizerConfig):
 
     # Type of Optimizer to use.
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
-    # type: str = categorical(
-    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
-    # )
 
     # Learning rate of the optimizer.
     lr: List[float] = log_uniform(
@@ -342,6 +335,7 @@ class DTP(LightningModule, Model):
 
     def create_trainer(self) -> Trainer:
         # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
+        # TODO: Create a TrainerOptions config class for Hydra.
         return Trainer(
             max_epochs=self.hp.max_epochs,
             gpus=1,

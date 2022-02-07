@@ -38,7 +38,8 @@ import torch
 from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
-from target_prop.utils.hparams import HyperParametersfrom target_prop._weight_operations import init_symetric_weights
+from target_prop.utils.hparams import HyperParameters
+from target_prop._weight_operations import init_symetric_weights
 from target_prop.callbacks import get_backprop_grads
 from target_prop.config import Config
 from target_prop.metrics import compute_dist_angle

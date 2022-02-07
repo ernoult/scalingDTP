@@ -10,7 +10,7 @@ import textwrap
 import warnings
 from argparse import Namespace
 from dataclasses import asdict
-from typing import Callable, List, Literal, Type, TypeVar, Union
+from typing import Callable, List, Literal, Tuple, Type, TypeVar, Union
 
 import torch
 from pytorch_lightning import Trainer
@@ -19,22 +19,20 @@ from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing import ArgumentParser
-from target_prop.utils.hparams import HyperParametersfrom torch import nn
+from target_prop.utils.hparams import HyperParameters
+from torch import nn
 
 import wandb
 from target_prop.config import Config
-from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
+from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP, Model
 from target_prop.utils.utils import make_reproducible
 from target_prop.networks import (
     ResNet18,
     ResNet34,
     SimpleVGG,
     LeNet,
+    Network,
 )
-
-HParams = TypeVar("HParams", bound=HyperParameters)
-
-Model = Union[BaselineModel, DTP, ParallelDTP, VanillaDTP, TargetProp]
 
 
 def main(parser: ArgumentParser = None):
@@ -111,10 +109,10 @@ def add_run_args(parser: ArgumentParser):
 def run(
     config: Config,
     model_type: Type[Model],
-    hparams: HyperParameters,
-    network_type: Callable[..., nn.Sequential],
-    network_hparams: HyperParameters,
-) -> float:
+    hparams: Model.HParams,
+    network_type: Type[Network],
+    network_hparams: Network.HParams,
+) -> Tuple[float, float]:
     """Executes a run, where a model of the given type is trained, with the given hyper-parameters."""
     print(f"Type of model used: {model_type}")
     print("Config:")

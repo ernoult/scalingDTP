@@ -39,10 +39,6 @@ logger = get_logger(__name__)
 class ForwardOptimizerConfig(_ForwardOptimizerConfig):
     # Type of Optimizer to use.
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
-    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
-    # type: str = categorical(
-    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
-    # )
 
     # Learning rate of the optimizer.
     lr: float = log_uniform(1e-6, 1e-1, default=4e-3)
@@ -56,9 +52,6 @@ class FeedbackOptimizerConfig(_FeedbackOptimizerConfig):
     # Type of Optimizer to use.
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
     # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
-    # type: str = categorical(
-    #     *OptimizerConfig.available_optimizers.keys(), default="sgd", strict=True  # type: ignore
-    # )
 
     # Learning rate of the optimizer.
     lr: List[float] = log_uniform(1e-6, 1e-1, default_factory=[4e-3].copy)

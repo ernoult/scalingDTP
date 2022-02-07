@@ -8,6 +8,7 @@ import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import categorical, log_uniform, uniform
+from target_prop.networks.network import Network
 from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
 from target_prop.optimizer_config import OptimizerConfig
@@ -47,12 +48,18 @@ class VanillaDTP(DTP):
     def __init__(
         self,
         datamodule: VisionDataModule,
-        network: nn.Sequential,
+        network: Network,
         hparams: "VanillaDTP.HParams",
         config: Config,
         network_hparams: HyperParameters,
     ):
-        super().__init__(datamodule, network, hparams, config, network_hparams)
+        super().__init__(
+            datamodule=datamodule,
+            network=network,
+            hparams=hparams,
+            config=config,
+            network_hparams=network_hparams,
+        )
         self.hp: VanillaDTP.HParams
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
