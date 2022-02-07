@@ -1,0 +1,3 @@
+dataset: cifar10
+image_crop_size: 32
+image_crop_pad: 4

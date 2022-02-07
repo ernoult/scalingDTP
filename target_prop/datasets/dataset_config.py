@@ -2,6 +2,7 @@ import enum
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
+from pathlib import Path
 from typing import Callable, ClassVar, Dict, Generic, Type, TypeVar
 from simple_parsing import choice
 
@@ -19,6 +20,13 @@ from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, To
 from target_prop.datasets import CIFAR10DataModule as CIFAR10NoValDataModule
 from target_prop.datasets import ImageNet32DataModule as ImageNet32NoValDataModule
 
+FILE = Path(__file__)
+REPO_ROOTDIR = FILE
+while REPO_ROOTDIR.name != "target_prop":
+    REPO_ROOTDIR = REPO_ROOTDIR.parent
+REPO_ROOTDIR = REPO_ROOTDIR.parent  # One more level: Now we're at the root of the repo.
+
+
 Transform = Callable[[Tensor], Tensor]
 
 logger = get_logger(__name__)
@@ -32,39 +40,6 @@ class DatasetTypes(enum.Enum):
 
 from abc import ABC
 from typing import Optional, Union, Any
-
-
-class NoValDataModule(VisionDataModule, ABC):
-    def __init__(
-        self,
-        data_dir: Optional[str] = None,
-        val_split: Union[int, float] = 0.0,
-        num_workers: int = 16,
-        normalize: bool = False,
-        batch_size: int = 32,
-        seed: int = 42,
-        shuffle: bool = False,
-        pin_memory: bool = False,
-        drop_last: bool = False,
-        *args: Any,
-        **kwargs: Any
-    ) -> None:
-        super().__init__(
-            data_dir,
-            val_split,
-            num_workers,
-            normalize,
-            batch_size,
-            seed,
-            shuffle,
-            pin_memory,
-            drop_last,
-            *args,
-            **kwargs
-        )
-        self.val_split = 0.0
-
-
 from target_prop.utils.hydra_utils import LoadableFromHydra
 from target_prop.utils.wandb_utils import LoggedToWandb
 
@@ -85,11 +60,11 @@ class DatasetConfig(LoadableFromHydra, LoggedToWandb):
     # Which dataset to use.
     dataset: str = choice(*available_datasets.keys(), default="cifar10")
     # Directory to look for the datasets.
-    data_dir: str = os.environ.get("SLURM_TMPDIR", "data")
+    data_dir: str = os.environ.get("SLURM_TMPDIR", str(REPO_ROOTDIR / "data"))
     # Number of workers to use in the dataloader.
     num_workers: int = int(os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count()))
     # Wether to pin the memory, which is good when using CUDA tensors.
-    pin_memory: bool = True
+    # pin_memory: bool = True
     # Wether to shuffle the dataset or not.
     shuffle: bool = True
 
@@ -110,16 +85,16 @@ class DatasetConfig(LoadableFromHydra, LoggedToWandb):
             data_dir=self.data_dir,
             batch_size=batch_size,
             num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
+            # pin_memory=self.pin_memory,
             shuffle=self.shuffle,
             normalize=self.normalize,
             val_split=self.val_split,
         )
         # NOTE: The standard transforms includes ToTensor and normalization.
         # We are adding the RandomFlip and the RandomCrop.
-        assert datamodule.train_transforms is None
-        assert datamodule.val_transforms is None
-        assert datamodule.test_transforms is None
+        # assert datamodule.train_transforms is None
+        # assert datamodule.val_transforms is None
+        # assert datamodule.test_transforms is None
 
         default_transforms = datamodule.default_transforms()
         assert isinstance(default_transforms, Compose)

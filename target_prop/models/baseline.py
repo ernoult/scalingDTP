@@ -6,6 +6,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from simple_parsing import field
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -21,7 +22,7 @@ from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
 from target_prop.models.model import Model
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
+from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig, StepLRConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -40,10 +41,7 @@ class BaselineModel(LightningModule, Model):
         """Hyper-Parameters of the baseline model."""
 
         # Arguments to be passed to the LR scheduler.
-        lr_scheduler: Union[StepLRConfig, CosineAnnealingLRConfig] = subparsers(
-            {"step": StepLRConfig, "cosine": CosineAnnealingLRConfig,},
-            default_factory=CosineAnnealingLRConfig,
-        )
+        lr_scheduler: LRSchedulerConfig = field(default_factory=CosineAnnealingLRConfig)
         # Use of a learning rate scheduler.
         use_scheduler: bool = True
 
@@ -108,22 +106,6 @@ class BaselineModel(LightningModule, Model):
         # Dummy forward pass to initialize the weights of the lazy modules (required for DP/DDP)
         _ = self(self.example_input_array)
 
-    def create_trainer(self) -> Trainer:
-        # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
-        return Trainer(
-            max_epochs=self.hp.max_epochs,
-            gpus=1,
-            accelerator=None,
-            # NOTE: Not sure why but seems like they are still reloading them after each epoch!
-            reload_dataloaders_every_epoch=False,
-            terminate_on_nan=self.automatic_optimization,
-            logger=WandbLogger() if not self.config.debug else None,
-            limit_train_batches=self.config.limit_train_batches,
-            limit_val_batches=self.config.limit_val_batches,
-            limit_test_batches=self.config.limit_test_batches,
-            checkpoint_callback=(not self.config.debug),
-        )
-
     def forward(self, input: Tensor) -> Tensor:  # type: ignore
         # Dummy forward pass, not used in practice. We just implement it so that PL can
         # display the input/output shapes of our networks.
@@ -166,11 +148,15 @@ class BaselineModel(LightningModule, Model):
             # `main.py` seems to be using a weight scheduler only for the forward weight
             # training.
             lr_scheduler = self.hp.lr_scheduler.make_scheduler(optimizer)
-            optim_config["lr_scheduler"] = {
-                "scheduler": lr_scheduler,
-                "interval": self.hp.lr_scheduler.interval,
-                "frequency": self.hp.lr_scheduler.frequency,
-            }
+            scheduler_config: Dict[str, Any] = {"scheduler": lr_scheduler}
+            if self.automatic_optimization:
+                scheduler_config.update(
+                    {
+                        "interval": self.hp.lr_scheduler.interval,
+                        "frequency": self.hp.lr_scheduler.frequency,
+                    }
+                )
+            optim_config["lr_scheduler"] = scheduler_config
         return optim_config
 
     def configure_callbacks(self) -> List[Callback]:

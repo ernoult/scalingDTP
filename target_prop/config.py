@@ -29,8 +29,6 @@ class Config(LoadableFromHydra, LoggedToWandb):
 
     _stored_at_key: ClassVar[str] = "config"
 
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
-
     # Random seed.
     seed: Optional[int] = 123
 
@@ -38,17 +36,8 @@ class Config(LoadableFromHydra, LoggedToWandb):
     # NOTE: Currently also limits the max epochs to 1.
     debug: bool = flag(False)
 
-    # Size of the random crop for training.
-    # TODO: Might have to use a different value for imagenet.
-    image_crop_size: int = 32
-
     # Which device to use.
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Limit the number of train/val/test batches. Useful for quick debugging or unit testing.
-    limit_train_batches: Any = 1.0
-    limit_val_batches: Any = 1.0
-    limit_test_batches: Any = 1.0
 
     def __post_init__(self):
         if self.seed is None:
@@ -62,9 +51,6 @@ class Config(LoadableFromHydra, LoggedToWandb):
             )
             self.seed += int(array_task_id)
             logger.info(f"New seed: {self.seed}")
-
-    def make_datamodule(self, batch_size: int) -> VisionDataModule:
-        return self.dataset.make_datamodule(batch_size=batch_size)
 
 
 from typing import Any, Callable, TypeVar

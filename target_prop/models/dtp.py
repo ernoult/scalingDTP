@@ -1,42 +1,36 @@
 import dataclasses
 import logging
 import warnings
-from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
 import numpy as np
 import torch
-import wandb
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field, subparsers, field
+from simple_parsing.helpers import choice, field, list_field
 from simple_parsing.helpers.hparams.hparam import log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from torch import Tensor, nn
+from torch.nn import functional as F
+from torch.optim.optimizer import Optimizer
+from torchmetrics.classification.accuracy import Accuracy
+
+import wandb
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import invert, mark_as_invertible
 from target_prop.callbacks import CompareToBackpropCallback
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
-from target_prop.layers import MaxPool2d, Reshape, forward_all
+from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
 from target_prop.models.model import Model
-from target_prop.networks import Network
-from target_prop.networks.simple_vgg import SimpleVGG
+from target_prop.networks.network import Network
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import (
-    CosineAnnealingLRConfig,
-    LRSchedulerConfig,
-    StepLRConfig,
-)
+from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
 from target_prop.utils.utils import is_trainable
-from torch import Tensor, nn
-from torch.nn import functional as F
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.optim.optimizer import Optimizer
-from torchmetrics.classification.accuracy import Accuracy
 
 from .utils import make_stacked_feedback_training_figure
 
@@ -333,23 +327,6 @@ class DTP(LightningModule, Model):
 
         return backward_net
 
-    def create_trainer(self) -> Trainer:
-        # IDEA: Would perhaps be useful to add command-line arguments for DP/DDP/etc.
-        # TODO: Create a TrainerOptions config class for Hydra.
-        return Trainer(
-            max_epochs=self.hp.max_epochs,
-            gpus=1,
-            accelerator=None,
-            # NOTE: Not sure why but seems like they are still reloading them after each epoch!
-            reload_dataloaders_every_epoch=False,
-            terminate_on_nan=True,
-            logger=WandbLogger() if not self.config.debug else None,
-            limit_train_batches=self.config.limit_train_batches,
-            limit_val_batches=self.config.limit_val_batches,
-            limit_test_batches=self.config.limit_test_batches,
-            checkpoint_callback=(not self.config.debug),
-        )
-
     def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
         # Dummy forward pass, not used in practice. We just implement it so that PL can
         # display the input/output shapes of our networks.
@@ -553,7 +530,7 @@ class DTP(LightningModule, Model):
                 self.log(f"{phase}/B_total_loss[{layer_index}]", total_iter_loss)
                 if iterations_i > 0:
                     self.log(f"{phase}/B_avg_loss[{layer_index}]", avg_iter_loss)
-                self.log(f"{phase}/B_iterations[{layer_index}]", iterations_i)
+                self.log(f"{phase}/B_iterations[{layer_index}]", float(iterations_i))
                 self.log(f"{phase}/B_angle[{layer_index}]", iteration_angles[-1])
                 self.log(f"{phase}/B_distance[{layer_index}]", iteration_distances[-1])
 
@@ -787,18 +764,14 @@ class DTP(LightningModule, Model):
         if self.hp.use_scheduler:
             # Using the same LR scheduler as the original code:
             lr_scheduler = self.hp.lr_scheduler.make_scheduler(forward_optimizer)
-            lr_scheduler_config = {
-                # REQUIRED: The scheduler instance
-                "scheduler": lr_scheduler,
-                # The unit of the scheduler's step size, could also be 'step'.
-                # 'epoch' updates the scheduler on epoch end whereas 'step'
-                # updates it after a optimizer update.
-                "interval": self.hp.lr_scheduler.interval,
-                # How many epochs/steps should pass between calls to
-                # `scheduler.step()`. 1 corresponds to updating the learning
-                # rate after every epoch/step.
-                "frequency": self.hp.lr_scheduler.frequency,
-            }
+            lr_scheduler_config: Dict[str, Any] = {"scheduler": lr_scheduler}
+            if self.automatic_optimization:
+                lr_scheduler_config.update(
+                    {
+                        "interval": self.hp.lr_scheduler.interval,
+                        "frequency": self.hp.lr_scheduler.frequency,
+                    }
+                )
             forward_optim_config["lr_scheduler"] = lr_scheduler_config
         configs.append(forward_optim_config)
         return configs

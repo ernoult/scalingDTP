@@ -33,5 +33,6 @@ setuptools.setup(
         "plotly",
         "kaleido",
         "torchmetrics",
+        "rich",
     ],
 )

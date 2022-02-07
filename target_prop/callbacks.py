@@ -42,7 +42,6 @@ class CompareToBackpropCallback(Callback):
         outputs: Any,
         batch: Tuple[Tensor, Tensor],
         batch_idx: int,
-        dataloader_idx: int,
     ) -> None:
         # Keep the last batch.
         # Ideally, we'd be able to know which batch is the last, but we can't really do that atm,

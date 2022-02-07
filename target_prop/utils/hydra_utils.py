@@ -76,7 +76,7 @@ class LoadableFromHydra(Serializable):
         # with open(group_dir / f"{name_without_base}.yaml", "w") as f:
         #     yaml.dump({"defaults": [name_with_base]})
 
-        group_dir.mkdir(exist_ok=True, parents=True)
+        # group_dir.mkdir(exist_ok=True, parents=True)
         # default.save_yaml(group_dir / f"{name_with_base}.yaml")
 
 

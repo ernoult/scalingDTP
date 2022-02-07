@@ -1,6 +1,10 @@
 defaults:
   - base_options
+  - dataset: cifar10.yaml
   - model: dtp
   - network: simple_vgg
   - optional model_network: ${model}_${network}
+  - trainer: default.yaml
+  - callbacks: default.yaml
+  - optional logger: wandb.yaml
   - _self_
