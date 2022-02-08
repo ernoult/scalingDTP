@@ -6,5 +6,6 @@ defaults:
   - optional model_network: ${model}_${network}
   - trainer: default.yaml
   - callbacks: default.yaml
-  - optional logger: wandb.yaml
+  - logger: null  # use logger=wandb to enable wandb logging.
+  - mode: default.yaml
   - _self_

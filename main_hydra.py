@@ -49,6 +49,8 @@ class Options(LoadableFromHydra):
     # Wether to run in debug mode or not.
     debug: bool = False
 
+    verbose: bool = False
+
     # Random seed.
     seed: Optional[int] = None
 
@@ -98,7 +100,7 @@ def main(raw_options: DictConfig) -> None:
     # NOTE: In the process of moving the args from `Config` to this top-level `Options` class.
     config: Config = Config(seed=options.seed, debug=options.debug)
 
-    if options.seed:
+    if options.seed is not None:
         seed_everything(seed=options.seed, workers=True)
     model_hparams = model_hparams
 
@@ -139,13 +141,14 @@ def main(raw_options: DictConfig) -> None:
     if options.debug:
         logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
         trainer_kwargs["max_epochs"] = 1
-        loggers = []
+
+    # Create the logger(s):
+    loggers: List[LightningLoggerBase] = [
+        hydra.utils.instantiate(logger_dict) for logger_dict in options.logger.values()
+    ]
+
+    if options.verbose:
         root_logger.setLevel(logging.DEBUG)
-    else:
-        # Create the logger(s):
-        loggers: List[LightningLoggerBase] = [
-            hydra.utils.instantiate(logger_dict) for logger_dict in options.logger.values()
-        ]
 
     trainer: Trainer = hydra.utils.instantiate(trainer_kwargs, callbacks=callbacks, logger=loggers)
 
