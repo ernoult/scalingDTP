@@ -1,15 +1,17 @@
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar, Iterable, List, Optional, Tuple, Type
 
 import pytest
+from simple_parsing.helpers.serialization.serializable import Serializable
 import torch
+from itertools import islice
+from torch.utils.data import DataLoader
 from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
-from target_prop.utils.hparams import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
@@ -24,74 +26,85 @@ from target_prop.legacy import (
 )
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
+from target_prop.models.dtp import FeedbackOptimizerConfig, ForwardOptimizerConfig
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils.utils import is_trainable, named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
+from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
+
+
+@dataclass
+class LegacyHparams(Serializable):
+    """Hyper-Parameters used in @ernoult's VGG model."""
+
+    # Channels per conv layer.
+    C: List[int] = list_field(128, 128, 256, 256, 512)
+
+    # Number of training steps for the feedback weights per batch. A list of
+    # integers, where each value represents the number of iterations for that layer.
+    iter: List[int] = list_field(20, 30, 35, 55, 20)
+
+    # The scale of the gaussian random variable in the feedback loss calculation.
+    noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+
+    # Learning rate for feed forward weights
+    lr_f: float = 0.08
+
+    # Learning rates for feedback weights
+    lr_b: List[float] = list_field(1e-4, 3.5e-4, 8e-3, 8e-3, 0.18)
+
+    # Type of activation to use.
+    activation: str = "elu"
+
+    # Nudging parameter: Used when calculating the first target.
+    beta: float = 0.7
+
+    # Weight decay for optimizer
+    wdecay: float = 1e-4
+
+    # Batch size
+    batch_size = 128
 
 
 @pytest.fixture
 def legacy_hparams():
-    @dataclass
-    class LegacyHparams(HyperParameters):
-        """Hyper-Parameters used in @ernoult's VGG model."""
-
-        # Channels per conv layer.
-        C: List[int] = list_field(128, 128, 256, 256, 512)
-
-        # Number of training steps for the feedback weights per batch. A list of
-        # integers, where each value represents the number of iterations for that layer.
-        iter: List[int] = list_field(20, 30, 35, 55, 20)
-
-        # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
-
-        # Learning rate for feed forward weights
-        lr_f: float = 0.08
-
-        # Learning rates for feedback weights
-        lr_b: List[float] = list_field(1e-4, 3.5e-4, 8e-3, 8e-3, 0.18)
-
-        # Type of activation to use.
-        activation: str = "elu"
-
-        # Nudging parameter: Used when calculating the first target.
-        beta: float = 0.7
-
-        # Weight decay for optimizer
-        wdecay: float = 1e-4
-
-        # Batch size
-        batch_size = 128
-
-    hparams = LegacyHparams()
-    return hparams
+    return LegacyHparams()
 
 
 @pytest.fixture
-def legacy_model(legacy_hparams: HyperParameters):
+def legacy_model(legacy_hparams: LegacyHparams):
     legacy_model = VGG(legacy_hparams)
     return legacy_model
 
 
 @pytest.fixture
-def pl_hparams():
-    return DTP.HParams()
+def pl_hparams(legacy_hparams: LegacyHparams):
+    # NOTE: The default value for the forward optimizer learning rate was lowered. Here we make it
+    # match the legacy parameters.
+    return DTP.HParams(
+        f_optim=ForwardOptimizerConfig(
+            type="sgd", lr=legacy_hparams.lr_f, weight_decay=legacy_hparams.wdecay
+        ),
+        b_optim=FeedbackOptimizerConfig(type="sgd", lr=legacy_hparams.lr_b),
+        noise=legacy_hparams.noise,
+        beta=legacy_hparams.beta,
+        feedback_training_iterations=legacy_hparams.iter,
+    )
 
 
 @pytest.fixture
-def pl_model(pl_hparams: HyperParameters):
-    config = Config(dataset="cifar10", num_workers=0, debug=True)
-    datamodule = config.make_datamodule(batch_size=pl_hparams.batch_size)
+def pl_model(pl_hparams: DTP.HParams):
+    config = Config(debug=True, seed=123, device="cpu")
+    dataset_config = DatasetConfig(dataset="cifar10", num_workers=0)
+    datamodule = dataset_config.make_datamodule(batch_size=pl_hparams.batch_size)
     network = SimpleVGG(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
     pl_model = DTP(datamodule=datamodule, hparams=pl_hparams, config=config, network=network)
     return pl_model
 
 
 class TestLegacyCompatibility:
-    def test_input_batches_are_same(
-        self, pl_hparams: HyperParameters, legacy_hparams: HyperParameters
-    ):
+    def test_input_batches_are_same(self, pl_hparams: DTP.HParams, legacy_hparams: LegacyHparams):
         check_mark = "\u2705"
         cross_mark = "\u274C"
         num_iterations = 5
@@ -102,13 +115,19 @@ class TestLegacyCompatibility:
         legacy_train_loader, legacy_test_loader = createDataset(legacy_hparams)
 
         # Get PL dataloaders
-        config = Config(dataset="cifar10", num_workers=1, debug=False, pin_memory=False)
-        datamodule = config.make_datamodule(batch_size=pl_hparams.batch_size)
+        # dataset_config = DatasetConfig(dataset="cifar10_noval", num_workers=1)
+        datamodule = get_datamodule(
+            dataset="cifar10_noval",
+            num_workers=1,
+            batch_size=pl_hparams.batch_size,
+            use_legacy_std=True,
+        )
         datamodule.setup()
         pl_train_loader, pl_test_loader = (
             datamodule.train_dataloader(),
             datamodule.test_dataloader(),
         )
+        assert isinstance(pl_test_loader, DataLoader)
 
         # Ensure that number of batches in each split are equal
         assert len(legacy_train_loader) == len(pl_train_loader)
@@ -118,7 +137,20 @@ class TestLegacyCompatibility:
         # NOTE: We only compare `test` baches here because they are not shuffled in dataloader
         data_errors = []
         label_errors = []
-        for i, (legacy_batch, pl_batch) in enumerate(zip(legacy_test_loader, pl_test_loader)):
+
+        def assert_transforms_are_the_same(pl_loader: DataLoader, legacy_loader: DataLoader):
+            legacy_transforms = legacy_loader.dataset.transform.transforms
+            pl_transforms = pl_loader.dataset.transform.transforms
+            assert len(legacy_transforms) == len(pl_transforms)
+            assert str(legacy_transforms) == str(pl_transforms)
+
+        assert_transforms_are_the_same(pl_train_loader, legacy_train_loader)
+        assert_transforms_are_the_same(pl_test_loader, legacy_test_loader)
+
+        for i, (legacy_batch, pl_batch) in islice(
+            enumerate(zip(legacy_test_loader, pl_test_loader)), num_iterations
+        ):
+            assert legacy_batch[0].shape == pl_batch[0].shape
             data_error = torch.abs((legacy_batch[0] - pl_batch[0]).sum()).item()
             label_error = torch.abs((legacy_batch[1] - pl_batch[1]).sum()).item()
             print(
@@ -129,12 +161,11 @@ class TestLegacyCompatibility:
             print(check_mark) if data_error + label_error < 1e-5 else print(cross_mark)
             data_errors.append(data_error)
             label_errors.append(label_error)
-            if i == num_iterations:
-                break
+
         assert (sum(data_errors)) == 0
         assert (sum(label_errors)) == 0
 
-    def test_forward_passes_are_same(self, pl_model: nn.Module, legacy_model: nn.Module):
+    def test_forward_passes_are_same(self, pl_model: DTP, legacy_model: VGG):
         seed_everything(seed=123, workers=True)
 
         # Initialize both the models with same weights
@@ -150,9 +181,9 @@ class TestLegacyCompatibility:
     def test_forward_updates_are_same(
         self,
         pl_model: DTP,
-        legacy_model: nn.Module,
+        legacy_model: VGG,
         pl_hparams: DTP.HParams,
-        legacy_hparams: HyperParameters,
+        legacy_hparams: LegacyHparams,
     ):
         seed_everything(seed=123, workers=True)
 
@@ -170,12 +201,12 @@ class TestLegacyCompatibility:
         # Compute forward layer losses in both the models
         criterion = torch.nn.CrossEntropyLoss(reduction="none")
         optimizers = createOptimizers(legacy_model, legacy_hparams, forward=True)
-        forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
-        pl_model._forward_optimizer = forward_optimizer
         optimizer_f = optimizers[0]
         _, legacy_layer_losses = train_forward(
             legacy_model, example_inputs, example_labels, criterion, optimizer_f, legacy_hparams
         )
+        forward_optimizer = pl_hparams.f_optim.make_optimizer(pl_model.forward_net)
+        pl_model._forward_optimizer = forward_optimizer
         pl_output = pl_model.forward_loss(example_inputs, example_labels, phase="train")
         pl_forward_loss, pl_layer_losses = pl_output["loss"], pl_output["layer_losses"]
         pl_forward_loss.backward()
@@ -211,9 +242,9 @@ class TestLegacyCompatibility:
     def test_feedback_updates_are_same(
         self,
         pl_model: DTP,
-        legacy_model: nn.Module,
+        legacy_model: VGG,
         pl_hparams: DTP.HParams,
-        legacy_hparams: HyperParameters,
+        legacy_hparams: LegacyHparams,
     ):
         seed_everything(seed=123, workers=True)
 
@@ -231,7 +262,7 @@ class TestLegacyCompatibility:
         example_inputs = torch.rand([batch_size, 3, 32, 32]).to(device)
         example_labels = torch.randint(0, num_classes, [batch_size]).to(device)
         legacy_model = legacy_model.to(device)
-        pl_model = pl_model.to(device)
+        pl_model.to(device)
 
         # Do feedback updates in legacy model
         # Save random state for sampling same noise vectors in both the models
