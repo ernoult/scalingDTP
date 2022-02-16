@@ -90,10 +90,10 @@ class TestDTP:
         network: nn.Sequential = network_type(
             in_channels=datamodule.dims[0], n_classes=datamodule.num_classes, hparams=None,
         )
-
+        assert isinstance(debug_hparams, self.model_class.HParams)
         model = self.model_class(
             datamodule=datamodule,
-            hparams=hparams,
+            hparams=hparams,  # type: ignore
             config=config,
             network=network,
             network_hparams=network.hparams,

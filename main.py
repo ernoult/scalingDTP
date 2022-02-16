@@ -188,6 +188,7 @@ def run(options: Options):
     if wandb.run:
         wandb.finish()
 
+    return top1_accuracy
     # TODO: Enable this later.
     # Run on the test set:
     # test_results = trainer.test(model, datamodule=datamodule, verbose=True)

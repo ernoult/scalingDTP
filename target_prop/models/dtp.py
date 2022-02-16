@@ -482,6 +482,9 @@ class DTP(LightningModule, Model):
                         distance, angle = 0, 0
                         for k, v in metrics.items():
                             if v != (0, 0):
+                                if isinstance(v, dict):
+                                    # Skip this layer.
+                                    continue
                                 distance, angle = v
                                 break
                     else:
