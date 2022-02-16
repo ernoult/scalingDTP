@@ -1,7 +1,7 @@
 import os
 import pdb
 from abc import abstractmethod
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Type, Union
 
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
@@ -30,7 +30,7 @@ class CIFAR10DataModule(LightningDataModule):
     EXTRA_ARGS: dict = {}
     name: str = "cifar10"
     #: Dataset class to use
-    dataset_cls: Dataset = CIFAR10
+    dataset_cls: Type[Dataset] = CIFAR10
     #: A tuple describing the shape of the data
     dims: tuple = (3, 32, 32)
 
@@ -44,6 +44,7 @@ class CIFAR10DataModule(LightningDataModule):
         shuffle: bool = True,
         pin_memory: bool = True,
         drop_last: bool = False,
+        val_split: float = 0.0,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -61,6 +62,8 @@ class CIFAR10DataModule(LightningDataModule):
                         returning them
             drop_last: If true drops the last incomplete batch
         """
+        if val_split != 0.0:
+            raise RuntimeError(f"This datamodule has no validation, val_split needs to be 0.")
 
         super().__init__(*args, **kwargs)
         self.data_dir = data_dir if data_dir is not None else os.getcwd()

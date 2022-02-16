@@ -9,7 +9,6 @@ from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import categorical, log_uniform, uniform
 from target_prop.networks.network import Network
-from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils.utils import repeat_batch
@@ -51,7 +50,7 @@ class VanillaDTP(DTP):
         network: Network,
         hparams: "VanillaDTP.HParams",
         config: Config,
-        network_hparams: HyperParameters,
+        network_hparams: Network.HParams,
     ):
         super().__init__(
             datamodule=datamodule,

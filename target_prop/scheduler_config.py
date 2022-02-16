@@ -1,14 +1,14 @@
 from abc import abstractmethod
 from typing import Any
+from simple_parsing import Serializable
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, _LRScheduler
 from dataclasses import dataclass
 from simple_parsing.helpers.hparams import uniform, log_uniform
 from torch.optim.optimizer import Optimizer
-from target_prop.utils.hparams import HyperParameters
 
 
 @dataclass
-class LRSchedulerConfig(HyperParameters):
+class LRSchedulerConfig(Serializable):
     interval: str = "epoch"
     frequency: int = 1
 

@@ -11,6 +11,7 @@ from pytorch_lightning.utilities.seed import seed_everything
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
+from target_prop.datasets.dataset_config import DatasetConfig
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
@@ -21,7 +22,6 @@ from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils.utils import named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
-from target_prop.utils.hparams import HyperParameters
 
 networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
 
@@ -58,7 +58,7 @@ class TestDTP:
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
         # all made for Cifar10 (e.g. hard-set to 5 layers). This would make the test uglier, as we'd
         # have to pass different values for each dataset.
-        config = Config(dataset=dataset, num_workers=0, debug=True)
+        dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
         hparams = debug_hparams
         trainer = Trainer(
             max_epochs=1,
@@ -69,7 +69,7 @@ class TestDTP:
             logger=None,
             checkpoint_callback=False,
         )
-
+        config = Config(debug=True)
         if config.seed is not None:
             seed = config.seed
         else:
@@ -84,7 +84,7 @@ class TestDTP:
 
         print("HParams:", hparams.dumps_json(indent="\t"))
         # Create the datamodule:
-        datamodule = config.make_datamodule(batch_size=hparams.batch_size)
+        datamodule = dataset_config.make_datamodule(batch_size=hparams.batch_size)
 
         # Create the network
         network: nn.Sequential = network_type(
@@ -159,7 +159,7 @@ class TestDTP:
         dataset: str,
         network_type: Type[Network],
         network_hparams: Network.HParams,
-        hparams: HyperParameters,
+        hparams: DTP.HParams,
         seed: int,
         batches: int = 1,
     ) -> float:

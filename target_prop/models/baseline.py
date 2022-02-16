@@ -16,7 +16,6 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field, subparsers
 from simple_parsing.helpers.hparams import log_uniform
-from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
@@ -28,6 +27,7 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
+from target_prop.networks import Network
 
 T = TypeVar("T")
 logger = getLogger(__name__)
@@ -61,10 +61,10 @@ class BaselineModel(LightningModule, Model):
     def __init__(
         self,
         datamodule: VisionDataModule,
-        network: nn.Sequential,
+        network: Network,
         hparams: HParams,
         config: Config,
-        network_hparams: HyperParameters,
+        network_hparams: Network.HParams,
     ):
         super().__init__()
         # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from logging import getLogger as get_logger
 from typing import Any, Dict, List, Optional, Type
 import logging
+from simple_parsing import Serializable
 import wandb
 
 import hydra
@@ -17,13 +18,13 @@ from target_prop.models.model import Model
 from target_prop.networks import *
 from target_prop.networks.network import Network
 from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
-from target_prop.utils.hydra_utils import LoadableFromHydra, get_outer_class
+from target_prop.utils.hydra_utils import get_outer_class
 
 logger = get_logger(__name__)
 
 
 @dataclass
-class Options(LoadableFromHydra):
+class Options(Serializable):
     """ All the options required for a run. This dataclass acts as a schema for the Hydra configs.
     
     For more info, see https://hydra.cc/docs/tutorials/structured_config/schema/
@@ -54,41 +55,32 @@ class Options(LoadableFromHydra):
     # Random seed.
     seed: Optional[int] = None
 
+    # Name for the experiment.
     name: str = ""
 
-
-# TODO: Use the __subclasses__ of the types to find all the "structured configs" we know of.
 
 cs = ConfigStore.instance()
 cs.store(name="base_options", node=Options)
 
-DTP.HParams.cs_store(group="model", name="dtp")
-ParallelDTP.HParams.cs_store(group="model", name="parallel_dtp")
-VanillaDTP.HParams.cs_store(group="model", name="vanilla_dtp")
-TargetProp.HParams.cs_store(group="model", name="target_prop")
+cs.store(group="model", name="dtp", node=DTP.HParams())
+cs.store(group="model", name="parallel_dtp", node=ParallelDTP.HParams())
+cs.store(group="model", name="vanilla_dtp", node=VanillaDTP.HParams())
+cs.store(group="model", name="target_prop", node=TargetProp.HParams())
 
-SimpleVGG.HParams.cs_store(group="network", name="simple_vgg")
-LeNet.HParams.cs_store(group="network", name="lenet")
-ResNet18.HParams.cs_store(group="network", name="resnet18")
-ResNet34.HParams.cs_store(group="network", name="resnet34")
+cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
+cs.store(group="network", name="lenet", node=LeNet.HParams())
+cs.store(group="network", name="resnet18", node=ResNet18.HParams())
+cs.store(group="network", name="resnet34", node=ResNet34.HParams())
 
-StepLRConfig.cs_store(group="lr_scheduler", name="step")
-CosineAnnealingLRConfig.cs_store(group="lr_scheduler", name="cosine")
-
-# Config.cs_store(group="config", name="base_config", default=Config())
-
-# TODO: Figure out a way to save / extract the type that was passed to `node`, so that we can
-# actually construct the right type of dataclass after-the-fact.
-# IDEA: add a "_type" key in to_yaml, that we then eval to get the value!
-# assert False, cs.repo["network"]
+cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
+cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 
 
 @hydra.main(config_path="conf", config_name="config")
 def main(raw_options: DictConfig) -> None:
     print(os.getcwd())
-    print(OmegaConf.to_yaml(raw_options))
-
-    options = Options.from_dictconfig(raw_options)
+    options = OmegaConf.to_object(raw_options)
+    assert isinstance(options, Options)
 
     model_hparams: Model.HParams = options.model
     model_type: Type[Model] = get_outer_class(type(options.model))
@@ -96,9 +88,6 @@ def main(raw_options: DictConfig) -> None:
     network_type: Type[Network] = get_outer_class(type(options.network))
 
     dataset: DatasetConfig = options.dataset
-
-    # NOTE: In the process of moving the args from `Config` to this top-level `Options` class.
-    config: Config = Config(seed=options.seed, debug=options.debug)
 
     if options.seed is not None:
         seed_everything(seed=options.seed, workers=True)
@@ -124,7 +113,7 @@ def main(raw_options: DictConfig) -> None:
         datamodule=datamodule,
         hparams=model_hparams,
         network_hparams=network_hparams,
-        config=config,
+        config=Config(seed=options.seed, debug=options.debug),
     )
     assert isinstance(model, LightningModule)
 
@@ -135,9 +124,7 @@ def main(raw_options: DictConfig) -> None:
     from pytorch_lightning.loggers import LightningLoggerBase
 
     # --- Create the trainer.. ---
-
     trainer_kwargs = options.trainer
-
     if options.debug:
         logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
         trainer_kwargs["max_epochs"] = 1
@@ -170,6 +157,7 @@ def main(raw_options: DictConfig) -> None:
     if wandb.run:
         wandb.finish()
 
+    # TODO: Enable this later.
     # Run on the test set:
     # test_results = trainer.test(model, datamodule=datamodule, verbose=True)
     # top1_accuracy: float = test_results[0]["test/accuracy"]

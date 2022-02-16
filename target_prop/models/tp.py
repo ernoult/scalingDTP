@@ -5,8 +5,8 @@ from typing import List, Union
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.hparams import log_uniform, uniform
-from target_prop.utils.hparams import HyperParameters
 from target_prop.config import Config
+from target_prop.networks.network import Network
 from target_prop.optimizer_config import OptimizerConfig
 from torch import Tensor, nn
 
@@ -29,10 +29,10 @@ class TargetProp(VanillaDTP):
     def __init__(
         self,
         datamodule: VisionDataModule,
-        network: nn.Sequential,
+        network: Network,
         hparams: "TargetProp.HParams",
         config: Config,
-        network_hparams: HyperParameters,
+        network_hparams: Network.HParams,
     ):
         super().__init__(datamodule, network, hparams, config, network_hparams)
         self.hp: TargetProp.HParams

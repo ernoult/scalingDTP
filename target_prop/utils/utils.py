@@ -8,6 +8,7 @@ from typing import Any, Dict, List, TypeVar, Union, Iterable, Tuple
 from simple_parsing.helpers import field
 from torch import nn
 from torch.nn.parameter import Parameter
+
 T = TypeVar("T")
 V = TypeVar("V", bound=Union[int, float])
 
@@ -149,3 +150,31 @@ def make_reproducible(seed: int):
     # Restore the random state to the original state.
     np.random.set_state(start_np_rng_state)
     random.setstate(start_random_state)
+
+
+from typing import Any, Callable, TypeVar, Type
+
+from simple_parsing.helpers.serialization import encode
+from simple_parsing.helpers.serialization.decoding import _register
+
+_DecodingFn = Callable[[Any], T]
+
+
+def register_decode(some_type: Type[T]) -> Callable[[_DecodingFn[T]], _DecodingFn[T]]:
+    """Register a decoding function for the type `some_type`."""
+
+    def wrapper(f: _DecodingFn[T]) -> _DecodingFn[T]:
+        _register(some_type, f)
+        return f
+
+    return wrapper
+
+
+@encode.register(torch.device)
+def _encode_device(v: torch.device) -> str:
+    return v.type
+
+
+@register_decode(torch.device)
+def _decode_device(v: str) -> torch.device:
+    return torch.device(v)

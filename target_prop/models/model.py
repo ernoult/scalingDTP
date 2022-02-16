@@ -2,10 +2,9 @@ from dataclasses import dataclass
 from typing import ClassVar, Dict, Optional
 import typing
 
-from simple_parsing import field
+from simple_parsing import Serializable, field
 
 from target_prop.scheduler_config import LRSchedulerConfig
-from target_prop.utils.hparams import HyperParameters
 from target_prop.networks.network import Network
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers.hparams.hparam import log_uniform
@@ -25,7 +24,7 @@ from abc import ABC
 
 class Model(Protocol):
     @dataclass
-    class HParams(HyperParameters):
+    class HParams(Serializable):
         # Where objects of this type can be parsed from in the wandb configs.
         _stored_at_key: ClassVar[str] = "net_hp"
 

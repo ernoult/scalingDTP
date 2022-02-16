@@ -1,12 +1,10 @@
 import numpy as np
-from simple_parsing.helpers.fields import choice
-from simple_parsing.helpers.hparams import log_uniform
+from simple_parsing.helpers.serialization.serializable import Serializable
+from simple_parsing.helpers.fields import choice, list_field
 import torch
-from target_prop.utils.utils import get_list_of_values
-from typing import Any, ClassVar, Dict, Type, List, Optional, Union
+from typing import Any, ClassVar, Dict, List, Optional, Type
 from dataclasses import dataclass
 from torch.optim.optimizer import Optimizer
-from target_prop.utils.hparams import HyperParameters
 from torch import nn
 import logging
 
@@ -14,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class OptimizerConfig(HyperParameters):
+class OptimizerConfig(Serializable):
     """ Configuration options for an optimizer.
     """
 
@@ -25,12 +23,12 @@ class OptimizerConfig(HyperParameters):
     }
 
     # Type of Optimizer to use.
-    type: str = choice(available_optimizers.keys(), default="sgd")
+    type: str = choice(*available_optimizers.keys(), default="sgd")
     # BUG: Little bug here, won't search over this in sweeps for now.
     # categorical("sgd", "adam"], default="adam", strict=True)
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(1e-4, 1e-1, default=5e-3)
+    lr: List[float] = list_field(4e-3)
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
 
@@ -39,7 +37,6 @@ class OptimizerConfig(HyperParameters):
     momentum: float = 0.9
 
     def __post_init__(self):
-        super().__post_init__()
         if isinstance(self.lr, np.ndarray):
             self.lr = self.lr.tolist()
 

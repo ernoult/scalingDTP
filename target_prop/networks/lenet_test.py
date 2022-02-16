@@ -13,6 +13,7 @@ from email.policy import default
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     ClassVar,
     Dict,
     Iterable,
@@ -28,7 +29,8 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from torch import Tensor
 
-
+from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -38,7 +40,6 @@ import torch
 from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
-from target_prop.utils.hparams import HyperParameters
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.callbacks import get_backprop_grads
 from target_prop.config import Config
@@ -107,12 +108,17 @@ def dtp_hparams():
 
 @pytest.fixture(scope="module")
 def config(seed: int):
-    return Config(dataset="cifar10", num_workers=0, debug=True, seed=seed)
+    return Config(debug=True, seed=seed)
 
 
 @pytest.fixture(scope="module")
-def datamodule(config: Config, dtp_hparams: DTP.HParams):
-    return config.make_datamodule(batch_size=dtp_hparams.batch_size)
+def dataset_config(seed: int):
+    return DatasetConfig(dataset="cifar10", num_workers=0)
+
+
+@pytest.fixture(scope="module")
+def datamodule(dataset_config: DatasetConfig, dtp_hparams: DTP.HParams):
+    return dataset_config.make_datamodule(batch_size=dtp_hparams.batch_size)
 
 
 @pytest.fixture(scope="module")
@@ -163,7 +169,7 @@ def network(
         hparams=LeNet.HParams(bias=True),
     )
     net.load_state_dict(initial_weights, strict=True)
-    net.to(device=config.device)
+    net.to(device=torch.device(config.device))
     x, _ = x_and_y
     _ = net(x)  # dummy forward pass just to initialize the lazy layers.
     return net
@@ -185,7 +191,7 @@ def no_bias_network(
     missing, unexpected = net.load_state_dict(initial_weights, strict=False)
     assert not missing
     assert all("bias" in param_name for param_name in unexpected)
-    net.to(device=config.device)
+    net.to(device=torch.device(config.device))
     # mark_as_invertible(net)
     x, _ = x_and_y
     _ = net(x)  # dummy forward pass just to initialize the lazy layers, if any.
@@ -194,7 +200,7 @@ def no_bias_network(
 
 @pytest.fixture(scope="function")
 def dtp_model(
-    network: LeNet, config: Config, datamodule: LightningDataModule, dtp_hparams: DTP.HParams,
+    network: LeNet, config: Config, datamodule: VisionDataModule, dtp_hparams: DTP.HParams,
 ):
     # config = Config(dataset="cifar10", num_workers=0, debug=False)
     # datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
@@ -206,10 +212,7 @@ def dtp_model(
 
 @pytest.fixture(scope="function")
 def dtp_no_bias_model(
-    no_bias_network: LeNet,
-    datamodule: LightningDataModule,
-    config: Config,
-    dtp_hparams: DTP.HParams,
+    no_bias_network: LeNet, datamodule: VisionDataModule, config: Config, dtp_hparams: DTP.HParams,
 ):
     model = DTP(datamodule=datamodule, network=no_bias_network, hparams=dtp_hparams, config=config,)
     model.to(device=config.device)
@@ -265,8 +268,8 @@ def num_iters(request):
 
 
 class TestLeNet:
-    angles_data = {}
-    distance_data = {}
+    angles_data: Dict[str, Any] = {}
+    distance_data: Dict[str, Any] = {}
 
     @pytest.mark.skip("skip for now")
     @pytest.mark.parametrize("num_iters", [5000])
@@ -292,8 +295,9 @@ class TestLeNet:
             device = torch.device("cpu")
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=False)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule = get_datamodule(
+            dataset="cifar10", batch_size=dtp_hparams.batch_size, num_workers=0
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -334,7 +338,7 @@ class TestLeNet:
 
     # @pytest.mark.skip("skip for now")
     def test_dtp_forward_updates_are_orthogonal_to_backprop_with_random_init(
-        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, seed: int
+        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, config: Config
     ):
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
@@ -342,8 +346,10 @@ class TestLeNet:
         # seed_everything(seed=seed, workers=True)
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=True)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        config = Config(debug=True)
+        datamodule = get_datamodule(
+            dataset="cifar10", batch_size=dtp_hparams.batch_size, num_workers=0
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -382,7 +388,7 @@ class TestLeNet:
 
     # @pytest.mark.skip("skip for now")
     def test_dtp_forward_updates_match_backprop_with_symmetric_init(
-        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, seed: int
+        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, config: Config
     ):
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
@@ -391,8 +397,9 @@ class TestLeNet:
         # seed_everything(seed=seed, workers=True)
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=True)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule = get_datamodule(
+            dataset="cifar10", num_workers=0, batch_size=dtp_hparams.batch_size
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -439,6 +446,7 @@ class TestLeNet:
         num_iters: List[int],
         noise: List[float],
         feedback_lrs: List[float],
+        config: Config,
     ):
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
@@ -451,8 +459,9 @@ class TestLeNet:
         # seed_everything(seed=seed, workers=True)
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=True)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule = get_datamodule(
+            dataset="cifar10", num_workers=0, batch_size=dtp_hparams.batch_size
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -528,7 +537,7 @@ class TestLeNet:
             y=y,
             network=no_bias_network,
             initial_weights=initial_weights,
-            network_hparams=no_bias_network.hparams,
+            network_hparams=no_bias_network.hparams,  # type: ignore
             backprop_gradients=backprop_grads_no_bias,
             beta=dtp_hparams.beta,
             n_pretraining_iterations=0,
@@ -553,7 +562,7 @@ class TestLeNet:
             y=y,
             network=no_bias_network,
             initial_weights=initial_weights,
-            network_hparams=no_bias_network.hparams,
+            network_hparams=no_bias_network.hparams,  # type: ignore
             backprop_gradients=backprop_grads_no_bias,
             beta=dtp_hparams.beta,
             n_pretraining_iterations=5000,
@@ -662,7 +671,7 @@ our_network_param_names_to_theirs = {
         "fc2.linear1.weight": "_layers.3._weights",
     }
 }
-their_network_param_names_to_ours = {
+their_network_param_names_to_ours: Dict[Type[Network], Dict[str, str]] = {
     model_type: {v: k for k, v in param_name_mapping.items()}
     for model_type, param_name_mapping in our_network_param_names_to_theirs.items()
 }
@@ -690,7 +699,7 @@ def meulemans(
     from meulemans_dtp import main
     from meulemans_dtp.lib import train, builders, utils
     from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
-    from meulemans_dtp.final_configs.cifar10_DDTPConv import config
+    from meulemans_dtp.final_configs.cifar10_DDTPConv import config as _config
 
     # Double-check that the network is at it's initial state.
     _initial_weights = network.state_dict()
@@ -705,7 +714,7 @@ def meulemans(
 
     parser = main.add_command_line_args()
     # NOTE: They seem to want those to be strings, and then they convert stuff back to lists.
-    config_with_strings = {k: str(v) if not isinstance(v, bool) else v for k, v in config.items()}
+    config_with_strings = {k: str(v) if not isinstance(v, bool) else v for k, v in _config.items()}
     parser.set_defaults(**config_with_strings)
     with disable_prints():
         args = parser.parse_args("")
@@ -769,7 +778,7 @@ def meulemans(
     _check_forward_params_havent_moved(
         meulemans_net=meulemans_network, initial_network_weights=initial_network_weights
     )
-
+    loss_function: nn.Module
     # Get the loss function to use (extracted from their code, was saved on train_var).
     if args.output_activation == "softmax":
         loss_function = nn.CrossEntropyLoss()

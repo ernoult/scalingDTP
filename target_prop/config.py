@@ -4,7 +4,8 @@ import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from typing import Any, Callable, ClassVar, Optional, Type
-from simple_parsing import field
+from simple_parsing.helpers import field
+from simple_parsing.helpers.serialization.serializable import Serializable
 
 import torch
 
@@ -14,8 +15,6 @@ from simple_parsing.helpers import flag
 from torch import Tensor
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from target_prop.utils.hydra_utils import LoadableFromHydra
-from target_prop.utils.wandb_utils import LoggedToWandb
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
@@ -24,10 +23,8 @@ from target_prop.datasets.dataset_config import DatasetConfig
 
 
 @dataclass
-class Config(LoadableFromHydra, LoggedToWandb):
+class Config(Serializable):
     """Configuration options for the experiment (not hyper-parameters)."""
-
-    _stored_at_key: ClassVar[str] = "config"
 
     # Random seed.
     seed: Optional[int] = 123
@@ -52,30 +49,3 @@ class Config(LoadableFromHydra, LoggedToWandb):
             self.seed += int(array_task_id)
             logger.info(f"New seed: {self.seed}")
 
-
-from typing import Any, Callable, TypeVar
-
-from simple_parsing.helpers.serialization import encode
-from simple_parsing.helpers.serialization.decoding import _register
-
-T = TypeVar("T")
-
-
-def register_decode(some_type: Type[T]):
-    """Register a decoding function for the type `some_type`."""
-
-    def wrapper(f: Callable[[Any], T]) -> Callable[[Any], T]:
-        _register(some_type, f)
-        return f
-
-    return wrapper
-
-
-@encode.register(torch.device)
-def _encode_device(v: torch.device) -> str:
-    return v.type
-
-
-@register_decode(torch.device)
-def _decode_device(v: str) -> torch.device:
-    return torch.device(v)

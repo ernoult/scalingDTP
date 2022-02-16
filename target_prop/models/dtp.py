@@ -190,7 +190,6 @@ class DTP(LightningModule, Model):
         plot_every: int = 1000
 
         def __post_init__(self):
-            super().__post_init__()
             for field in dataclasses.fields(self):
                 value = getattr(self, field.name)
                 from simple_parsing.utils import is_list
@@ -204,13 +203,13 @@ class DTP(LightningModule, Model):
         datamodule: VisionDataModule,
         network: Network,
         hparams: "DTP.HParams",
-        config: Config,
+        config: Config = None,
         network_hparams: Network.HParams = None,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
         self.net_hp = network_hparams or network.hparams
-        self.config = config
+        self.config = config or Config()
         if self.config.seed is not None:
             # NOTE: This is currently being done twice: Once in main_pl and once again here.
             seed_everything(seed=self.config.seed, workers=True)

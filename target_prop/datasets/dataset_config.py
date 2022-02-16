@@ -3,8 +3,8 @@ import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
-from typing import Callable, ClassVar, Dict, Generic, Type, TypeVar
-from simple_parsing import choice
+from typing import Callable, ClassVar, Dict, Type, TypeVar
+from simple_parsing import Serializable, choice
 
 import torch
 from pl_bolts.datamodules import (
@@ -33,27 +33,23 @@ logger = get_logger(__name__)
 
 D = TypeVar("D", bound=VisionDataModule)
 
-
-class DatasetTypes(enum.Enum):
-    """ Enum of the types of datamodules available. """
-
-
 from abc import ABC
 from typing import Optional, Union, Any
-from target_prop.utils.hydra_utils import LoadableFromHydra
-from target_prop.utils.wandb_utils import LoggedToWandb
+from simple_parsing.helpers.serialization.serializable import Serializable
+
+
+def get_datamodule(dataset: str, batch_size: int, **kwargs) -> VisionDataModule:
+    return DatasetConfig(dataset=dataset, **kwargs).make_datamodule(batch_size=batch_size)
 
 
 @dataclass
-class DatasetConfig(LoadableFromHydra, LoggedToWandb):
-    _stored_at_key: ClassVar[Optional[str]] = "dataset"
-
+class DatasetConfig(Serializable):
     available_datasets: ClassVar[Dict[str, Type[VisionDataModule]]] = {  # type: ignore
         "mnist": MNISTDataModule,
         # MNIST_noval: # TODO: Add this when we add Sean's mnist datamodule.
         "cifar10": CIFAR10DataModule,
-        # "cifar10_noval": CIFAR10NoValDataModule,
-        # "imagenet32_noval": ImageNet32NoValDataModule,
+        "cifar10_noval": CIFAR10NoValDataModule,
+        "imagenet32_noval": ImageNet32NoValDataModule,
         "imagenet": ImagenetDataModule,
         "fmnist": FashionMNISTDataModule,
     }
@@ -79,6 +75,10 @@ class DatasetConfig(LoadableFromHydra, LoggedToWandb):
     # Percentage of data to reserve for a validation set.
     val_split: float = 0.1
 
+    # When set to `True`, uses the much larger standard deviation in the normalization transform
+    # to match the legacy implementation (~3x std)
+    use_legacy_std: bool = False
+
     def make_datamodule(self, batch_size: int) -> VisionDataModule:
         datamodule_class: Type[VisionDataModule] = self.available_datasets[self.dataset]
         datamodule = datamodule_class(
@@ -88,7 +88,7 @@ class DatasetConfig(LoadableFromHydra, LoggedToWandb):
             # pin_memory=self.pin_memory,
             shuffle=self.shuffle,
             normalize=self.normalize,
-            val_split=self.val_split,
+            val_split=0.0 if self.dataset.endswith("_noval") else self.val_split,
         )
         # NOTE: The standard transforms includes ToTensor and normalization.
         # We are adding the RandomFlip and the RandomCrop.
@@ -102,7 +102,18 @@ class DatasetConfig(LoadableFromHydra, LoggedToWandb):
             assert len(default_transforms.transforms) == 2
             assert isinstance(default_transforms.transforms[0], ToTensor)
             assert isinstance(default_transforms.transforms[1], Normalize)
+            if self.use_legacy_std:
+                if not self.dataset.startswith("cifar10"):
+                    raise NotImplementedError(
+                        f"What's the 'legacy std' to use for dataset {self.dataset}?"
+                    )
+                norm: Normalize = default_transforms.transforms[1]
+                new_norm = Normalize(
+                    mean=(0.4914, 0.4822, 0.4465), std=(0.6069, 0.5982, 0.603), inplace=norm.inplace
+                )
+                default_transforms.transforms[1] = new_norm
         else:
+
             assert len(default_transforms.transforms) == 1
             assert isinstance(default_transforms.transforms[0], ToTensor)
 
@@ -116,9 +127,9 @@ class DatasetConfig(LoadableFromHydra, LoggedToWandb):
             ]
         )
 
-        datamodule.train_transforms = train_transforms
-        datamodule.val_transforms = default_transforms
-        datamodule.test_transforms = default_transforms
+        datamodule._train_transforms = train_transforms
+        datamodule._val_transforms = default_transforms
+        datamodule._test_transforms = default_transforms
 
         # NOTE: Taking these directly from the main.py for CIFAR-10. These might not be the
         # right kind of transforms to use for ImageNet.
