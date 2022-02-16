@@ -165,46 +165,30 @@ class TestDTP:
     ) -> float:
         print(f"Selected seed: {seed}")
         # Note: using 0 workers to speed up testing.
-        config = Config(
-            dataset=dataset,
-            debug=True,
-            seed=seed,
-            num_workers=0,
-            limit_train_batches=batches,
-            limit_val_batches=batches,
-            limit_test_batches=batches,
-        )
-        # trainer = Trainer(
-        #     max_epochs=1,
-        #     gpus=torch.cuda.device_count(),
-        #     fast_dev_run=True,
-        #     logger=None,
-        #     limit_train_batches=batches,
-        #     limit_val_batches=batches,
-        #     limit_test_batches=batches,
-        # )
+        dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
 
         logging.getLogger().setLevel(logging.INFO)
         logging.getLogger("target_prop").setLevel(logging.DEBUG)
-        from main_pl import run
 
-        # Create the datamodule:
-        # datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-        # NOTE: Creating the network actually changes the weights (and the RNG state)!
-        # network = network_type(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
-        # model = self.model_class(
-        #     datamodule=datamodule, hparams=hparams, config=config, network=network
-        # )
-        # trainer.fit(model, datamodule=datamodule)
-        # test_results = trainer.test(model, datamodule=datamodule)
-        # test_accuracy: float = test_results[0]["test/accuracy"]
-        test_accuracy = run(
-            config=config,
-            model_type=self.model_class,
-            hparams=hparams,
-            network_type=network_type,
-            network_hparams=network_hparams,
+        from main import run, Options
+
+        options = Options(
+            dataset=dataset_config,
+            model=hparams,
+            network=network_hparams,
+            trainer=Trainer(
+                max_epochs=1,
+                gpus=torch.cuda.device_count(),
+                fast_dev_run=True,
+                logger=None,
+                limit_train_batches=batches,
+                limit_val_batches=batches,
+                limit_test_batches=batches,
+            ),
+            debug=True,
+            seed=seed,
         )
+        test_accuracy = run(options=options)
 
         # print(f"Test accuracy: {test_accuracy:.1%}")
         return test_accuracy

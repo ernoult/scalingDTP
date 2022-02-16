@@ -27,7 +27,7 @@ setuptools.setup(
         "simple-parsing",
         "torch",
         "pytorch-lightning",
-        "pytorch-lightning-bolts",
+        "lightning-bolts",
         "tqdm",
         "wandb",
         "plotly",

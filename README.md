@@ -9,17 +9,17 @@ pip install -e .
 ## Running the code
 To run the pytorch-lightning re-implementation of DTP on CIFAR-10, use the following command:
 ```console
-python main_pl.py run dtp simple_vgg
+python main.py model=dtp dataset=cifar10
 ```
 
 To use the modified version of the above DTP model, with "parallel" feedback weight training on CIFAR-10, use the following command:
 ```console
-python main_pl.py run parallel_dtp simple_vgg
+python main.py model=parallel_dtp dataset=cifar10
 ```
 
 To run backprop baseline, do:
 ```
-python main_pl.py run backprop simple_vgg --dataset cifar10 --num_workers 8 --seed 123 --early_stopping_patience 0 --type sgd --lr 0.05 --use_scheduler true cosine
+python main.py model=backprop dataset=cifar10
 ```
 
 

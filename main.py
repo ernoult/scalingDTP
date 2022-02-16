@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 from logging import getLogger as get_logger
 from typing import Any, Dict, List, Optional, Type
 import logging
-from simple_parsing import Serializable
+from simple_parsing.helpers.serialization.serializable import Serializable
 import wandb
+from pytorch_lightning.loggers import LightningLoggerBase
 
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -39,13 +40,13 @@ class Options(Serializable):
     network: Network.HParams = field(default_factory=SimpleVGG.HParams)
 
     # Keyword arguments for the Trainer constructor.
-    trainer: Dict = field(default_factory=dict)
+    trainer: Any = field(default_factory=dict)  # type: ignore
 
     # Configs for the callbacks.
-    callbacks: Dict = field(default_factory=dict)
+    callbacks: Any = field(default_factory=dict)  # type: ignore
 
     # Config(s) for the logger(s).
-    logger: Dict = field(default_factory=dict)
+    logger: Any = field(default_factory=dict)  # type: ignore
 
     # Wether to run in debug mode or not.
     debug: bool = False
@@ -57,6 +58,49 @@ class Options(Serializable):
 
     # Name for the experiment.
     name: str = ""
+
+    def __post_init__(self):
+        actual_callbacks: Dict[str, Callback] = {}
+
+        # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
+        # fields have the right type.
+
+        # Create the callbacks
+        callbacks = self.callbacks
+        if isinstance(self.callbacks, dict):
+            for name, callback in self.callbacks.items():
+                if isinstance(callback, dict):
+                    callback = hydra.utils.instantiate(callback)
+                elif not isinstance(callback, Callback):
+                    raise ValueError(f"Invalid callback value {callback}")
+                actual_callbacks[name] = callback
+            callbacks = list(actual_callbacks.values())
+        self.callbacks: List[Callback] = callbacks
+
+        # Create the loggers, if any.
+        loggers = self.logger
+        if isinstance(self.logger, dict):
+            actual_loggers: Dict[str, LightningLoggerBase] = {}
+            for name, lightning_logger in self.logger.items():
+                if isinstance(lightning_logger, dict):
+                    lightning_logger = hydra.utils.instantiate(lightning_logger)
+                elif not isinstance(lightning_logger, LightningLoggerBase):
+                    raise ValueError(f"Invalid logger value {lightning_logger}")
+            loggers = list(actual_loggers.values())
+        self.logger: List[LightningLoggerBase] = loggers
+
+        # Create the Trainer.
+        trainer = self.trainer
+        if isinstance(self.trainer, dict):
+            if self.debug:
+                logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
+                self.trainer["max_epochs"] = 1
+            trainer = hydra.utils.instantiate(
+                self.trainer, callbacks=self.callbacks, logger=self.logger,
+            )
+        elif not isinstance(self.trainer, Trainer):
+            raise ValueError(f"Invalid Trainer value {self.trainer}")
+        self.trainer: Trainer = trainer
 
 
 cs = ConfigStore.instance()
@@ -81,26 +125,29 @@ def main(raw_options: DictConfig) -> None:
     print(os.getcwd())
     options = OmegaConf.to_object(raw_options)
     assert isinstance(options, Options)
+    run(options=options)
 
-    model_hparams: Model.HParams = options.model
-    model_type: Type[Model] = get_outer_class(type(options.model))
-    network_hparams: Network.HParams = options.network
-    network_type: Type[Network] = get_outer_class(type(options.network))
 
-    dataset: DatasetConfig = options.dataset
-
+def run(options: Options):
     if options.seed is not None:
         seed_everything(seed=options.seed, workers=True)
-    model_hparams = model_hparams
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
+    if options.debug:
+        root_logger.setLevel(logging.INFO)
+    elif options.verbose:
+        root_logger.setLevel(logging.DEBUG)
 
     # Create the datamodule:
-    datamodule = dataset.make_datamodule(batch_size=model_hparams.batch_size)
+    dataset: DatasetConfig = options.dataset
+    datamodule = dataset.make_datamodule(batch_size=options.model.batch_size)
 
     # Create the network
+    network_hparams: Network.HParams = options.network
+    network_type: Type[Network] = get_outer_class(type(options.network))
+    assert isinstance(
+        network_hparams, network_type.HParams
+    ), "HParams type should match parent type"
     network: Network = network_type(
         in_channels=datamodule.dims[0],
         n_classes=datamodule.num_classes,  # type: ignore
@@ -108,6 +155,9 @@ def main(raw_options: DictConfig) -> None:
     )
 
     # Create the model
+    model_hparams: Model.HParams = options.model
+    model_type: Type[Model] = get_outer_class(type(options.model))
+    assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
     model: Model = model_type(
         network=network,
         datamodule=datamodule,
@@ -116,29 +166,9 @@ def main(raw_options: DictConfig) -> None:
         config=Config(seed=options.seed, debug=options.debug),
     )
     assert isinstance(model, LightningModule)
+    trainer = options.trainer
 
-    # Create the callbacks
-    callbacks: List[Callback] = [
-        hydra.utils.instantiate(callback_dict) for callback_dict in options.callbacks.values()
-    ]
-    from pytorch_lightning.loggers import LightningLoggerBase
-
-    # --- Create the trainer.. ---
-    trainer_kwargs = options.trainer
-    if options.debug:
-        logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
-        trainer_kwargs["max_epochs"] = 1
-
-    # Create the logger(s):
-    loggers: List[LightningLoggerBase] = [
-        hydra.utils.instantiate(logger_dict) for logger_dict in options.logger.values()
-    ]
-
-    if options.verbose:
-        root_logger.setLevel(logging.DEBUG)
-
-    trainer: Trainer = hydra.utils.instantiate(trainer_kwargs, callbacks=callbacks, logger=loggers)
-
+    root_logger = logging.getLogger()
     # --- Run the experiment. ---
     trainer.fit(model, datamodule=datamodule)
 
@@ -149,10 +179,11 @@ def main(raw_options: DictConfig) -> None:
     print(f"Validation top1 accuracy: {top1_accuracy:.1%}")
     print(f"Validation top5 accuracy: {top5_accuracy:.1%}")
 
-    from orion.client import report_objective
+    if not options.debug:
+        from orion.client import report_objective
 
-    test_error = 1 - top1_accuracy
-    report_objective(test_error)
+        test_error = 1 - top1_accuracy
+        report_objective(test_error)
 
     if wandb.run:
         wandb.finish()
