@@ -1,9 +1,0 @@
-horizontal_flip:
-  _target_: torchvision.transforms.RandomHorizontalFlip
-  p: 0.5
-
-random_crop:
-  _target_: torchvision.transforms.RandomCrop
-  size: 28
-  padding: 4
-  padding_mode: edge
