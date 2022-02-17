@@ -32,12 +32,12 @@ class Options(Serializable):
     """
 
     # Configuration for the dataset + transforms.
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    dataset: DatasetConfig  # = field(default_factory=DatasetConfig)
 
     # The model used.
-    model: Model.HParams = field(default_factory=DTP.HParams)
+    model: Model.HParams  # = field(default_factory=Model.HParams)
     # The network to be used.
-    network: Network.HParams = field(default_factory=SimpleVGG.HParams)
+    network: Network.HParams  # = field(default_factory=SimpleVGG.HParams)
 
     # Keyword arguments for the Trainer constructor.
     trainer: Any = field(default_factory=dict)  # type: ignore
@@ -106,10 +106,12 @@ class Options(Serializable):
 cs = ConfigStore.instance()
 cs.store(name="base_options", node=Options)
 
+cs.store(group="model", name="model", node=Model.HParams())
 cs.store(group="model", name="dtp", node=DTP.HParams())
 cs.store(group="model", name="parallel_dtp", node=ParallelDTP.HParams())
 cs.store(group="model", name="vanilla_dtp", node=VanillaDTP.HParams())
 cs.store(group="model", name="target_prop", node=TargetProp.HParams())
+cs.store(group="model", name="backprop", node=BaselineModel.HParams())
 
 cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
 cs.store(group="network", name="lenet", node=LeNet.HParams())

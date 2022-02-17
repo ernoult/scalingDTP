@@ -63,14 +63,14 @@ class BaselineModel(LightningModule, Model):
         datamodule: VisionDataModule,
         network: Network,
         hparams: HParams,
-        config: Config,
-        network_hparams: Network.HParams,
+        config: Config = None,
+        network_hparams: Network.HParams = None,
     ):
         super().__init__()
         # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp: BaselineModel.HParams = hparams
-        self.net_hp = network_hparams
-        self.config = config
+        self.net_hp = network_hparams or network.hparams
+        self.config = config or Config()
         if self.config.seed is not None:
             seed_everything(seed=self.config.seed, workers=True)
 
