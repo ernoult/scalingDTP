@@ -136,7 +136,6 @@ class TestDTP:
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
         """ Tests that when `run` is passed different seeds, the results are different.
-        TODO: Sometimes fails (e.g. when seed=456), whereby the results are the same for both runs. 
         """
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
@@ -150,7 +149,7 @@ class TestDTP:
             network_type=network_type,
             network_hparams=network_type.HParams(),
             hparams=debug_hparams,
-            seed=seed + 1,
+            seed=seed + 456,
         )
         assert perf_1 != perf_2
 

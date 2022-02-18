@@ -12,9 +12,6 @@ from target_prop.models.model import Model
 from target_prop.networks.simple_vgg import SimpleVGG
 
 
-# 1. initialize will add config_path the config search path within the context
-# 2. The module with your configs should be importable. it needs to have a __init__.py (can be empty).
-# 3. The config path is relative to the file calling initialize (this file)
 def test_defaults() -> None:
     with initialize(config_path="conf"):
         # config is relative to a module
@@ -27,6 +24,7 @@ def test_defaults() -> None:
 
 
 from target_prop.models import DTP, ParallelDTP, VanillaDTP, TargetProp, BaselineModel
+from dataclasses import replace
 
 
 @pytest.mark.parametrize(
@@ -37,9 +35,13 @@ from target_prop.models import DTP, ParallelDTP, VanillaDTP, TargetProp, Baselin
         (["model=target_prop"], TargetProp.HParams()),
         (["model=vanilla_dtp"], VanillaDTP.HParams()),
         (["model=backprop"], BaselineModel.HParams()),
+        (
+            ["model=dtp", "model.b_optim.lr=[123,456]"],
+            DTP.HParams(b_optim=replace(DTP.HParams().b_optim, lr=[123, 456])),
+        ),
     ],
 )
-def test_user_logic(overrides: List[str], expected: Model.HParams) -> None:
+def test_setting_model(overrides: List[str], expected: Model.HParams) -> None:
     with initialize_config_module(config_module="conf"):
         config = compose(config_name="config", overrides=overrides)
         options = OmegaConf.to_object(config)
