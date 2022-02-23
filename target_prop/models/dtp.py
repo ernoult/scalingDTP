@@ -11,7 +11,7 @@ from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, field, list_field
-from simple_parsing.helpers.hparams.hparam import log_uniform, uniform
+from simple_parsing.helpers.hparams.hparam import uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -52,7 +52,7 @@ class ForwardOptimizerConfig(OptimizerConfig):
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
 
     # Learning rate of the optimizer.
-    lr: float = log_uniform(1e-4, 1e-1, default=0.05)
+    lr: float = 0.05
 
     # Weight decay coefficient.
     weight_decay: Optional[float] = 1e-4
@@ -74,13 +74,7 @@ class FeedbackOptimizerConfig(OptimizerConfig):
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
 
     # Learning rate of the optimizer.
-    lr: List[float] = log_uniform(
-        1e-4, 1e-1, default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy, shape=5
-    )
-
-    # Learning rate of the optimizer.
-    # NOTE: IF we want to tune a single learning rate:
-    # lr: float = log_uniform(1e-4, 1e-1, default=1e-3)
+    lr: List[float] = field(default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy)
 
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
@@ -132,7 +126,7 @@ class DTP(LightningModule, Model):
         use_scheduler: bool = True
 
         # batch size
-        batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
+        batch_size: int = 128
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.

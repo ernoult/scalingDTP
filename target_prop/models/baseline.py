@@ -15,7 +15,6 @@ from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field, subparsers
-from simple_parsing.helpers.hparams import log_uniform
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
 from target_prop.models.dtp import ForwardOptimizerConfig
@@ -52,7 +51,7 @@ class BaselineModel(LightningModule, Model):
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(type="sgd", lr=0.05)
 
         # batch size
-        batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
+        batch_size: int = 128
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped.

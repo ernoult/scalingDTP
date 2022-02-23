@@ -11,7 +11,6 @@ from pytorch_lightning.loggers import WandbLogger
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.fields import choice
 from simple_parsing.helpers.hparams import uniform
-from simple_parsing.helpers.hparams.hparam import log_uniform
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all
@@ -39,10 +38,10 @@ class ForwardOptimizerConfig(_ForwardOptimizerConfig):
     type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
 
     # Learning rate of the optimizer.
-    lr: float = log_uniform(1e-6, 1e-1, default=4e-3)
+    lr: float = 4e-3
 
     # Weight decay coefficient.
-    weight_decay: Optional[float] = log_uniform(1e-9, 1e-3, default=1e-4)
+    weight_decay: Optional[float] = 1e-4
 
 
 @dataclass
@@ -52,10 +51,10 @@ class FeedbackOptimizerConfig(_FeedbackOptimizerConfig):
     # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
 
     # Learning rate of the optimizer.
-    lr: List[float] = log_uniform(1e-6, 1e-1, default_factory=[4e-3].copy)
+    lr: List[float] = field(default_factory=[4e-3].copy)
 
     # Weight decay coefficient.
-    weight_decay: Optional[float] = log_uniform(1e-9, 1e-3, default=1e-4)
+    weight_decay: Optional[float] = 1e-4
 
 
 class ParallelDTP(DTP):

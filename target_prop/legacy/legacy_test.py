@@ -11,7 +11,6 @@ from torch.utils.data import DataLoader
 from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams import log_uniform, uniform
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config

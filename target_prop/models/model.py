@@ -7,7 +7,6 @@ from simple_parsing import Serializable, field
 from target_prop.scheduler_config import LRSchedulerConfig
 from target_prop.networks.network import Network
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from simple_parsing.helpers.hparams.hparam import log_uniform
 
 
 if typing.TYPE_CHECKING:
@@ -32,7 +31,7 @@ class Model(Protocol):
         lr_scheduler: Optional[LRSchedulerConfig] = None
 
         # batch size
-        batch_size: int = log_uniform(16, 512, default=128, base=2, discrete=True)
+        batch_size: int = 128
 
     hp: "Model.HParams"
     net_hp: Network.HParams
