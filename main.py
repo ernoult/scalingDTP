@@ -198,16 +198,16 @@ class Experiment(Serializable):
         print(f"Validation top1 accuracy: {top1_accuracy:.1%}")
         print(f"Validation top5 accuracy: {top5_accuracy:.1%}")
 
+        val_error = 1 - top1_accuracy
         if not self.options.debug:
             from orion.client import report_objective
 
-            test_error = 1 - top1_accuracy
-            report_objective(test_error)
+            report_objective(val_error)
 
         if wandb.run:
             wandb.finish()
 
-        return top1_accuracy
+        return val_error
         # TODO: Enable this later.
         # Run on the test set:
         # test_results = trainer.test(model, datamodule=datamodule, verbose=True)
@@ -228,33 +228,11 @@ def run(options: Options):
         root_logger.setLevel(logging.DEBUG)
 
     root_logger = logging.getLogger()
+
+    experiment = Experiment(options=options)
+
     # --- Run the experiment. ---
-    trainer.fit(model, datamodule=datamodule)
-
-    val_results = trainer.validate(model=model, datamodule=datamodule)
-    assert len(val_results) == 1
-    top1_accuracy: float = val_results[0]["val/accuracy"]
-    top5_accuracy: float = val_results[0]["val/top5_accuracy"]
-    print(f"Validation top1 accuracy: {top1_accuracy:.1%}")
-    print(f"Validation top5 accuracy: {top5_accuracy:.1%}")
-
-    if not options.debug:
-        from orion.client import report_objective
-
-        test_error = 1 - top1_accuracy
-        report_objective(test_error)
-
-    if wandb.run:
-        wandb.finish()
-
-    return top1_accuracy
-    # TODO: Enable this later.
-    # Run on the test set:
-    # test_results = trainer.test(model, datamodule=datamodule, verbose=True)
-    # top1_accuracy: float = test_results[0]["test/accuracy"]
-    # top5_accuracy: float = test_results[0]["test/top5_accuracy"]
-    # print(f"Test top1 accuracy: {top1_accuracy:.1%}")
-    # print(f"Test top5 accuracy: {top5_accuracy:.1%}")
+    return experiment.run()
 
 
 if __name__ == "__main__":
