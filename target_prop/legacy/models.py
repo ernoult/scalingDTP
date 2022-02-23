@@ -64,12 +64,12 @@ class layer_fc(nn.Module):
         F = self.f.weight
         G = self.b.weight.t()
 
-        dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
+        dist = torch.sqrt(((F - G) ** 2).sum() / (F**2).sum())
 
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
         cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
-            ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
+            ((F_flat**2).sum(1)) * ((G_flat**2).sum(1))
         )
         angle = (180.0 / np.pi) * (torch.acos(cos_angle).mean().item())
 
@@ -102,7 +102,7 @@ class layer_fc(nn.Module):
             # 4- Compute the loss
             loss_b = (
                 -2 * (noise * dr).view(dr.size(0), -1).sum(1).mean()
-                + (dr_y ** 2).view(dr_y.size(0), -1).sum(1).mean()
+                + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean()
             )
 
             # 5- Update the feedback weights
@@ -215,12 +215,12 @@ class layer_convpool(nn.Module):
 
         F = self.f.weight
         G = self.b.weight
-        dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
+        dist = torch.sqrt(((F - G) ** 2).sum() / (F**2).sum())
 
         F_flat = torch.reshape(F, (F.size(0), -1))
         G_flat = torch.reshape(G, (G.size(0), -1))
         cos_angle = ((F_flat * G_flat).sum(1)) / torch.sqrt(
-            ((F_flat ** 2).sum(1)) * ((G_flat ** 2).sum(1))
+            ((F_flat**2).sum(1)) * ((G_flat**2).sum(1))
         )
         angle = (180.0 / np.pi) * (torch.acos(cos_angle).mean().item())
 
@@ -254,7 +254,7 @@ class layer_convpool(nn.Module):
             # 4- Compute the loss
             loss_b = (
                 -2 * (noise * dr).view(dr.size(0), -1).sum(1).mean()
-                + (dr_y ** 2).view(dr_y.size(0), -1).sum(1).mean()
+                + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean()
             )
 
             # 5- Update the weights
@@ -325,7 +325,7 @@ class VGG(nn.Module):
             size = int(np.floor(size / 2))
 
         # Build the last (fully connected) autoencoder
-        layers.append(layer_fc((size ** 2) * args.C[-1], 10, args.iter[-1], args.noise[-1]))
+        layers.append(layer_fc((size**2) * args.C[-1], 10, args.iter[-1], args.noise[-1]))
 
         self.layers = layers
         self.logsoft = nn.LogSoftmax(dim=1)

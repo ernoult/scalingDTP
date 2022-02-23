@@ -1,7 +1,6 @@
 from functools import singledispatch
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 
-import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.linalg import norm
@@ -30,7 +29,7 @@ def _compute_dist_angle_between_weights(
     F = forward_weight
     G = feedback_weight
     # Compute distance
-    dist = torch.sqrt(((F - G) ** 2).sum() / (F ** 2).sum())
+    dist = torch.sqrt(((F - G) ** 2).sum() / (F**2).sum())
 
     # Compute angle
     eps = 1e-8  # Small value to avoid division by zero

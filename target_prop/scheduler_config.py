@@ -1,5 +1,4 @@
 from abc import abstractmethod
-from typing import Any
 from simple_parsing import Serializable
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, _LRScheduler
 from dataclasses import dataclass
@@ -32,4 +31,3 @@ class CosineAnnealingLRConfig(LRSchedulerConfig):
 
     def make_scheduler(self, optimizer: Optimizer) -> CosineAnnealingLR:
         return CosineAnnealingLR(optimizer, T_max=self.T_max, eta_min=self.eta_min)
-

@@ -1,9 +1,7 @@
 # ADAPTED FROM https://github.com/facebookresearch/hydra/blob/main/examples/advanced/hydra_app_example/tests/test_example.py
-from typing import Iterable, List, Type, TypeVar, Union
+from typing import List
 from omegaconf import OmegaConf
 import pytest
-from simple_parsing.helpers.serialization.serializable import Serializable
-import yaml
 
 from main import Experiment, Options
 from hydra import compose, initialize, initialize_config_module

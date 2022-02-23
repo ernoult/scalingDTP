@@ -3,4 +3,3 @@ from .simple_vgg import SimpleVGGHparams, simple_vgg, SimpleVGG
 from .lenet import LeNet
 from .network import Network
 from typing import Union
-

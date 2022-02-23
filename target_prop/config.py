@@ -3,8 +3,7 @@
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
-from typing import Any, Callable, ClassVar, Optional, Type
-from simple_parsing.helpers import field
+from typing import Callable, Optional
 from simple_parsing.helpers.serialization.serializable import Serializable
 
 import torch
@@ -14,17 +13,14 @@ import torch
 from simple_parsing.helpers import flag
 from torch import Tensor
 
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
 
-from target_prop.datasets.dataset_config import DatasetConfig
-
 
 @dataclass
 class Config(Serializable):
-    """Configuration options for the experiment (not hyper-parameters)."""
+    """Miscelaneous configuration options for the experiment (not hyper-parameters)."""
 
     # Random seed.
     seed: Optional[int] = 123
@@ -48,4 +44,3 @@ class Config(Serializable):
             )
             self.seed += int(array_task_id)
             logger.info(f"New seed: {self.seed}")
-

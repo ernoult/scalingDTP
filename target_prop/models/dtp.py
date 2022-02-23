@@ -176,11 +176,15 @@ class DTP(LightningModule, Model):
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
-            self.hp.feedback_training_iterations, default=0, inputs_are_forward_ordered=True,
+            self.hp.feedback_training_iterations,
+            default=0,
+            inputs_are_forward_ordered=True,
         )
         # The noise scale for each feedback layer.
         self.feedback_noise_scales = self._align_values_with_backward_net(
-            self.hp.noise, default=0.0, inputs_are_forward_ordered=True,
+            self.hp.noise,
+            default=0.0,
+            inputs_are_forward_ordered=True,
         )
         # The learning rate for each feedback layer.
         lrs_per_layer = self.hp.b_optim.lr
@@ -282,14 +286,20 @@ class DTP(LightningModule, Model):
         r = self.backward_net(y)
         return y, r
 
-    def training_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int,) -> float:  # type: ignore
+    def training_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+    ) -> float:  # type: ignore
         result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
         if not self.automatic_optimization:
             return None
         return result
 
     def validation_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
     ) -> float:  # type: ignore
         return self.shared_step(batch, batch_idx=batch_idx, phase="val")
 
@@ -297,7 +307,10 @@ class DTP(LightningModule, Model):
         return self.shared_step(batch, batch_idx=batch_idx, phase="test")
 
     def shared_step(
-        self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
     ):
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
@@ -536,7 +549,9 @@ class DTP(LightningModule, Model):
         ## --------
         step_outputs: Dict[str, Union[Tensor, Any]] = {}
         ys: List[Tensor] = forward_all(
-            self.forward_net, x, allow_grads_between_layers=False,
+            self.forward_net,
+            x,
+            allow_grads_between_layers=False,
         )
         logits = ys[-1]
         labels = y

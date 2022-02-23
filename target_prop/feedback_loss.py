@@ -69,7 +69,7 @@ def get_feedback_loss(
             # (-2*(noise*dr).view(dr.size(0), -1).sum(1).mean()
             #  + (dr_y**2).view(dr_y.size(0), -1).sum(1).mean())
             dr_loss = -2 * (dx * dr).flatten(1).sum(1).mean()
-            dy_loss = (dr_y ** 2).flatten(1).sum(1).mean()
+            dy_loss = (dr_y**2).flatten(1).sum(1).mean()
 
             # print(dr_loss.item(), dy_loss.item())
 
@@ -143,7 +143,7 @@ def get_feedback_loss_parallel(
     # batch_dr_loss = -2 * (batch_dx * batch_dr).flatten(1).sum(1).mean()
     # batch_dy_loss = (batch_dr_y ** 2).flatten(1).sum(1).mean()
     batch_dr_loss = -2 * (batch_dx * batch_dr).flatten(1).sum(1)
-    batch_dy_loss = (batch_dr_y ** 2).flatten(1).sum(1)
+    batch_dy_loss = (batch_dr_y**2).flatten(1).sum(1)
     batch_sample_loss = batch_dr_loss + batch_dy_loss  # [B*N]
 
     # NOTE: Reshaping tensors here so that the indices match those from the original batch, i.e. the

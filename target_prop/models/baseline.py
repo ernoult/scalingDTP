@@ -113,7 +113,12 @@ class BaselineModel(LightningModule, Model):
         logits = self.forward_net(input)
         return logits
 
-    def shared_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int, phase: str,) -> Tensor:
+    def shared_step(
+        self,
+        batch: Tuple[Tensor, Tensor],
+        batch_idx: int,
+        phase: str,
+    ) -> Tensor:
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
         # Setting this value just so we don't have to pass `phase=...` to `forward_loss`

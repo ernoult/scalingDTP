@@ -33,7 +33,7 @@ class TestDTP:
     @pytest.fixture(params=networks, name="network_type")
     @classmethod
     def network_type(cls, request):
-        """ Fixture that yields each type of network. """
+        """Fixture that yields each type of network."""
         net_type = request.param
         yield net_type
 
@@ -54,7 +54,7 @@ class TestDTP:
     def test_fast_dev_run(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams
     ):
-        """ Run a fast dev run using a single batch of data for training/validation/testing. """
+        """Run a fast dev run using a single batch of data for training/validation/testing."""
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
         # all made for Cifar10 (e.g. hard-set to 5 layers). This would make the test uglier, as we'd
         # have to pass different values for each dataset.
@@ -88,7 +88,9 @@ class TestDTP:
 
         # Create the network
         network: nn.Sequential = network_type(
-            in_channels=datamodule.dims[0], n_classes=datamodule.num_classes, hparams=None,
+            in_channels=datamodule.dims[0],
+            n_classes=datamodule.num_classes,
+            hparams=None,
         )
         assert isinstance(debug_hparams, self.model_class.HParams)
         model = self.model_class(
@@ -111,7 +113,7 @@ class TestDTP:
     def test_run_is_reproducible_given_seed(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
-        """ Checks that `run` produces the same result when passed the same args and seed. """
+        """Checks that `run` produces the same result when passed the same args and seed."""
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
@@ -138,8 +140,7 @@ class TestDTP:
     def test_seed_has_impact(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
-        """ Tests that when `run` is passed different seeds, the results are different.
-        """
+        """Tests that when `run` is passed different seeds, the results are different."""
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
@@ -197,7 +198,11 @@ class TestDTP:
 
 
 def get_forward_weight_losses(
-    forward_net: nn.Sequential, feedback_net: nn.Sequential, x: Tensor, y: Tensor, beta: float,
+    forward_net: nn.Sequential,
+    feedback_net: nn.Sequential,
+    x: Tensor,
+    y: Tensor,
+    beta: float,
 ) -> List[Tensor]:
     # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
     ## --------
@@ -205,7 +210,9 @@ def get_forward_weight_losses(
     ## --------
 
     ys: List[Tensor] = forward_all(
-        forward_net, x, allow_grads_between_layers=False,
+        forward_net,
+        x,
+        allow_grads_between_layers=False,
     )
     logits = ys[-1]
     labels = y

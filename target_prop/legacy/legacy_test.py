@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, replace

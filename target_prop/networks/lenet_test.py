@@ -35,21 +35,23 @@ from target_prop.callbacks import get_backprop_grads
 from target_prop.config import Config
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
-from target_prop.models.dtp import FeedbackOptimizerConfig, ForwardOptimizerConfig
 from target_prop.networks import LeNet
+from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils.utils import (
     is_trainable,
     named_trainable_parameters,
 )
 import sys
+
 pytestmark = pytest.mark.skipif("-vv" not in sys.argv, reason="These tests take a while to run.")
+
 
 @pytest.fixture(scope="module", params=[123, 124, 125, 126, 127])
 def seed(request):
-    """ Fixture that seeds all the randomness, and provides the random seed used. 
-    
+    """Fixture that seeds all the randomness, and provides the random seed used.
+
     When another fixture uses this one, it is also re-run for every seed here, and has its
-    randomness seeded. 
+    randomness seeded.
 
     Starting from this fixture, a "graph" of fixtures is created, where every node that follows is
     using the same seed as its parent, etc.
@@ -66,7 +68,7 @@ def count_parameters(model):
 
 @pytest.fixture(scope="module", params=[[0.2, 0.2, 0.1]])
 def noise(request):
-    """ NOTE: Creating a fixture for this so that all tests get the values. """
+    """NOTE: Creating a fixture for this so that all tests get the values."""
     # NOTE: layer order: [first, ..., last]
     return request.param
 
@@ -79,7 +81,7 @@ def feedback_lrs(request):
 
 @pytest.fixture(scope="module")
 def dtp_hparams():
-    """Fixture that returns the hyper-parameters of L-DRL algo (DTP) """
+    """Fixture that returns the hyper-parameters of L-DRL algo (DTP)"""
     return DTP.HParams(
         feedback_training_iterations=[41, 51, 24],
         batch_size=256,
@@ -113,7 +115,7 @@ def datamodule(dataset_config: DatasetConfig, dtp_hparams: DTP.HParams):
 
 @pytest.fixture(scope="module")
 def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
-    """ Yields a batch of data, for the given seed. """
+    """Yields a batch of data, for the given seed."""
     # Setup CIFAR10 datamodule
     datamodule.prepare_data()
     datamodule.setup(stage="fit")
@@ -131,7 +133,7 @@ def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
 
 @pytest.fixture(scope="module")
 def initial_weights(seed: int, datamodule: LightningDataModule, x_and_y: Tuple[Tensor, Tensor]):
-    """ Module-wide fixture that gives initial weights for a given seed. """
+    """Module-wide fixture that gives initial weights for a given seed."""
     net = LeNet(
         in_channels=datamodule.dims[0],
         n_classes=datamodule.num_classes,  # type: ignore
@@ -190,7 +192,10 @@ def no_bias_network(
 
 @pytest.fixture(scope="function")
 def dtp_model(
-    network: LeNet, config: Config, datamodule: VisionDataModule, dtp_hparams: DTP.HParams,
+    network: LeNet,
+    config: Config,
+    datamodule: VisionDataModule,
+    dtp_hparams: DTP.HParams,
 ):
     # config = Config(dataset="cifar10", num_workers=0, debug=False)
     # datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
@@ -202,9 +207,17 @@ def dtp_model(
 
 @pytest.fixture(scope="function")
 def dtp_no_bias_model(
-    no_bias_network: LeNet, datamodule: VisionDataModule, config: Config, dtp_hparams: DTP.HParams,
+    no_bias_network: LeNet,
+    datamodule: VisionDataModule,
+    config: Config,
+    dtp_hparams: DTP.HParams,
 ):
-    model = DTP(datamodule=datamodule, network=no_bias_network, hparams=dtp_hparams, config=config,)
+    model = DTP(
+        datamodule=datamodule,
+        network=no_bias_network,
+        hparams=dtp_hparams,
+        config=config,
+    )
     model.to(device=config.device)
     return model
 
@@ -215,7 +228,7 @@ def backprop_grads(
     datamodule: LightningDataModule,
     initial_weights: OrderedDict[str, Tensor],
 ):
-    """ Returns the backprop gradients for a given network (for a given seed). """
+    """Returns the backprop gradients for a given network (for a given seed)."""
     # NOTE: We want to compute these backprop gradients only once per seed and reuse them in all
     # tests. Therefore, we need to create a network here that is used only for those.
     x, y = x_and_y
@@ -237,7 +250,7 @@ def backprop_grads_no_bias(
     datamodule: LightningDataModule,
     initial_weights: OrderedDict[str, Tensor],
 ):
-    """ Returns the backprop gradients for a given network without biases (for a given seed). """
+    """Returns the backprop gradients for a given network without biases (for a given seed)."""
     # NOTE: We want to compute these backprop gradients only once per seed and reuse them in all
     # tests. Therefore, we need to create a network here that is used only for those.
     x, y = x_and_y
@@ -274,7 +287,7 @@ class TestLeNet:
         lr: float,
         seed: int,
     ):
-        """ Figure 4.2 """
+        """Figure 4.2"""
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
         # Fix seed
@@ -581,7 +594,9 @@ class TestLeNet:
         print("data:")
         print(df)
         df.to_csv(
-            os.path.join(path, "data.csv"), encoding="utf-8", index=False,
+            os.path.join(path, "data.csv"),
+            encoding="utf-8",
+            index=False,
         )
 
         # Save figure
@@ -644,6 +659,7 @@ def disable_prints():
 
 
 import typing
+
 # from meulemans_dtp.main import Args
 from target_prop.networks import Network
 
@@ -677,7 +693,7 @@ def meulemans(
     n_pretraining_iterations: int,
     seed: int,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """ Minimal script to get the data of Figure 4.3 for Meuleman's DTP.
+    """Minimal script to get the data of Figure 4.3 for Meuleman's DTP.
 
     This is to be added in the test file of `lenet_test.py`.
     """
@@ -746,7 +762,8 @@ def meulemans(
         meulemans_net=meulemans_network, x=x, y=y
     )
     _check_bp_grads_are_identical(
-        our_backprop_grads=backprop_gradients, meulemans_backprop_grads=meulemans_backprop_grads,
+        our_backprop_grads=backprop_gradients,
+        meulemans_backprop_grads=meulemans_backprop_grads,
     )
 
     # Q: the lrs have to be the same between the different models?
@@ -820,9 +837,11 @@ def meulemans(
 
 
 def get_meulemans_backprop_grads(
-    meulemans_net: DDTPConvNetworkCIFAR, x: Tensor, y: Tensor,
+    meulemans_net: DDTPConvNetworkCIFAR,
+    x: Tensor,
+    y: Tensor,
 ) -> Dict[str, Tensor]:
-    """ Returns the backprop gradients for the meulemans network. """
+    """Returns the backprop gradients for the meulemans network."""
     # NOTE: Need to unfreeze the forward parameters of their network, since they apprear to be fixed
 
     meulemans_net_forward_params = _get_forward_parameters(meulemans_net)
@@ -839,7 +858,7 @@ def get_meulemans_backprop_grads(
 
 
 def translate(dtp_values: Dict[str, T]) -> "OrderedDict[str, T]":
-    """ Translate our network param names to theirs. """
+    """Translate our network param names to theirs."""
     return OrderedDict(
         [(our_network_param_names_to_theirs[LeNet][k], v) for k, v in dtp_values.items()]
     )
@@ -848,7 +867,7 @@ def translate(dtp_values: Dict[str, T]) -> "OrderedDict[str, T]":
 def translate_back(
     meulemans_values: Dict[str, T], network_type: Type[Network] = LeNet
 ) -> Dict[str, T]:
-    """ Translate thir network param names back to ours. """
+    """Translate thir network param names back to ours."""
     return {
         their_network_param_names_to_ours[network_type][k]: v for k, v in meulemans_values.items()
     }
@@ -942,7 +961,8 @@ def _check_outputs_are_identical(
 
 
 def _check_bp_grads_are_identical(
-    our_backprop_grads: Dict[str, Tensor], meulemans_backprop_grads: Dict[str, Tensor],
+    our_backprop_grads: Dict[str, Tensor],
+    meulemans_backprop_grads: Dict[str, Tensor],
 ):
     # Compares our BP gradients and theirs: they should be identical.
     # If not, then there's probably a difference between our network and theirs (e.g. activation).

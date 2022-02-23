@@ -156,7 +156,7 @@ def vanilla_DTP_feedback_loss(
 
             # Distance between `r` and the reconstructed `r`.
             dr = x_noise - x_r_noise
-            loss = (dr ** 2).flatten(1).sum(1).mean()
+            loss = (dr**2).flatten(1).sum(1).mean()
             # NOTE: Should be equivalent to this, but I don't trust it anymore:
             # loss = F.mse_loss(x_noise, x_r_noise, reduction="none")
             noise_sample_losses.append(loss)
@@ -214,7 +214,7 @@ def vanilla_DTP_feedback_loss_parallel(
 
     # TODO: Should we take an average or a sum over the samples dimension?
     dr = batch_xr_noise - batch_x
-    loss = (dr ** 2).flatten(1).sum(1).mean()
+    loss = (dr**2).flatten(1).sum(1).mean()
     # NOTE: Should be equivalent to this, but I don't trust it anymore:
     # loss = F.mse_loss(batch_x_noise, batch_xr_noise)
     return loss
