@@ -1,7 +1,9 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import os, sys
+import os
 import pickle
+import sys
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 
 

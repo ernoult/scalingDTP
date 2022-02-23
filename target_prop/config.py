@@ -4,15 +4,14 @@ import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from typing import Callable, Optional
-from simple_parsing.helpers.serialization.serializable import Serializable
 
 import torch
 
 # from pl_bolts.datamodules import ImageNet32DataModule
 # from pl_bolts.datamodules.imagenet_datamodule import imagenet32_normalization
 from simple_parsing.helpers import flag
+from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor
-
 
 logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]

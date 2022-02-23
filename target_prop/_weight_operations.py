@@ -3,8 +3,9 @@
 TODO: Not 100% sure I understand what this does
 """
 from functools import singledispatch
-from torch import nn, Tensor
+
 import torch
+from torch import Tensor, nn
 
 
 @singledispatch

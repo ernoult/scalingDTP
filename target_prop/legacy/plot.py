@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
 import plotly.express as px
+import seaborn as sns
 
 # Read data
 data_path = "./data/data.csv"

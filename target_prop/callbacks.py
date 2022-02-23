@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 import contextlib
 import warnings
 from logging import getLogger as get_logger
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer

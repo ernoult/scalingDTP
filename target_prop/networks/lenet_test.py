@@ -6,42 +6,31 @@ pytest target_prop/networks/lenet_test.py -s
 """
 
 import os
+import sys
 from collections import defaultdict
-from typing import (
-    Any,
-    Dict,
-    List,
-    Tuple,
-    Type,
-)
-from typing import OrderedDict
-from torch import Tensor
+from typing import Any, Dict, List, OrderedDict, Tuple, Type
 
-from torch.utils.data import DataLoader
-from torch import Tensor
-
-from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
 import seaborn as sns
 import torch
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.seed import seed_everything
+from torch import Tensor
+from torch.utils.data import DataLoader
+
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.callbacks import get_backprop_grads
 from target_prop.config import Config
+from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.networks import LeNet
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.utils.utils import (
-    is_trainable,
-    named_trainable_parameters,
-)
-import sys
+from target_prop.utils.utils import is_trainable, named_trainable_parameters
 
 pytestmark = pytest.mark.skipif("-vv" not in sys.argv, reason="These tests take a while to run.")
 
@@ -639,15 +628,16 @@ class TestLeNet:
         dtp_model._feedback_optimizers = feedback_optimizers
 
 
-from torch import Tensor
-from target_prop.networks.lenet import LeNet
-from typing import Dict, Tuple, TypeVar
 import contextlib
 import io
-from torch import nn
-from torch.nn import functional as F
 from collections import OrderedDict
+from typing import Dict, Tuple, TypeVar
+
+from torch import Tensor, nn
+from torch.nn import functional as F
+
 from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
+from target_prop.networks.lenet import LeNet
 
 T = TypeVar("T")
 
@@ -701,9 +691,9 @@ def meulemans(
     y = y.cuda()
 
     from meulemans_dtp import main
-    from meulemans_dtp.lib import train, builders, utils
-    from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
     from meulemans_dtp.final_configs.cifar10_DDTPConv import config as _config
+    from meulemans_dtp.lib import builders, train, utils
+    from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
 
     # Double-check that the network is at it's initial state.
     _initial_weights = network.state_dict()

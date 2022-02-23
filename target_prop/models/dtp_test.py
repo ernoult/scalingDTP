@@ -1,13 +1,16 @@
-from dataclasses import dataclass
 import dataclasses
 import logging
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Type
 
 import pytest
 import torch
 from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
+from torch import Tensor, nn
+from torch.nn import functional as F
+
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
@@ -20,8 +23,6 @@ from target_prop.networks.lenet import LeNet
 from target_prop.networks.resnet import ResNet18, ResNet34
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils.utils import named_trainable_parameters
-from torch import Tensor, nn
-from torch.nn import functional as F
 
 networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
 
@@ -173,7 +174,7 @@ class TestDTP:
         logging.getLogger().setLevel(logging.INFO)
         logging.getLogger("target_prop").setLevel(logging.DEBUG)
 
-        from main import run, Options
+        from main import Options, run
 
         options = Options(
             dataset=dataset_config,

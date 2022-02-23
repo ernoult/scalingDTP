@@ -1,13 +1,12 @@
 """ Pytorch Lightning image classifier. Uses regular backprop.
 """
 # from __future__ import annotations
+import functools
 from abc import ABC
 from collections import OrderedDict
 from dataclasses import dataclass
-import functools
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
-from simple_parsing import field
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -15,18 +14,20 @@ from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
+from simple_parsing import field
 from simple_parsing.helpers import choice, list_field, subparsers
-from target_prop.config import Config
-from target_prop.layers import MaxPool2d, Reshape
-from target_prop.models.model import Model
-from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig, StepLRConfig
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification import Accuracy
+
+from target_prop.config import Config
+from target_prop.layers import MaxPool2d, Reshape
+from target_prop.models.model import Model
 from target_prop.networks import Network
+from target_prop.optimizer_config import OptimizerConfig
+from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig, StepLRConfig
 
 T = TypeVar("T")
 logger = getLogger(__name__)

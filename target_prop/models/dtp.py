@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
 import numpy as np
 import torch
+import wandb
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
@@ -17,10 +19,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 from torchmetrics.classification.accuracy import Accuracy
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 
-
-import wandb
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import invert, mark_as_invertible
 from target_prop.callbacks import CompareToBackpropCallback

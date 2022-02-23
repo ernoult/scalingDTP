@@ -1,7 +1,8 @@
-from .vanilla_dtp_test import TestVanillaDTP as VanillaDTPTests
-from .tp import TargetProp, VanillaDTP
+from typing import ClassVar, Type
+
 from .dtp import DTP
-from typing import Type, ClassVar
+from .tp import TargetProp, VanillaDTP
+from .vanilla_dtp_test import TestVanillaDTP as VanillaDTPTests
 
 
 class TestTargetProp(VanillaDTPTests):

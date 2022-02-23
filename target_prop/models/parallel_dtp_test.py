@@ -1,12 +1,13 @@
 from typing import ClassVar, Type
 
+import pytest
+
 from target_prop.networks.network import Network
 from target_prop.networks.resnet import ResNet
 
-from .parallel_dtp import ParallelDTP
-from .dtp_test import TestDTP as DTPTests
 from .dtp import DTP
-import pytest
+from .dtp_test import TestDTP as DTPTests
+from .parallel_dtp import ParallelDTP
 
 
 @pytest.mark.xfail(reason="Bug #28", raises=ValueError)

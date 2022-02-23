@@ -5,6 +5,7 @@ from typing import List, Tuple, Type
 import torch.nn as nn
 import torch.nn.functional as F
 from simple_parsing.helpers import list_field
+
 from target_prop.backward_layers import invert
 from target_prop.layers import AdaptiveAvgPool2d, Reshape
 

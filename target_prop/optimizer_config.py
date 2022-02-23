@@ -1,12 +1,13 @@
-import numpy as np
-from simple_parsing.helpers.serialization.serializable import Serializable
-from simple_parsing.helpers.fields import choice, list_field
-import torch
-from typing import Any, ClassVar, Dict, List, Optional, Type
-from dataclasses import dataclass
-from torch.optim.optimizer import Optimizer
-from torch import nn
 import logging
+from dataclasses import dataclass
+from typing import Any, ClassVar, Dict, List, Optional, Type
+
+import numpy as np
+import torch
+from simple_parsing.helpers.fields import choice, list_field
+from simple_parsing.helpers.serialization.serializable import Serializable
+from torch import nn
+from torch.optim.optimizer import Optimizer
 
 logger = logging.getLogger(__name__)
 

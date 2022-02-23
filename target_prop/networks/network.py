@@ -1,6 +1,7 @@
 from abc import ABC
 from dataclasses import dataclass
 from typing import Callable, ClassVar, Type
+
 from simple_parsing import choice
 from simple_parsing.helpers.serialization.serializable import Serializable
 

@@ -2,27 +2,26 @@ from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from simple_parsing import field
 
 import torch
 import wandb
 from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
+from simple_parsing import field
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.fields import choice
+from torch import Tensor, nn
+from torch.optim.optimizer import Optimizer
+
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
 from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
+from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
 from target_prop.utils.utils import is_trainable
-from torch import Tensor, nn
-from torch.optim.optimizer import Optimizer
-from target_prop.scheduler_config import (
-    LRSchedulerConfig,
-    CosineAnnealingLRConfig,
-)
+
 from .dtp import DTP
 from .utils import make_stacked_feedback_training_figure
 

@@ -3,8 +3,9 @@ from dataclasses import dataclass
 from typing import List, Type
 
 from simple_parsing.helpers import list_field
-from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
+
+from target_prop.layers import MaxPool2d, Reshape
 
 from .network import Network
 

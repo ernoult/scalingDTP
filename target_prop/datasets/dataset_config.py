@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Callable, ClassVar, Dict, Type, TypeVar
-from simple_parsing import Serializable, choice
 
 import torch
 from pl_bolts.datamodules import (
@@ -14,8 +13,9 @@ from pl_bolts.datamodules import (
     MNISTDataModule,
 )
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from simple_parsing import Serializable, choice
 from torch import Tensor
-from torchvision.transforms import Compose, RandomCrop, RandomHorizontalFlip, ToTensor, Normalize
+from torchvision.transforms import Compose, Normalize, RandomCrop, RandomHorizontalFlip, ToTensor
 
 from target_prop.datasets import CIFAR10DataModule as CIFAR10NoValDataModule
 from target_prop.datasets import ImageNet32DataModule as ImageNet32NoValDataModule
@@ -34,7 +34,8 @@ logger = get_logger(__name__)
 D = TypeVar("D", bound=VisionDataModule)
 
 from abc import ABC
-from typing import Optional, Union, Any
+from typing import Any, Optional, Union
+
 from simple_parsing.helpers.serialization.serializable import Serializable
 
 

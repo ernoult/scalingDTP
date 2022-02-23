@@ -1,12 +1,13 @@
 from __future__ import annotations
+
 import contextlib
 import warnings
+from typing import Any, Dict, Iterable, List, Tuple, TypeVar, Union
+
 from importlib_metadata import collections
-from torch.distributions import Normal as Normal_
-from torch import Tensor
-from typing import Any, Dict, List, TypeVar, Union, Iterable, Tuple
 from simple_parsing.helpers import field
-from torch import nn
+from torch import Tensor, nn
+from torch.distributions import Normal as Normal_
 from torch.nn.parameter import Parameter
 
 T = TypeVar("T")
@@ -127,8 +128,9 @@ def split_batch(batched_v: Tensor, n: int) -> Tensor:
 
 
 import random
-import torch
+
 import numpy as np
+import torch
 
 
 @contextlib.contextmanager
@@ -155,7 +157,7 @@ def make_reproducible(seed: int):
     random.setstate(start_random_state)
 
 
-from typing import Any, Callable, TypeVar, Type
+from typing import Any, Callable, Type, TypeVar
 
 from simple_parsing.helpers.serialization import encode
 from simple_parsing.helpers.serialization.decoding import _register

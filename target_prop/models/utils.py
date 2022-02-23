@@ -1,9 +1,10 @@
-from typing import Any, Sequence, Union, List
+from typing import Any, List, Sequence, Union
+
 import numpy as np
-from torch import Tensor
 import plotly.graph_objects as go
 from plotly.graph_objects import Figure
 from plotly.subplots import make_subplots
+from torch import Tensor
 
 
 def make_stacked_feedback_training_figure(

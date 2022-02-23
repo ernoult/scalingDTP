@@ -1,13 +1,13 @@
 """ Wandb utilities. """
-from typing import ClassVar, List, TypeVar
 import json
-import wandb
-from typing import Type, TypeVar, Dict, Optional
-from simple_parsing.helpers.serialization.serializable import Serializable
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from wandb.apis.public import Run
 from abc import ABC
 from pathlib import Path
+from typing import ClassVar, Dict, List, Optional, Type, TypeVar
+
+import wandb
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from simple_parsing.helpers.serialization.serializable import Serializable
+from wandb.apis.public import Run
 
 try:
     from simple_parsing.helpers.serialization.serializable import FrozenSerializable

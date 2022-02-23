@@ -1,7 +1,8 @@
-from omegaconf import DictConfig
-import omegaconf
-from typing import Any, Type
 import importlib
+from typing import Any, Type
+
+import omegaconf
+from omegaconf import DictConfig
 
 
 def is_inner_class(object_type: Type) -> bool:
@@ -48,7 +49,6 @@ from omegaconf.errors import ConfigAttributeError
 omegaconf.DictConfig._validate_get = _validate_get
 # setattr(omegaconf.DictConfig, "_validate_get", _validate_get)
 import omegaconf._utils
-
 from omegaconf._utils import type_str as _type_str
 
 

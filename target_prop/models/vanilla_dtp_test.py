@@ -2,8 +2,9 @@ from typing import ClassVar, Tuple, Type
 
 import pytest
 import torch
-from target_prop.backward_layers import invert
 from torch import Tensor, nn
+
+from target_prop.backward_layers import invert
 
 from .dtp_test import TestDTP as DTPTests
 from .vanilla_dtp import (

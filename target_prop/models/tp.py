@@ -4,10 +4,11 @@ from typing import List, Union
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
+from torch import Tensor, nn
+
 from target_prop.config import Config
 from target_prop.networks.network import Network
 from target_prop.optimizer_config import OptimizerConfig
-from torch import Tensor, nn
 
 from .vanilla_dtp import VanillaDTP
 
