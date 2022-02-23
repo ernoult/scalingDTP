@@ -1,6 +1,7 @@
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import singledispatch
+import functools
 from logging import getLogger
 from typing import List, Union
 
@@ -17,7 +18,7 @@ from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 
 logger = getLogger(__name__)
-from .dtp import DTP, FeedbackOptimizerConfig, ForwardOptimizerConfig
+from .dtp import DTP
 
 
 class VanillaDTP(DTP):
@@ -33,15 +34,19 @@ class VanillaDTP(DTP):
         """
 
         # Hyper-parameters for the optimizer of the feedback weights (backward net).
-        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+        b_optim: OptimizerConfig = field(
+            default_factory=functools.partial(
+                OptimizerConfig, type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+            )
         )
 
         # Hyper-parameters for the forward optimizer
         # NOTE: Different default value for the LR than DTP, since this is so high it produces NANs
         # almost instantly.
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="sgd", lr=1e-3, weight_decay=1e-4, momentum=0.9
+        f_optim: OptimizerConfig = field(
+            default_factory=functools.partial(
+                OptimizerConfig, type="sgd", lr=[1e-3], weight_decay=1e-4, momentum=0.9
+            )
         )
 
     def __init__(

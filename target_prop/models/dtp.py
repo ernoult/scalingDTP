@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 import logging
 import warnings
 from dataclasses import dataclass
@@ -37,50 +38,6 @@ from .utils import make_stacked_feedback_training_figure
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
-
-
-@dataclass
-class ForwardOptimizerConfig(OptimizerConfig):
-    """Configuration of the optimizer for the forward weights.
-
-    NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer.
-    """
-
-    # Type of Optimizer to use.
-    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
-
-    # Learning rate of the optimizer.
-    lr: float = 0.05
-
-    # Weight decay coefficient.
-    weight_decay: Optional[float] = 1e-4
-
-    # Momentum term to pass to SGD.
-    # NOTE: This value is only used with SGD, not with Adam.
-    momentum: float = 0.9
-
-
-@dataclass
-class FeedbackOptimizerConfig(OptimizerConfig):
-    """Configuration of the optimizer for the forward weights.
-
-    NOTE: Creating a distinct class for this is currently the only way to specify different priors
-    for the forward optimizer and the feedback optimizer.
-    """
-
-    # Type of Optimizer to use.
-    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="sgd")
-
-    # Learning rate of the optimizer.
-    lr: List[float] = field(default_factory=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18].copy)
-
-    # Weight decay coefficient.
-    weight_decay: Optional[float] = None
-
-    # Momentum term to pass to SGD.
-    # NOTE: This value is only used with SGD, not with Adam.
-    momentum: float = 0.9
 
 
 class DTP(LightningModule, Model):
@@ -135,16 +92,28 @@ class DTP(LightningModule, Model):
         max_epochs: int = 90
 
         # Hyper-parameters for the optimizer of the feedback weights (backward net).
-        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+        b_optim: OptimizerConfig = field(
+            default_factory=functools.partial(
+                OptimizerConfig,
+                type="sgd",
+                lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18],
+                momentum=0.9,
+                weight_decay=None,
+            )
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
         noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
 
         # Hyper-parameters for the forward optimizer
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="sgd", lr=0.05, weight_decay=1e-4, momentum=0.9
+        f_optim: OptimizerConfig = field(
+            default_factory=functools.partial(
+                OptimizerConfig,
+                type="sgd",
+                lr=[0.05],
+                momentum=0.9,
+                weight_decay=1e-4,
+            )
         )
 
         # nudging parameter: Used when calculating the first target.

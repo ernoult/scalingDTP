@@ -25,8 +25,8 @@ from target_prop.legacy import (
 )
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
-from target_prop.models.dtp import FeedbackOptimizerConfig, ForwardOptimizerConfig
 from target_prop.networks.simple_vgg import SimpleVGG
+from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils.utils import is_trainable, named_trainable_parameters
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -81,11 +81,21 @@ def legacy_model(legacy_hparams: LegacyHparams):
 def pl_hparams(legacy_hparams: LegacyHparams):
     # NOTE: The default value for the forward optimizer learning rate was lowered. Here we make it
     # match the legacy parameters.
+    default = DTP.HParams()
+
     return DTP.HParams(
-        f_optim=ForwardOptimizerConfig(
-            type="sgd", lr=legacy_hparams.lr_f, weight_decay=legacy_hparams.wdecay
+        f_optim=OptimizerConfig(
+            type="sgd",
+            lr=[legacy_hparams.lr_f],
+            weight_decay=legacy_hparams.wdecay,
+            momentum=0.9,
         ),
-        b_optim=FeedbackOptimizerConfig(type="sgd", lr=legacy_hparams.lr_b),
+        b_optim=OptimizerConfig(
+            type="sgd",
+            lr=legacy_hparams.lr_b,
+            weight_decay=None,
+            momentum=0.9,
+        ),
         noise=legacy_hparams.noise,
         beta=legacy_hparams.beta,
         feedback_training_iterations=legacy_hparams.iter,

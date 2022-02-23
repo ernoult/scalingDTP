@@ -4,6 +4,7 @@
 from abc import ABC
 from collections import OrderedDict
 from dataclasses import dataclass
+import functools
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 from simple_parsing import field
@@ -17,7 +18,6 @@ from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, list_field, subparsers
 from target_prop.config import Config
 from target_prop.layers import MaxPool2d, Reshape
-from target_prop.models.dtp import ForwardOptimizerConfig
 from target_prop.models.model import Model
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig, StepLRConfig
@@ -48,7 +48,9 @@ class BaselineModel(LightningModule, Model):
         max_epochs: int = 90
 
         # Hyper-parameters for the forward optimizer
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(type="sgd", lr=0.05)
+        f_optim: OptimizerConfig = field(
+            default_factory=functools.partial(OptimizerConfig, type="sgd", lr=[0.05])
+        )
 
         # batch size
         batch_size: int = 128

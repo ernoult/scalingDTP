@@ -24,36 +24,9 @@ from target_prop.scheduler_config import (
     CosineAnnealingLRConfig,
 )
 from .dtp import DTP
-from .dtp import FeedbackOptimizerConfig as _FeedbackOptimizerConfig
-from .dtp import ForwardOptimizerConfig as _ForwardOptimizerConfig
 from .utils import make_stacked_feedback_training_figure
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class ForwardOptimizerConfig(_ForwardOptimizerConfig):
-    # Type of Optimizer to use.
-    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
-
-    # Learning rate of the optimizer.
-    lr: float = 4e-3
-
-    # Weight decay coefficient.
-    weight_decay: Optional[float] = 1e-4
-
-
-@dataclass
-class FeedbackOptimizerConfig(_FeedbackOptimizerConfig):
-    # Type of Optimizer to use.
-    type: str = choice(*OptimizerConfig.available_optimizers.keys(), default="adam")
-    # NOTE: We currently fix the type of optimizer, but we could also tune that choice:
-
-    # Learning rate of the optimizer.
-    lr: List[float] = field(default_factory=[4e-3].copy)
-
-    # Weight decay coefficient.
-    weight_decay: Optional[float] = 1e-4
 
 
 class ParallelDTP(DTP):
@@ -90,16 +63,24 @@ class ParallelDTP(DTP):
         feedback_samples_per_iteration: int = 10
 
         # Hyper-parameters for the "backward" optimizer
-        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="adam", lr=[3e-4],
+        b_optim: OptimizerConfig = field(
+            default_factory=lambda: OptimizerConfig(
+                type="adam",
+                lr=[3e-4],
+                weight_decay=1e-4,
+            )
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
         noise: List[float] = field(default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy)
 
         # Hyper-parameters for the forward optimizer
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="adam", lr=3e-4, weight_decay=1e-4,
+        f_optim: OptimizerConfig = field(
+            default_factory=lambda: OptimizerConfig(
+                type="adam",
+                lr=[3e-4],
+                weight_decay=1e-4,
+            )
         )
 
         # nudging parameter: Used when calculating the first target.

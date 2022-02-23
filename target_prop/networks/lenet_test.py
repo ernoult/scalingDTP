@@ -85,12 +85,12 @@ def dtp_hparams():
         batch_size=256,
         noise=[0.41640228838517584, 0.3826261146623929, 0.1395382069358601],
         beta=0.4655,
-        b_optim=FeedbackOptimizerConfig(
+        b_optim=OptimizerConfig(
             type="sgd",
             lr=[0.0007188427494432325, 0.00012510321884615596, 0.03541466958291287],
             momentum=0.9,
         ),
-        f_optim=ForwardOptimizerConfig(type="sgd", lr=0.03618, weight_decay=1e-4, momentum=0.9),
+        f_optim=OptimizerConfig(type="sgd", lr=[0.03618], weight_decay=1e-4, momentum=0.9),
         max_epochs=90,
         init_symetric_weights=False,
     )
