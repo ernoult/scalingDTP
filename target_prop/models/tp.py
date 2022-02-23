@@ -4,7 +4,6 @@ from typing import List, Union
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
-from simple_parsing.helpers.hparams import uniform
 from target_prop.config import Config
 from target_prop.networks.network import Network
 from target_prop.optimizer_config import OptimizerConfig

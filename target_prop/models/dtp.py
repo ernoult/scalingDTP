@@ -11,7 +11,6 @@ from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.seed import seed_everything
 from simple_parsing.helpers import choice, field, list_field
-from simple_parsing.helpers.hparams.hparam import uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -130,14 +129,7 @@ class DTP(LightningModule, Model):
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
-        # NOTE: Not tuning these values:
         feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
-        # NOTE: tuning a single value for all layers:
-        # feedback_training_iterations: int = uniform(1, 60, default=20, discrete=True)
-        # NOTE: IF we want to tune each value independantly:
-        # feedback_training_iterations: List[int] = uniform(
-        #     1, 60, shape=5, default_factory=[20, 30, 35, 55, 20].copy, discrete=True
-        # )
 
         # Max number of training epochs in total.
         max_epochs: int = 90
@@ -148,27 +140,19 @@ class DTP(LightningModule, Model):
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
-        # NOTE: Not tuning this parameter:
         noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
-        # NOTE: tuning a value per layer:
-        # noise: List[float] = uniform(  # type: ignore
-        #     0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        # )
-        # NOTE: tuning a single value for all layers:
-        # noise: float = uniform(0.001, 0.5, default=0.2)
 
         # Hyper-parameters for the forward optimizer
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
             type="sgd", lr=0.05, weight_decay=1e-4, momentum=0.9
         )
+
         # nudging parameter: Used when calculating the first target.
-        # beta: float = 0.7  # NOTE: not tuning this value
-        beta: float = uniform(0.01, 1.0, default=0.7)  # Adding it to HPO space
+        beta: float = 0.7
 
         # Number of noise samples to use to get the feedback loss in a single iteration.
         # NOTE: The loss used for each update is the average of these losses.
-        feedback_samples_per_iteration: int = 1  # Not tuning the value
-        # feedback_samples_per_iteration: int = uniform(1, 20, default=1)  # tuning the value
+        feedback_samples_per_iteration: int = 1
 
         # Max number of epochs to train for without an improvement to the validation
         # accuracy before the training is stopped. When 0, no early stopping is used.

@@ -10,7 +10,6 @@ from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from simple_parsing.helpers import list_field
 from simple_parsing.helpers.fields import choice
-from simple_parsing.helpers.hparams import uniform
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all
@@ -88,22 +87,23 @@ class ParallelDTP(DTP):
 
         # Number of noise samples to use to get the feedback loss in a single iteration.
         # NOTE: The loss used for each update is the average of these losses.
-        feedback_samples_per_iteration: int = uniform(1, 20, default=10)
+        feedback_samples_per_iteration: int = 10
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
             type="adam", lr=[3e-4],
         )
+
         # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = uniform(  # type: ignore
-            0.001, 0.5, default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy, shape=5
-        )
+        noise: List[float] = field(default_factory=[0.4, 0.4, 0.2, 0.2, 0.08].copy)
+
         # Hyper-parameters for the forward optimizer
         f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
             type="adam", lr=3e-4, weight_decay=1e-4,
         )
+
         # nudging parameter: Used when calculating the first target.
-        beta: float = uniform(0.01, 1.0, default=0.7)
+        beta: float = 0.7
 
     def __init__(
         self,
