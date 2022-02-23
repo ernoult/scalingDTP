@@ -1,12 +1,14 @@
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from logging import getLogger as get_logger
 from typing import Any, Dict, List, Optional, Type
 import logging
+from hydra_zen import get_target
 from simple_parsing.helpers.serialization.serializable import Serializable
+from simple_parsing.helpers import field
 import wandb
 from pytorch_lightning.loggers import LightningLoggerBase
-
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
@@ -40,13 +42,13 @@ class Options(Serializable):
     network: Network.HParams  # = field(default_factory=SimpleVGG.HParams)
 
     # Keyword arguments for the Trainer constructor.
-    trainer: Any = field(default_factory=dict)  # type: ignore
+    trainer: Dict = field(default_factory=dict)  # type: ignore
 
     # Configs for the callbacks.
-    callbacks: Any = field(default_factory=dict)  # type: ignore
+    callbacks: Dict = field(default_factory=dict)  # type: ignore
 
     # Config(s) for the logger(s).
-    logger: Any = field(default_factory=dict)  # type: ignore
+    logger: Dict = field(default_factory=dict)  # type: ignore
 
     # Wether to run in debug mode or not.
     debug: bool = False
@@ -58,49 +60,6 @@ class Options(Serializable):
 
     # Name for the experiment.
     name: str = ""
-
-    def __post_init__(self):
-        actual_callbacks: Dict[str, Callback] = {}
-
-        # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
-        # fields have the right type.
-
-        # Create the callbacks
-        callbacks = self.callbacks
-        if isinstance(self.callbacks, dict):
-            for name, callback in self.callbacks.items():
-                if isinstance(callback, dict):
-                    callback = hydra.utils.instantiate(callback)
-                elif not isinstance(callback, Callback):
-                    raise ValueError(f"Invalid callback value {callback}")
-                actual_callbacks[name] = callback
-            callbacks = list(actual_callbacks.values())
-        self.callbacks: List[Callback] = callbacks
-
-        # Create the loggers, if any.
-        loggers = self.logger
-        if isinstance(self.logger, dict):
-            actual_loggers: Dict[str, LightningLoggerBase] = {}
-            for name, lightning_logger in self.logger.items():
-                if isinstance(lightning_logger, dict):
-                    lightning_logger = hydra.utils.instantiate(lightning_logger)
-                elif not isinstance(lightning_logger, LightningLoggerBase):
-                    raise ValueError(f"Invalid logger value {lightning_logger}")
-            loggers = list(actual_loggers.values())
-        self.logger: List[LightningLoggerBase] = loggers
-
-        # Create the Trainer.
-        trainer = self.trainer
-        if isinstance(self.trainer, dict):
-            if self.debug:
-                logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
-                self.trainer["max_epochs"] = 1
-            trainer = hydra.utils.instantiate(
-                self.trainer, callbacks=self.callbacks, logger=self.logger,
-            )
-        elif not isinstance(self.trainer, Trainer):
-            raise ValueError(f"Invalid Trainer value {self.trainer}")
-        self.trainer: Trainer = trainer
 
 
 cs = ConfigStore.instance()
@@ -126,8 +85,138 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 def main(raw_options: DictConfig) -> None:
     print(os.getcwd())
     options = OmegaConf.to_object(raw_options)
+    experiment = Experiment(options)
     assert isinstance(options, Options)
-    run(options=options)
+    # run(options=options)
+
+    experiment.run()
+
+
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+
+
+@dataclass
+class Experiment(Serializable):
+    """ Experiment class. Created from the Options that are parsed from Hydra. Can be used to run
+    the experiment.
+    """
+
+    options: Options
+    trainer: Trainer = field(init=False, to_dict=False)
+    model: Model = field(init=False, to_dict=False)
+    network: Network = field(init=False, to_dict=False)
+    datamodule: VisionDataModule = field(init=False, to_dict=False)
+
+    callbacks: List[Callback] = field(init=False, default_factory=list, to_dict=False)
+    loggers: List[LightningLoggerBase] = field(init=False, default_factory=list, to_dict=False)
+
+    def __post_init__(self) -> None:
+        """ Actually creates the callbacks and trainers etc from the options in `options`.
+        They are then stored in `self`. 
+        """
+        actual_callbacks: Dict[str, Callback] = {}
+
+        # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
+        # fields have the right type.
+
+        # Create the callbacks
+        assert isinstance(self.options.callbacks, dict)
+        for name, callback in self.options.callbacks.items():
+            if isinstance(callback, dict):
+                callback = hydra.utils.instantiate(callback)
+            elif not isinstance(callback, Callback):
+                raise ValueError(f"Invalid callback value {callback}")
+            actual_callbacks[name] = callback
+        self.callbacks = list(actual_callbacks.values())
+
+        # Create the loggers, if any.
+        assert isinstance(self.options.logger, dict)
+        actual_loggers: Dict[str, LightningLoggerBase] = {}
+        for name, lightning_logger in self.options.logger.items():
+            if isinstance(lightning_logger, dict):
+                lightning_logger = hydra.utils.instantiate(lightning_logger)
+            elif not isinstance(lightning_logger, LightningLoggerBase):
+                raise ValueError(f"Invalid logger value {lightning_logger}")
+        self.logger = list(actual_loggers.values())
+
+        # Create the Trainer.
+        assert isinstance(self.options.trainer, dict)
+        if self.options.debug:
+            logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
+            self.options.trainer["max_epochs"] = 1
+        trainer = hydra.utils.instantiate(
+            self.options.trainer, callbacks=self.callbacks, logger=self.logger,
+        )
+        assert isinstance(trainer, Trainer)
+        self.trainer = trainer
+
+        # Create the datamodule:
+        dataset: DatasetConfig = self.options.dataset
+        self.datamodule = dataset.make_datamodule(batch_size=self.options.model.batch_size)
+
+        # Create the network
+        network_hparams: Network.HParams = self.options.network
+        network_type: Type[Network] = get_outer_class(type(network_hparams))
+        assert isinstance(
+            network_hparams, network_type.HParams
+        ), "HParams type should match net type"
+        self.network = network_type(
+            in_channels=self.datamodule.dims[0],
+            n_classes=self.datamodule.num_classes,  # type: ignore
+            hparams=network_hparams,
+        )
+
+        # Create the model
+        model_hparams: Model.HParams = self.options.model
+        model_type: Type[Model] = get_outer_class(type(model_hparams))
+        assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
+        self.model = model_type(
+            network=self.network,
+            datamodule=self.datamodule,
+            hparams=model_hparams,
+            network_hparams=network_hparams,
+            config=Config(seed=self.options.seed, debug=self.options.debug),
+        )
+        assert isinstance(self.model, LightningModule)
+
+    def run(self) -> float:
+        if self.options.seed is not None:
+            seed_everything(seed=self.options.seed, workers=True)
+
+        root_logger = logging.getLogger()
+        if self.options.debug:
+            root_logger.setLevel(logging.INFO)
+        elif self.options.verbose:
+            root_logger.setLevel(logging.DEBUG)
+
+        root_logger = logging.getLogger()
+        # --- Run the experiment. ---
+        self.trainer.fit(self.model, datamodule=self.datamodule)
+
+        val_results = self.trainer.validate(model=self.model, datamodule=self.datamodule)
+        assert len(val_results) == 1
+        top1_accuracy: float = val_results[0]["val/accuracy"]
+        top5_accuracy: float = val_results[0]["val/top5_accuracy"]
+        print(f"Validation top1 accuracy: {top1_accuracy:.1%}")
+        print(f"Validation top5 accuracy: {top5_accuracy:.1%}")
+
+        if not self.options.debug:
+            from orion.client import report_objective
+
+            test_error = 1 - top1_accuracy
+            report_objective(test_error)
+
+        if wandb.run:
+            wandb.finish()
+
+        return top1_accuracy
+        # TODO: Enable this later.
+        # Run on the test set:
+        # test_results = trainer.test(model, datamodule=datamodule, verbose=True)
+        # top1_accuracy: float = test_results[0]["test/accuracy"]
+        # top5_accuracy: float = test_results[0]["test/top5_accuracy"]
+        # print(f"Test top1 accuracy: {top1_accuracy:.1%}")
+        # print(f"Test top5 accuracy: {top5_accuracy:.1%}")
 
 
 def run(options: Options):
@@ -139,36 +228,6 @@ def run(options: Options):
         root_logger.setLevel(logging.INFO)
     elif options.verbose:
         root_logger.setLevel(logging.DEBUG)
-
-    # Create the datamodule:
-    dataset: DatasetConfig = options.dataset
-    datamodule = dataset.make_datamodule(batch_size=options.model.batch_size)
-
-    # Create the network
-    network_hparams: Network.HParams = options.network
-    network_type: Type[Network] = get_outer_class(type(options.network))
-    assert isinstance(
-        network_hparams, network_type.HParams
-    ), "HParams type should match parent type"
-    network: Network = network_type(
-        in_channels=datamodule.dims[0],
-        n_classes=datamodule.num_classes,  # type: ignore
-        hparams=network_hparams,
-    )
-
-    # Create the model
-    model_hparams: Model.HParams = options.model
-    model_type: Type[Model] = get_outer_class(type(options.model))
-    assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
-    model: Model = model_type(
-        network=network,
-        datamodule=datamodule,
-        hparams=model_hparams,
-        network_hparams=network_hparams,
-        config=Config(seed=options.seed, debug=options.debug),
-    )
-    assert isinstance(model, LightningModule)
-    trainer = options.trainer
 
     root_logger = logging.getLogger()
     # --- Run the experiment. ---

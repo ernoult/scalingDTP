@@ -6,8 +6,8 @@ model:
     - 0.008
     - 0.018
   feedback_training_iterations:
-  - 123
-  - 2
+  - 10  # TODO: Actually need to set these values from the results of a sweep or something.
+  - 10
   - 20
   noise:
   - 0.4
