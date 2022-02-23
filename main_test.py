@@ -1,12 +1,11 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ADAPTED FROM https://github.com/facebookresearch/hydra/blob/main/examples/advanced/hydra_app_example/tests/test_example.py
-from typing import Iterable, List, Sequence, Type, TypeVar, Union
+from typing import Iterable, List, Type, TypeVar, Union
 from omegaconf import OmegaConf
 import pytest
-from simple_parsing import Serializable
+from simple_parsing.helpers.serialization.serializable import Serializable
 import yaml
 
-from main import Experiment, main, Options
+from main import Experiment, Options
 from hydra import compose, initialize, initialize_config_module
 from target_prop.datasets.dataset_config import DatasetConfig
 
@@ -31,7 +30,7 @@ from dataclasses import replace
 
 def _ids(v):
     if isinstance(v, list):
-        return "_".join(v)
+        return "_".join(map(str,v))
     return None
 
 
@@ -79,22 +78,6 @@ def test_setting_network(overrides: List[str], expected: Model.HParams) -> None:
         assert isinstance(options, Options)
         assert options.network == expected
 
-
-# TODO: Check the model / network combination (model_network folder).
-
-S = TypeVar("S", bound=Serializable)
-
-
-def load_from_file(cls: Type[S], file: str, key: Union[str, Iterable[str]] = "model") -> S:
-    with open(file) as f:
-        d = yaml.load(f)
-    if key:
-        if isinstance(key, str):
-            d = d[key]
-        else:
-            for k_i in key:
-                d = d[k_i]
-    return cls.from_dict(d)
 
 
 dtp_model_names = ["dtp", "target_prop", "vanilla_dtp"]

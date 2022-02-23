@@ -1,9 +1,8 @@
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
-from typing import Any, Dict, List, Optional, Type
+from typing import Dict, List, Optional, Type
 import logging
-from hydra_zen import get_target
 from simple_parsing.helpers.serialization.serializable import Serializable
 from simple_parsing.helpers import field
 import wandb
@@ -16,9 +15,9 @@ from pytorch_lightning import Callback, LightningModule, Trainer, seed_everythin
 
 from target_prop.config import Config
 from target_prop.datasets.dataset_config import DatasetConfig
-from target_prop.models import *
+from target_prop.models import Model, DTP, VanillaDTP, TargetProp, ParallelDTP, BaselineModel
 from target_prop.models.model import Model
-from target_prop.networks import *
+from target_prop.networks import  Network, ResNet18, ResNet34, SimpleVGG, LeNet
 from target_prop.networks.network import Network
 from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils.hydra_utils import get_outer_class
@@ -85,10 +84,9 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 def main(raw_options: DictConfig) -> None:
     print(os.getcwd())
     options = OmegaConf.to_object(raw_options)
+    assert isinstance(options, Options)
     experiment = Experiment(options)
     assert isinstance(options, Options)
-    # run(options=options)
-
     experiment.run()
 
 
