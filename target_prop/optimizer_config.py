@@ -24,11 +24,10 @@ class OptimizerConfig(Serializable):
 
     # Type of Optimizer to use.
     type: str = choice(*available_optimizers.keys(), default="sgd")
-    # BUG: Little bug here, won't search over this in sweeps for now.
-    # categorical("sgd", "adam"], default="adam", strict=True)
 
     # Learning rate of the optimizer.
     lr: List[float] = list_field(4e-3)
+
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
 
