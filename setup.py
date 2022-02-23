@@ -34,5 +34,10 @@ setuptools.setup(
         "kaleido",
         "torchmetrics",
         "rich",
+        "matplotlib",
+        "pandas",
+        "seaborn",
+        "tensorboardx",
+        "orion",
     ],
 )

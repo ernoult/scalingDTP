@@ -6,19 +6,11 @@ pytest target_prop/networks/lenet_test.py -s
 """
 
 import os
-import pdb
 from collections import defaultdict
-from dataclasses import dataclass
-from email.policy import default
 from typing import (
-    TYPE_CHECKING,
     Any,
-    Callable,
-    ClassVar,
     Dict,
-    Iterable,
     List,
-    Optional,
     Tuple,
     Type,
 )
@@ -37,9 +29,8 @@ import pandas as pd
 import pytest
 import seaborn as sns
 import torch
-from pytorch_lightning import LightningDataModule, Trainer
+from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.callbacks import get_backprop_grads
 from target_prop.config import Config
@@ -49,7 +40,6 @@ from target_prop.models.dtp import FeedbackOptimizerConfig, ForwardOptimizerConf
 from target_prop.networks import LeNet
 from target_prop.utils.utils import (
     is_trainable,
-    make_reproducible,
     named_trainable_parameters,
 )
 
@@ -656,7 +646,7 @@ def disable_prints():
 
 
 import typing
-from meulemans_dtp.main import Args
+# from meulemans_dtp.main import Args
 from target_prop.networks import Network
 
 our_network_param_names_to_theirs = {
@@ -720,7 +710,7 @@ def meulemans(
         args = parser.parse_args("")
         args = main.postprocess_args(args)
 
-    args = typing.cast(Args, args)  # Fake cast: doesnt do anything, it's just for the type checker.
+    # args = typing.cast(Args, args)  # Fake cast: doesnt do anything, it's just for the type checker.
 
     # NOTE: Setting this, just in case they use this value somewhere I haven't seen yet.
     args.random_seed = seed
