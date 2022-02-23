@@ -9,3 +9,4 @@ defaults:
   - logger: null  # use logger=wandb to enable wandb logging.
   - mode: default.yaml
   - _self_
+  - override hydra/sweeper: orion
