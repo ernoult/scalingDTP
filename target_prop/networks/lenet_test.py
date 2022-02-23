@@ -17,7 +17,6 @@ from typing import (
 from typing import OrderedDict
 from torch import Tensor
 
-
 from torch.utils.data import DataLoader
 from torch import Tensor
 
@@ -42,7 +41,8 @@ from target_prop.utils.utils import (
     is_trainable,
     named_trainable_parameters,
 )
-
+import sys
+pytestmark = pytest.mark.skipif("-vv" not in sys.argv, reason="These tests take a while to run.")
 
 @pytest.fixture(scope="module", params=[123, 124, 125, 126, 127])
 def seed(request):
@@ -326,7 +326,6 @@ class TestLeNet:
         # Make sure that converged output layer angle is less than 8 degrees
         assert layer_angles[-1] < 8.0
 
-    # @pytest.mark.skip("skip for now")
     def test_dtp_forward_updates_are_orthogonal_to_backprop_with_random_init(
         self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, config: Config
     ):
@@ -376,7 +375,6 @@ class TestLeNet:
         for key, value in angles.items():
             print(key, value)
 
-    # @pytest.mark.skip("skip for now")
     def test_dtp_forward_updates_match_backprop_with_symmetric_init(
         self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, config: Config
     ):
