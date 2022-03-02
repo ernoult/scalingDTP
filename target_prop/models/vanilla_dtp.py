@@ -1,5 +1,6 @@
+import functools
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import singledispatch
 from logging import getLogger
 from typing import List, Union
@@ -7,17 +8,18 @@ from typing import List, Union
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
-from simple_parsing.helpers.hparams import categorical, log_uniform, uniform
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from target_prop.config import Config
-from target_prop.optimizer_config import OptimizerConfig
-from target_prop.utils import repeat_batch
+from simple_parsing.helpers.hparams import categorical
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 
+from target_prop.config import Config
+from target_prop.networks.network import Network
+from target_prop.optimizer_config import OptimizerConfig
+from target_prop.utils.utils import repeat_batch
+
 logger = getLogger(__name__)
-from .dtp import DTP, FeedbackOptimizerConfig, ForwardOptimizerConfig
+from .dtp import DTP
 
 
 class VanillaDTP(DTP):
@@ -33,26 +35,36 @@ class VanillaDTP(DTP):
         """
 
         # Hyper-parameters for the optimizer of the feedback weights (backward net).
-        b_optim: FeedbackOptimizerConfig = FeedbackOptimizerConfig(
-            type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+        b_optim: OptimizerConfig = field(
+            default_factory=functools.partial(
+                OptimizerConfig, type="sgd", lr=[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18], momentum=0.9
+            )
         )
 
         # Hyper-parameters for the forward optimizer
         # NOTE: Different default value for the LR than DTP, since this is so high it produces NANs
         # almost instantly.
-        f_optim: ForwardOptimizerConfig = ForwardOptimizerConfig(
-            type="sgd", lr=1e-3, weight_decay=1e-4, momentum=0.9
+        f_optim: OptimizerConfig = field(
+            default_factory=functools.partial(
+                OptimizerConfig, type="sgd", lr=[1e-3], weight_decay=1e-4, momentum=0.9
+            )
         )
 
     def __init__(
         self,
         datamodule: VisionDataModule,
-        network: nn.Sequential,
+        network: Network,
         hparams: "VanillaDTP.HParams",
         config: Config,
-        network_hparams: HyperParameters,
+        network_hparams: Network.HParams,
     ):
-        super().__init__(datamodule, network, hparams, config, network_hparams)
+        super().__init__(
+            datamodule=datamodule,
+            network=network,
+            hparams=hparams,
+            config=config,
+            network_hparams=network_hparams,
+        )
         self.hp: VanillaDTP.HParams
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
@@ -145,7 +157,7 @@ def vanilla_DTP_feedback_loss(
 
             # Distance between `r` and the reconstructed `r`.
             dr = x_noise - x_r_noise
-            loss = (dr ** 2).flatten(1).sum(1).mean()
+            loss = (dr**2).flatten(1).sum(1).mean()
             # NOTE: Should be equivalent to this, but I don't trust it anymore:
             # loss = F.mse_loss(x_noise, x_r_noise, reduction="none")
             noise_sample_losses.append(loss)
@@ -203,7 +215,7 @@ def vanilla_DTP_feedback_loss_parallel(
 
     # TODO: Should we take an average or a sum over the samples dimension?
     dr = batch_xr_noise - batch_x
-    loss = (dr ** 2).flatten(1).sum(1).mean()
+    loss = (dr**2).flatten(1).sum(1).mean()
     # NOTE: Should be equivalent to this, but I don't trust it anymore:
     # loss = F.mse_loss(batch_x_noise, batch_xr_noise)
     return loss

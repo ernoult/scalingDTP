@@ -3,8 +3,9 @@
 TODO: Not 100% sure I understand what this does
 """
 from functools import singledispatch
-from torch import nn, Tensor
+
 import torch
+from torch import Tensor, nn
 
 
 @singledispatch
@@ -53,7 +54,7 @@ def weight_b_sym_linear(forward_layer: nn.Linear, backward_layer: nn.Linear) -> 
 
 @singledispatch
 def weight_b_normalize(backward_layer: nn.Module, dx: Tensor, dy: Tensor, dr: Tensor) -> None:
-    """ TODO: I don't yet understand what this is supposed to do. """
+    """TODO: I don't yet understand what this is supposed to do."""
     return
     # raise NotImplementedError(f"No idea what this means atm.")
 
@@ -66,7 +67,7 @@ def linear_weight_b_normalize(
     # dx = dx.view(dx.size(0), -1)
     # dr = dr.view(dr.size(0), -1)
 
-    factor = ((dy ** 2).sum(1)) / ((dx * dr).view(dx.size(0), -1).sum(1))
+    factor = ((dy**2).sum(1)) / ((dx * dr).view(dx.size(0), -1).sum(1))
     factor = factor.mean()
 
     with torch.no_grad():
@@ -83,7 +84,7 @@ def conv_weight_b_normalize(
     dx = dx.view(dx.size(0), -1)
     dr = dr.view(dr.size(0), -1)
 
-    factor = ((dy ** 2).sum(1)) / ((dx * dr).sum(1))
+    factor = ((dy**2).sum(1)) / ((dx * dr).sum(1))
     factor = factor.mean()
     # factor = 0.5*factor
 

@@ -1,21 +1,20 @@
-import numpy as np
-from simple_parsing.helpers.fields import choice
-from simple_parsing.helpers.hparams import HyperParameters, log_uniform
-import torch
-from target_prop.utils import get_list_of_values
-from typing import Any, ClassVar, Dict, Type, List, Optional, Union
-from dataclasses import dataclass
-from torch.optim.optimizer import Optimizer
-from torch import nn
 import logging
+from dataclasses import dataclass
+from typing import Any, ClassVar, Dict, List, Optional, Type
+
+import numpy as np
+import torch
+from simple_parsing.helpers.fields import choice, list_field
+from simple_parsing.helpers.serialization.serializable import Serializable
+from torch import nn
+from torch.optim.optimizer import Optimizer
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class OptimizerConfig(HyperParameters):
-    """ Configuration options for an optimizer.
-    """
+class OptimizerConfig(Serializable):
+    """Configuration options for an optimizer."""
 
     # Class variable that holds the types of optimizers that are available.
     available_optimizers: ClassVar[Dict[str, Type[Optimizer]]] = {
@@ -24,12 +23,11 @@ class OptimizerConfig(HyperParameters):
     }
 
     # Type of Optimizer to use.
-    type: str = choice(available_optimizers.keys(), default="sgd")
-    # BUG: Little bug here, won't search over this in sweeps for now.
-    # categorical("sgd", "adam"], default="adam", strict=True)
+    type: str = choice(*available_optimizers.keys(), default="sgd")
 
     # Learning rate of the optimizer.
-    lr: Union[List[float], float] = log_uniform(1e-4, 1e-1, default=5e-3)
+    lr: List[float] = list_field(4e-3)
+
     # Weight decay coefficient.
     weight_decay: Optional[float] = None
 
@@ -38,12 +36,11 @@ class OptimizerConfig(HyperParameters):
     momentum: float = 0.9
 
     def __post_init__(self):
-        super().__post_init__()
         if isinstance(self.lr, np.ndarray):
             self.lr = self.lr.tolist()
 
     def make_optimizer(self, network: nn.Module, lrs: List[float] = None) -> Optimizer:
-        """ Create the optimizer, using the options set in this object """
+        """Create the optimizer, using the options set in this object"""
         optimizer_class = self.available_optimizers[self.type]
         # List of learning rates for each layer.
 
@@ -81,5 +78,6 @@ class OptimizerConfig(HyperParameters):
             f"optimizer kwargs for network of type {type(network).__name__}: {optimizer_kwargs}"
         )
         return optimizer_class(  # type: ignore
-            params, **optimizer_kwargs,
+            params,
+            **optimizer_kwargs,
         )

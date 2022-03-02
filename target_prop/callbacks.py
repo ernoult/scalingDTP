@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 import contextlib
 import warnings
 from logging import getLogger as get_logger
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -11,7 +12,7 @@ from torch.nn import functional as F
 
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
-from target_prop.utils import named_trainable_parameters
+from target_prop.utils.utils import named_trainable_parameters
 
 logger = get_logger(__name__)
 
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class CompareToBackpropCallback(Callback):
-    """ Callback that compares the weight updates from DTP with those obtained from backprop. """
+    """Callback that compares the weight updates from DTP with those obtained from backprop."""
 
     def __init__(self, temp_beta: float = 0.005) -> None:
         """Callback that compares the weight updates from DTP with those obtained from backprop.
@@ -42,7 +43,6 @@ class CompareToBackpropCallback(Callback):
         outputs: Any,
         batch: Tuple[Tensor, Tensor],
         batch_idx: int,
-        dataloader_idx: int,
     ) -> None:
         # Keep the last batch.
         # Ideally, we'd be able to know which batch is the last, but we can't really do that atm,
@@ -172,7 +172,7 @@ def temporarily_change_beta(model: DTP, temp_beta: float = 0.005):
 
 
 class FeedbackTrainingFigureCallback(Callback):
-    """ TODO: (refactoring): Move the 'feedback training figure' stuff from DTP to this callback.
+    """TODO: (refactoring): Move the 'feedback training figure' stuff from DTP to this callback.
 
     The `on_before_backward`/etc methods seem to work fine even with manual optimization.
     The only problem is that this callback would need to know what layer / iteration the model is

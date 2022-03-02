@@ -1,20 +1,33 @@
 from abc import ABC
 from dataclasses import dataclass
-from typing import ClassVar
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from target_prop.wandb_utils import LoggedToWandb
+from typing import Callable, ClassVar, Type
+
+from simple_parsing import choice
+from simple_parsing.helpers.serialization.serializable import Serializable
 
 try:
     from typing import Protocol
 except ImportError:
     from typing_extensions import Protocol
 
+from torch import Tensor, nn
 
-class Network(Protocol):
+activations = {
+    "relu": nn.ReLU,
+    "elu": nn.ELU,
+}
+
+
+class Network(Callable, Protocol):
     @dataclass
-    class HParams(HyperParameters, LoggedToWandb):
-        # Where objects of this type can be parsed from in the wandb configs.
-        _stored_at_key: ClassVar[str] = "net_hp"
+    class HParams(Serializable):
+        activation: str = choice(*activations.keys(), default="elu")
+        batch_size: int = 128
+
+        def __post_init__(self):
+            self.activation_class: Type[nn.Module] = activations[self.activation]
+
+    hparams: "Network.HParams"
 
     def __init__(self, in_channels: int, n_classes: int, hparams: HParams = None):
         ...

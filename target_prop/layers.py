@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from collections import OrderedDict, deque
-from typing import Tuple, Type, TypeVar
+from collections import deque
+from typing import Tuple, TypeVar
 
-import torch
 from torch import Tensor, nn
 from torch.nn.common_types import _size_2_t, _size_any_t
 from torch.nn.modules.pooling import AdaptiveMaxPool2d

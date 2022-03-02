@@ -1,12 +1,12 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+from typing import List, Type
 
-from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from target_prop.layers import MaxPool2d, Reshape
+from simple_parsing.helpers import list_field
 from torch import nn
+
+from target_prop.layers import MaxPool2d, Reshape
+
 from .network import Network
 
 
@@ -14,15 +14,12 @@ class SimpleVGG(nn.Sequential, Network):
     @dataclass
     class HParams(Network.HParams):
         channels: List[int] = list_field(128, 128, 256, 256, 512)
-        activation: Type[nn.Module] = choice(
-            {"relu": nn.ReLU, "elu": nn.ELU,}, default=nn.ELU,
-        )
         bias: bool = True
 
     def __init__(self, in_channels: int, n_classes: int, hparams: "SimpleVGG.HParams" = None):
         hparams = hparams or self.HParams()
         layers: OrderedDict[str, nn.Module] = OrderedDict()
-        activation: Type[nn.Module] = hparams.activation
+        activation: Type[nn.Module] = hparams.activation_class
 
         channels = [in_channels] + hparams.channels
         # NOTE: Can use [0:] and [1:] below because zip will stop when the shortest

@@ -1,167 +1,239 @@
-# coding=utf-8
-import argparse
 import os
-import pickle
-import sys
+from dataclasses import dataclass
+from logging import getLogger as get_logger
+from typing import Dict, List, Optional, Type
+import logging
+from simple_parsing.helpers.serialization.serializable import Serializable
+from simple_parsing.helpers import field
+import wandb
+from pytorch_lightning.loggers import LightningLoggerBase
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+import hydra
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning import Callback, LightningModule, Trainer, seed_everything
 
-import torch
-from tqdm import tqdm
+from target_prop.config import Config
+from target_prop.datasets.dataset_config import DatasetConfig
+from target_prop.models import Model, DTP, VanillaDTP, TargetProp, ParallelDTP, BaselineModel
+from target_prop.models.model import Model
+from target_prop.networks import  Network, ResNet18, ResNet34, SimpleVGG, LeNet
+from target_prop.networks.network import Network
+from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
+from target_prop.utils.hydra_utils import get_outer_class
 
-from target_prop.legacy import *
-
-parser = argparse.ArgumentParser(description="Testing idea of Yoshua")
-
-parser.add_argument(
-    "--epochs", type=int, default=15, help="number of epochs to train feedback weights(default: 15)"
-)
-parser.add_argument(
-    "--iter",
-    nargs="+",
-    type=int,
-    default=[5, 10],
-    help="number of learning iterating of feedback weights layer-wise per batch (default: [5, 10])",
-)
-parser.add_argument("--batch-size", type=int, default=128, help="batch dimension (default: 128)")
-parser.add_argument("--device-label", type=int, default=0, help="device (default: 1)")
-parser.add_argument("--lr_f", type=float, default=0.05, help="learning rate (default: 0.05)")
-parser.add_argument(
-    "--lr_b",
-    nargs="+",
-    type=float,
-    default=[0.05, 0.05],
-    help="learning rates for the feedback weights (default: [0.05, 0.05])",
-)
-parser.add_argument("--beta", type=float, default=0.1, help="nudging parameter (default: 0.1)")
-parser.add_argument(
-    "--C", nargs="+", type=int, default=[32, 64], help="tab of channels (default: [32, 64])"
-)
-parser.add_argument(
-    "--noise",
-    nargs="+",
-    type=float,
-    default=[0.05, 0.5],
-    help="tab of noise amplitude (default: [0.05, 0.5])",
-)
-parser.add_argument(
-    "--activation",
-    type=str,
-    default="elu",
-    help="activation function in conv layers (default: elu)",
-)
-parser.add_argument(
-    "--path", type=str, default=None, help="Path directory for the results (default: None)"
-)
-parser.add_argument(
-    "--last-trial",
-    default=False,
-    action="store_true",
-    help="specifies if the current trial is the last one (default: False)",
-)
-parser.add_argument("--seed", type=int, default=None, help="seed selected (default: None)")
-parser.add_argument(
-    "--scheduler",
-    default=False,
-    action="store_true",
-    help="use of a learning rate scheduler for the forward weights (default: False)",
-)
-parser.add_argument("--wdecay", type=float, default=None, help="Weight decay (default: None)")
-
-args = parser.parse_args()
-
-train_loader, test_loader = createDataset(args)
+logger = get_logger(__name__)
 
 
-if args.device_label >= 0:
-    device = torch.device("cuda:" + str(args.device_label))
-else:
-    device = torch.device("cpu")
+@dataclass
+class Options(Serializable):
+    """ All the options required for a run. This dataclass acts as a schema for the Hydra configs.
+    
+    For more info, see https://hydra.cc/docs/tutorials/structured_config/schema/
+    """
+
+    # Configuration for the dataset + transforms.
+    dataset: DatasetConfig  # = field(default_factory=DatasetConfig)
+
+    # The model used.
+    model: Model.HParams  # = field(default_factory=Model.HParams)
+    # The network to be used.
+    network: Network.HParams  # = field(default_factory=SimpleVGG.HParams)
+
+    # Keyword arguments for the Trainer constructor.
+    trainer: Dict = field(default_factory=dict)  # type: ignore
+
+    # Configs for the callbacks.
+    callbacks: Dict = field(default_factory=dict)  # type: ignore
+
+    # Config(s) for the logger(s).
+    logger: Dict = field(default_factory=dict)  # type: ignore
+
+    # Wether to run in debug mode or not.
+    debug: bool = False
+
+    verbose: bool = False
+
+    # Random seed.
+    seed: Optional[int] = None
+
+    # Name for the experiment.
+    name: str = ""
 
 
-if args.seed is not None:
-    seed = args.seed
-    torch.manual_seed(seed)
-else:
-    g = torch.Generator(device=device)
-    seed = g.seed()
-    torch.manual_seed(seed)
+cs = ConfigStore.instance()
+cs.store(name="base_options", node=Options)
 
-print("Selected seed: {}".format(seed))
+cs.store(group="model", name="model", node=Model.HParams())
+cs.store(group="model", name="dtp", node=DTP.HParams())
+cs.store(group="model", name="parallel_dtp", node=ParallelDTP.HParams())
+cs.store(group="model", name="vanilla_dtp", node=VanillaDTP.HParams())
+cs.store(group="model", name="target_prop", node=TargetProp.HParams())
+cs.store(group="model", name="backprop", node=BaselineModel.HParams())
+
+cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
+cs.store(group="network", name="lenet", node=LeNet.HParams())
+cs.store(group="network", name="resnet18", node=ResNet18.HParams())
+cs.store(group="network", name="resnet34", node=ResNet34.HParams())
+
+cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
+cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
+
+
+@hydra.main(config_path="conf", config_name="config")
+def main(raw_options: DictConfig) -> None:
+    print(os.getcwd())
+    options = OmegaConf.to_object(raw_options)
+    assert isinstance(options, Options)
+    experiment = Experiment(options)
+    assert isinstance(options, Options)
+    experiment.run()
+
+
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+
+
+@dataclass
+class Experiment(Serializable):
+    """ Experiment class. Created from the Options that are parsed from Hydra. Can be used to run
+    the experiment.
+    """
+
+    options: Options
+    trainer: Trainer = field(init=False, to_dict=False)
+    model: Model = field(init=False, to_dict=False)
+    network: Network = field(init=False, to_dict=False)
+    datamodule: VisionDataModule = field(init=False, to_dict=False)
+
+    callbacks: List[Callback] = field(init=False, default_factory=list, to_dict=False)
+    loggers: List[LightningLoggerBase] = field(init=False, default_factory=list, to_dict=False)
+
+    def __post_init__(self) -> None:
+        """ Actually creates the callbacks and trainers etc from the options in `options`.
+        They are then stored in `self`. 
+        """
+        actual_callbacks: Dict[str, Callback] = {}
+
+        # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
+        # fields have the right type.
+
+        # Create the callbacks
+        assert isinstance(self.options.callbacks, dict)
+        for name, callback in self.options.callbacks.items():
+            if isinstance(callback, dict):
+                callback = hydra.utils.instantiate(callback)
+            elif not isinstance(callback, Callback):
+                raise ValueError(f"Invalid callback value {callback}")
+            actual_callbacks[name] = callback
+        self.callbacks = list(actual_callbacks.values())
+
+        # Create the loggers, if any.
+        assert isinstance(self.options.logger, dict)
+        actual_loggers: Dict[str, LightningLoggerBase] = {}
+        for name, lightning_logger in self.options.logger.items():
+            if isinstance(lightning_logger, dict):
+                lightning_logger = hydra.utils.instantiate(lightning_logger)
+            elif not isinstance(lightning_logger, LightningLoggerBase):
+                raise ValueError(f"Invalid logger value {lightning_logger}")
+        self.logger = list(actual_loggers.values())
+
+        # Create the Trainer.
+        assert isinstance(self.options.trainer, dict)
+        if self.options.debug:
+            logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
+            self.options.trainer["max_epochs"] = 1
+        trainer = hydra.utils.instantiate(
+            self.options.trainer, callbacks=self.callbacks, logger=self.logger,
+        )
+        assert isinstance(trainer, Trainer)
+        self.trainer = trainer
+
+        # Create the datamodule:
+        dataset: DatasetConfig = self.options.dataset
+        self.datamodule = dataset.make_datamodule(batch_size=self.options.model.batch_size)
+
+        # Create the network
+        network_hparams: Network.HParams = self.options.network
+        network_type: Type[Network] = get_outer_class(type(network_hparams))
+        assert isinstance(
+            network_hparams, network_type.HParams
+        ), "HParams type should match net type"
+        self.network = network_type(
+            in_channels=self.datamodule.dims[0],
+            n_classes=self.datamodule.num_classes,  # type: ignore
+            hparams=network_hparams,
+        )
+
+        # Create the model
+        model_hparams: Model.HParams = self.options.model
+        model_type: Type[Model] = get_outer_class(type(model_hparams))
+        assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
+        self.model = model_type(
+            network=self.network,
+            datamodule=self.datamodule,
+            hparams=model_hparams,
+            network_hparams=network_hparams,
+            config=Config(seed=self.options.seed, debug=self.options.debug),
+        )
+        assert isinstance(self.model, LightningModule)
+
+    def run(self) -> float:
+        if self.options.seed is not None:
+            seed_everything(seed=self.options.seed, workers=True)
+
+        root_logger = logging.getLogger()
+        if self.options.debug:
+            root_logger.setLevel(logging.INFO)
+        elif self.options.verbose:
+            root_logger.setLevel(logging.DEBUG)
+
+        root_logger = logging.getLogger()
+        # --- Run the experiment. ---
+        self.trainer.fit(self.model, datamodule=self.datamodule)
+
+        val_results = self.trainer.validate(model=self.model, datamodule=self.datamodule)
+        assert len(val_results) == 1
+        top1_accuracy: float = val_results[0]["val/accuracy"]
+        top5_accuracy: float = val_results[0]["val/top5_accuracy"]
+        print(f"Validation top1 accuracy: {top1_accuracy:.1%}")
+        print(f"Validation top5 accuracy: {top5_accuracy:.1%}")
+
+        val_error = 1 - top1_accuracy
+        if not self.options.debug:
+            from orion.client import report_objective
+
+            report_objective(val_error)
+
+        if wandb.run:
+            wandb.finish()
+
+        return val_error
+        # TODO: Enable this later.
+        # Run on the test set:
+        # test_results = trainer.test(model, datamodule=datamodule, verbose=True)
+        # top1_accuracy: float = test_results[0]["test/accuracy"]
+        # top5_accuracy: float = test_results[0]["test/top5_accuracy"]
+        # print(f"Test top1 accuracy: {top1_accuracy:.1%}")
+        # print(f"Test top5 accuracy: {top5_accuracy:.1%}")
+
+
+def run(options: Options):
+    if options.seed is not None:
+        seed_everything(seed=options.seed, workers=True)
+
+    root_logger = logging.getLogger()
+    if options.debug:
+        root_logger.setLevel(logging.INFO)
+    elif options.verbose:
+        root_logger.setLevel(logging.DEBUG)
+
+    root_logger = logging.getLogger()
+
+    experiment = Experiment(options=options)
+
+    # --- Run the experiment. ---
+    return experiment.run()
 
 
 if __name__ == "__main__":
-
-    # Create a directory to save results and hyperparameters
-    if args.path is not None:
-        BASE_PATH = createPath(args)
-        command_line = " ".join(sys.argv)
-        createHyperparameterfile(BASE_PATH, command_line, seed, args)
-
-    # Create neural network
-    net = VGG(args)
-    net = net.to(device)
-    print(net)
-
-    # Create optimizers for forward and feedback weights
-    criterion = torch.nn.CrossEntropyLoss(reduction="none")
-    optimizers = createOptimizers(net, args, forward=True)
-
-    if args.scheduler:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizers[0], 85, eta_min=1e-5)
-        print("We are using a learning rate scheduler!")
-
-    train_acc = []
-    test_acc = []
-
-    # train the neural network by DTP
-    for epoch in range(args.epochs):
-        train_loss = 0
-        correct = 0
-        total = 0
-        pbar = tqdm(train_loader, desc=f"Training Epoch {epoch}")
-
-        for batch_idx, (data, target) in enumerate(pbar):
-            net.train()
-            data, target = data.to(device), target.to(device)
-
-            # compute DTP gradient on the current batch
-            pred, loss, layer_losses_b, layer_losses_f = train_batch(
-                args, net, data, optimizers, target, criterion
-            )
-
-            train_loss += loss.item()
-            _, predicted = pred.max(1)
-            targets = target
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-            train_accuracy = correct / total
-            loss_f = sum(layer_losses_f) / len(layer_losses_f)
-            loss_b = sum(layer_losses_b) / len(layer_losses_b)
-
-            pbar.set_postfix(
-                {
-                    "Loss": f"{loss.item():.3f}",
-                    "Train Acc": f"{train_accuracy:.2%}",
-                    "F_loss": f"{loss_f:.3f}",
-                    "B_loss": f"{loss_b:.3f}",
-                }
-            )
-            # progress_bar(batch_idx, len(train_loader), 'Loss: %.3f | Train Acc: %.3f%% (%d/%d)'% (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-        train_acc.append(100.0 * correct / total)
-        test_acc_temp = test(net, test_loader, device)
-        test_acc.append(test_acc_temp)
-
-        # save accuracies in the results directory
-        if args.path is not None:
-            results = {"train_acc": train_acc, "test_acc": test_acc}
-            outfile = open(os.path.join(BASE_PATH, "results"), "wb")
-            pickle.dump(results, outfile)
-            outfile.close()
-
-        if args.scheduler:
-            scheduler.step()
-
-        # if the train accuracy is less than 30%, kill training
-        if train_accuracy < 0.30:
-            print(f"Accuracy is terrible ({train_accuracy:.2%}), exiting early")
-            break
+    main()

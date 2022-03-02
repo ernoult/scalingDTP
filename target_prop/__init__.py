@@ -1,3 +1,3 @@
-from .config import Config
 from .backward_layers import invert
-from .models import DTP, ParallelDTP, BaselineModel  # BaseModel
+from .config import Config
+from .models import DTP, BaselineModel, ParallelDTP  # BaseModel

@@ -1,13 +1,15 @@
 from __future__ import annotations
+
 import contextlib
 import warnings
+from typing import Any, Dict, Iterable, List, Tuple, TypeVar, Union
+
 from importlib_metadata import collections
-from torch.distributions import Normal as Normal_
-from torch import Tensor
-from typing import Any, Dict, List, TypeVar, Union, Iterable, Tuple
 from simple_parsing.helpers import field
-from torch import nn
+from torch import Tensor, nn
+from torch.distributions import Normal as Normal_
 from torch.nn.parameter import Parameter
+
 T = TypeVar("T")
 V = TypeVar("V", bound=Union[int, float])
 
@@ -17,22 +19,25 @@ def flag(v: Any, *args, **kwargs):
 
 
 class Normal(Normal_):
-    """ Little 'patch' for the `Normal` class from `torch.distributions` that makes it
+    """Little 'patch' for the `Normal` class from `torch.distributions` that makes it
     possible to add an offset to a distribution.
     """
 
     def __add__(self, other: int | float | Tensor) -> Normal:
-        return type(self)(loc=self.loc + other, scale=self.scale,)
+        return type(self)(
+            loc=self.loc + other,
+            scale=self.scale,
+        )
 
     def __radd__(self, other: int | float | Tensor) -> Normal | Any:
         return self.__add__(other)
 
 
 def get_list_of_values(values: V | list[V], out_length: int, name: str = "") -> list[V]:
-    """Gets a list of values of length `out_length` from `values`. 
-    
+    """Gets a list of values of length `out_length` from `values`.
+
     If `values` is a single value, it gets repeated `out_length` times to form the
-    output list. 
+    output list.
     If `values` is a list:
         - if it has the right length, it is returned unchanged;
         - if it is too short, the last value is repeated to get the right length;
@@ -123,23 +128,24 @@ def split_batch(batched_v: Tensor, n: int) -> Tensor:
 
 
 import random
-import torch
+
 import numpy as np
+import torch
 
 
 @contextlib.contextmanager
 def make_reproducible(seed: int):
-    """ Makes the random operations within a block of code reproducible for a given seed. """
+    """Makes the random operations within a block of code reproducible for a given seed."""
     # First: Get the starting random state, and restore it after.
     start_random_state = random.getstate()
     start_np_rng_state = np.random.get_state()
     with torch.random.fork_rng():
         # Set the random state, using the given seed.
         random.seed(seed)
-        np_seed = random.randint(0, 2 ** 32 - 1)
+        np_seed = random.randint(0, 2**32 - 1)
         np.random.seed(np_seed)
 
-        torch_seed = random.randint(0, 2 ** 32 - 1)
+        torch_seed = random.randint(0, 2**32 - 1)
         torch.random.manual_seed(torch_seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(torch_seed)
@@ -149,3 +155,31 @@ def make_reproducible(seed: int):
     # Restore the random state to the original state.
     np.random.set_state(start_np_rng_state)
     random.setstate(start_random_state)
+
+
+from typing import Any, Callable, Type, TypeVar
+
+from simple_parsing.helpers.serialization import encode
+from simple_parsing.helpers.serialization.decoding import _register
+
+_DecodingFn = Callable[[Any], T]
+
+
+def register_decode(some_type: Type[T]) -> Callable[[_DecodingFn[T]], _DecodingFn[T]]:
+    """Register a decoding function for the type `some_type`."""
+
+    def wrapper(f: _DecodingFn[T]) -> _DecodingFn[T]:
+        _register(some_type, f)
+        return f
+
+    return wrapper
+
+
+@encode.register(torch.device)
+def _encode_device(v: torch.device) -> str:
+    return v.type
+
+
+@register_decode(torch.device)
+def _decode_device(v: str) -> torch.device:
+    return torch.device(v)

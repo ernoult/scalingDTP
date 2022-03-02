@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
 import plotly.express as px
+import seaborn as sns
 
 # Read data
 data_path = "./data/data.csv"
@@ -96,7 +96,15 @@ angles_fig: go.Bar = px.bar(
     # points="all",
     width=1000,
     height=500,
-    category_orders={"model": [DRL_RANDOM, L_DRL_RANDOM, DRL, L_DRL, L_DRL_SYM,]},
+    category_orders={
+        "model": [
+            DRL_RANDOM,
+            L_DRL_RANDOM,
+            DRL,
+            L_DRL,
+            L_DRL_SYM,
+        ]
+    },
 )
 print(angles_fig.layout)
 

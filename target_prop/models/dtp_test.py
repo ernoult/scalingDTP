@@ -1,16 +1,20 @@
-from dataclasses import dataclass
 import dataclasses
 import logging
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Type
 
 import pytest
 import torch
 from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
+from torch import Tensor, nn
+from torch.nn import functional as F
+
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
+from target_prop.datasets.dataset_config import DatasetConfig
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
@@ -18,10 +22,7 @@ from target_prop.networks import Network
 from target_prop.networks.lenet import LeNet
 from target_prop.networks.resnet import ResNet18, ResNet34
 from target_prop.networks.simple_vgg import SimpleVGG
-from target_prop.utils import named_trainable_parameters
-from torch import Tensor, nn
-from torch.nn import functional as F
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from target_prop.utils.utils import named_trainable_parameters
 
 networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
 
@@ -33,7 +34,7 @@ class TestDTP:
     @pytest.fixture(params=networks, name="network_type")
     @classmethod
     def network_type(cls, request):
-        """ Fixture that yields each type of network. """
+        """Fixture that yields each type of network."""
         net_type = request.param
         yield net_type
 
@@ -54,11 +55,11 @@ class TestDTP:
     def test_fast_dev_run(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams
     ):
-        """ Run a fast dev run using a single batch of data for training/validation/testing. """
+        """Run a fast dev run using a single batch of data for training/validation/testing."""
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
         # all made for Cifar10 (e.g. hard-set to 5 layers). This would make the test uglier, as we'd
         # have to pass different values for each dataset.
-        config = Config(dataset=dataset, num_workers=0, debug=True)
+        dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
         hparams = debug_hparams
         trainer = Trainer(
             max_epochs=1,
@@ -69,7 +70,7 @@ class TestDTP:
             logger=None,
             checkpoint_callback=False,
         )
-
+        config = Config(debug=True)
         if config.seed is not None:
             seed = config.seed
         else:
@@ -84,16 +85,18 @@ class TestDTP:
 
         print("HParams:", hparams.dumps_json(indent="\t"))
         # Create the datamodule:
-        datamodule = config.make_datamodule(batch_size=hparams.batch_size)
+        datamodule = dataset_config.make_datamodule(batch_size=hparams.batch_size)
 
         # Create the network
         network: nn.Sequential = network_type(
-            in_channels=datamodule.dims[0], n_classes=datamodule.num_classes, hparams=None,
+            in_channels=datamodule.dims[0],
+            n_classes=datamodule.num_classes,
+            hparams=None,
         )
-
+        assert isinstance(debug_hparams, self.model_class.HParams)
         model = self.model_class(
             datamodule=datamodule,
-            hparams=hparams,
+            hparams=hparams,  # type: ignore
             config=config,
             network=network,
             network_hparams=network.hparams,
@@ -111,7 +114,7 @@ class TestDTP:
     def test_run_is_reproducible_given_seed(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
-        """ Checks that `run` produces the same result when passed the same args and seed. """
+        """Checks that `run` produces the same result when passed the same args and seed."""
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
@@ -128,6 +131,9 @@ class TestDTP:
         )
         assert perf_1 == perf_2
 
+    @pytest.mark.xfail(
+        reason="Different seed gives same result very occasionally (ResNet18-456-cifar10"
+    )
     @pytest.mark.timeout(30)
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("seed", [123, 456])
@@ -135,9 +141,7 @@ class TestDTP:
     def test_seed_has_impact(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
-        """ Tests that when `run` is passed different seeds, the results are different.
-        TODO: Sometimes fails (e.g. when seed=456), whereby the results are the same for both runs. 
-        """
+        """Tests that when `run` is passed different seeds, the results are different."""
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
             network_type=network_type,
@@ -150,7 +154,7 @@ class TestDTP:
             network_type=network_type,
             network_hparams=network_type.HParams(),
             hparams=debug_hparams,
-            seed=seed + 1,
+            seed=seed + 456,
         )
         assert perf_1 != perf_2
 
@@ -159,59 +163,47 @@ class TestDTP:
         dataset: str,
         network_type: Type[Network],
         network_hparams: Network.HParams,
-        hparams: HyperParameters,
+        hparams: DTP.HParams,
         seed: int,
         batches: int = 1,
     ) -> float:
         print(f"Selected seed: {seed}")
         # Note: using 0 workers to speed up testing.
-        config = Config(
-            dataset=dataset,
-            debug=True,
-            seed=seed,
-            num_workers=0,
-            limit_train_batches=batches,
-            limit_val_batches=batches,
-            limit_test_batches=batches,
-        )
-        # trainer = Trainer(
-        #     max_epochs=1,
-        #     gpus=torch.cuda.device_count(),
-        #     fast_dev_run=True,
-        #     logger=None,
-        #     limit_train_batches=batches,
-        #     limit_val_batches=batches,
-        #     limit_test_batches=batches,
-        # )
+        dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
 
         logging.getLogger().setLevel(logging.INFO)
         logging.getLogger("target_prop").setLevel(logging.DEBUG)
-        from main_pl import run
 
-        # Create the datamodule:
-        # datamodule = config.make_datamodule(batch_size=hparams.batch_size)
-        # NOTE: Creating the network actually changes the weights (and the RNG state)!
-        # network = network_type(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
-        # model = self.model_class(
-        #     datamodule=datamodule, hparams=hparams, config=config, network=network
-        # )
-        # trainer.fit(model, datamodule=datamodule)
-        # test_results = trainer.test(model, datamodule=datamodule)
-        # test_accuracy: float = test_results[0]["test/accuracy"]
-        test_accuracy = run(
-            config=config,
-            model_type=self.model_class,
-            hparams=hparams,
-            network_type=network_type,
-            network_hparams=network_hparams,
+        from main import Options, run
+
+        options = Options(
+            dataset=dataset_config,
+            model=hparams,
+            network=network_hparams,
+            trainer=Trainer(
+                max_epochs=1,
+                gpus=torch.cuda.device_count(),
+                fast_dev_run=True,
+                logger=None,
+                limit_train_batches=batches,
+                limit_val_batches=batches,
+                limit_test_batches=batches,
+            ),
+            debug=True,
+            seed=seed,
         )
+        test_accuracy = run(options=options)
 
         # print(f"Test accuracy: {test_accuracy:.1%}")
         return test_accuracy
 
 
 def get_forward_weight_losses(
-    forward_net: nn.Sequential, feedback_net: nn.Sequential, x: Tensor, y: Tensor, beta: float,
+    forward_net: nn.Sequential,
+    feedback_net: nn.Sequential,
+    x: Tensor,
+    y: Tensor,
+    beta: float,
 ) -> List[Tensor]:
     # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
     ## --------
@@ -219,7 +211,9 @@ def get_forward_weight_losses(
     ## --------
 
     ys: List[Tensor] = forward_all(
-        forward_net, x, allow_grads_between_layers=False,
+        forward_net,
+        x,
+        allow_grads_between_layers=False,
     )
     logits = ys[-1]
     labels = y

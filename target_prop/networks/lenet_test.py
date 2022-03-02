@@ -6,28 +6,9 @@ pytest target_prop/networks/lenet_test.py -s
 """
 
 import os
-import pdb
+import sys
 from collections import defaultdict
-from dataclasses import dataclass
-from email.policy import default
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    ClassVar,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Tuple,
-    Type,
-)
-from typing import OrderedDict
-from torch import Tensor
-
-
-from torch.utils.data import DataLoader
-from torch import Tensor
-
+from typing import Any, Dict, List, OrderedDict, Tuple, Type
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,30 +16,31 @@ import pandas as pd
 import pytest
 import seaborn as sns
 import torch
-from pytorch_lightning import LightningDataModule, Trainer
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from torch import Tensor
+from torch.utils.data import DataLoader
+
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.callbacks import get_backprop_grads
 from target_prop.config import Config
+from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
-from target_prop.models.dtp import FeedbackOptimizerConfig, ForwardOptimizerConfig
 from target_prop.networks import LeNet
-from target_prop.utils import (
-    is_trainable,
-    make_reproducible,
-    named_trainable_parameters,
-)
+from target_prop.optimizer_config import OptimizerConfig
+from target_prop.utils.utils import is_trainable, named_trainable_parameters
+
+pytestmark = pytest.mark.skipif("-vv" not in sys.argv, reason="These tests take a while to run.")
 
 
 @pytest.fixture(scope="module", params=[123, 124, 125, 126, 127])
 def seed(request):
-    """ Fixture that seeds all the randomness, and provides the random seed used. 
-    
+    """Fixture that seeds all the randomness, and provides the random seed used.
+
     When another fixture uses this one, it is also re-run for every seed here, and has its
-    randomness seeded. 
+    randomness seeded.
 
     Starting from this fixture, a "graph" of fixtures is created, where every node that follows is
     using the same seed as its parent, etc.
@@ -75,7 +57,7 @@ def count_parameters(model):
 
 @pytest.fixture(scope="module", params=[[0.2, 0.2, 0.1]])
 def noise(request):
-    """ NOTE: Creating a fixture for this so that all tests get the values. """
+    """NOTE: Creating a fixture for this so that all tests get the values."""
     # NOTE: layer order: [first, ..., last]
     return request.param
 
@@ -88,18 +70,18 @@ def feedback_lrs(request):
 
 @pytest.fixture(scope="module")
 def dtp_hparams():
-    """Fixture that returns the hyper-parameters of L-DRL algo (DTP) """
+    """Fixture that returns the hyper-parameters of L-DRL algo (DTP)"""
     return DTP.HParams(
         feedback_training_iterations=[41, 51, 24],
         batch_size=256,
         noise=[0.41640228838517584, 0.3826261146623929, 0.1395382069358601],
         beta=0.4655,
-        b_optim=FeedbackOptimizerConfig(
+        b_optim=OptimizerConfig(
             type="sgd",
             lr=[0.0007188427494432325, 0.00012510321884615596, 0.03541466958291287],
             momentum=0.9,
         ),
-        f_optim=ForwardOptimizerConfig(type="sgd", lr=0.03618, weight_decay=1e-4, momentum=0.9),
+        f_optim=OptimizerConfig(type="sgd", lr=[0.03618], weight_decay=1e-4, momentum=0.9),
         max_epochs=90,
         init_symetric_weights=False,
     )
@@ -107,17 +89,22 @@ def dtp_hparams():
 
 @pytest.fixture(scope="module")
 def config(seed: int):
-    return Config(dataset="cifar10", num_workers=0, debug=True, seed=seed)
+    return Config(debug=True, seed=seed)
 
 
 @pytest.fixture(scope="module")
-def datamodule(config: Config, dtp_hparams: DTP.HParams):
-    return config.make_datamodule(batch_size=dtp_hparams.batch_size)
+def dataset_config(seed: int):
+    return DatasetConfig(dataset="cifar10", num_workers=0)
+
+
+@pytest.fixture(scope="module")
+def datamodule(dataset_config: DatasetConfig, dtp_hparams: DTP.HParams):
+    return dataset_config.make_datamodule(batch_size=dtp_hparams.batch_size)
 
 
 @pytest.fixture(scope="module")
 def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
-    """ Yields a batch of data, for the given seed. """
+    """Yields a batch of data, for the given seed."""
     # Setup CIFAR10 datamodule
     datamodule.prepare_data()
     datamodule.setup(stage="fit")
@@ -135,7 +122,7 @@ def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
 
 @pytest.fixture(scope="module")
 def initial_weights(seed: int, datamodule: LightningDataModule, x_and_y: Tuple[Tensor, Tensor]):
-    """ Module-wide fixture that gives initial weights for a given seed. """
+    """Module-wide fixture that gives initial weights for a given seed."""
     net = LeNet(
         in_channels=datamodule.dims[0],
         n_classes=datamodule.num_classes,  # type: ignore
@@ -163,7 +150,7 @@ def network(
         hparams=LeNet.HParams(bias=True),
     )
     net.load_state_dict(initial_weights, strict=True)
-    net.to(device=config.device)
+    net.to(device=torch.device(config.device))
     x, _ = x_and_y
     _ = net(x)  # dummy forward pass just to initialize the lazy layers.
     return net
@@ -185,7 +172,7 @@ def no_bias_network(
     missing, unexpected = net.load_state_dict(initial_weights, strict=False)
     assert not missing
     assert all("bias" in param_name for param_name in unexpected)
-    net.to(device=config.device)
+    net.to(device=torch.device(config.device))
     # mark_as_invertible(net)
     x, _ = x_and_y
     _ = net(x)  # dummy forward pass just to initialize the lazy layers, if any.
@@ -194,7 +181,10 @@ def no_bias_network(
 
 @pytest.fixture(scope="function")
 def dtp_model(
-    network: LeNet, config: Config, datamodule: LightningDataModule, dtp_hparams: DTP.HParams,
+    network: LeNet,
+    config: Config,
+    datamodule: VisionDataModule,
+    dtp_hparams: DTP.HParams,
 ):
     # config = Config(dataset="cifar10", num_workers=0, debug=False)
     # datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
@@ -207,11 +197,16 @@ def dtp_model(
 @pytest.fixture(scope="function")
 def dtp_no_bias_model(
     no_bias_network: LeNet,
-    datamodule: LightningDataModule,
+    datamodule: VisionDataModule,
     config: Config,
     dtp_hparams: DTP.HParams,
 ):
-    model = DTP(datamodule=datamodule, network=no_bias_network, hparams=dtp_hparams, config=config,)
+    model = DTP(
+        datamodule=datamodule,
+        network=no_bias_network,
+        hparams=dtp_hparams,
+        config=config,
+    )
     model.to(device=config.device)
     return model
 
@@ -222,7 +217,7 @@ def backprop_grads(
     datamodule: LightningDataModule,
     initial_weights: OrderedDict[str, Tensor],
 ):
-    """ Returns the backprop gradients for a given network (for a given seed). """
+    """Returns the backprop gradients for a given network (for a given seed)."""
     # NOTE: We want to compute these backprop gradients only once per seed and reuse them in all
     # tests. Therefore, we need to create a network here that is used only for those.
     x, y = x_and_y
@@ -244,7 +239,7 @@ def backprop_grads_no_bias(
     datamodule: LightningDataModule,
     initial_weights: OrderedDict[str, Tensor],
 ):
-    """ Returns the backprop gradients for a given network without biases (for a given seed). """
+    """Returns the backprop gradients for a given network without biases (for a given seed)."""
     # NOTE: We want to compute these backprop gradients only once per seed and reuse them in all
     # tests. Therefore, we need to create a network here that is used only for those.
     x, y = x_and_y
@@ -265,8 +260,8 @@ def num_iters(request):
 
 
 class TestLeNet:
-    angles_data = {}
-    distance_data = {}
+    angles_data: Dict[str, Any] = {}
+    distance_data: Dict[str, Any] = {}
 
     @pytest.mark.skip("skip for now")
     @pytest.mark.parametrize("num_iters", [5000])
@@ -281,7 +276,7 @@ class TestLeNet:
         lr: float,
         seed: int,
     ):
-        """ Figure 4.2 """
+        """Figure 4.2"""
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
         # Fix seed
@@ -292,8 +287,9 @@ class TestLeNet:
             device = torch.device("cpu")
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=False)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule = get_datamodule(
+            dataset="cifar10", batch_size=dtp_hparams.batch_size, num_workers=0
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -332,9 +328,8 @@ class TestLeNet:
         # Make sure that converged output layer angle is less than 8 degrees
         assert layer_angles[-1] < 8.0
 
-    # @pytest.mark.skip("skip for now")
     def test_dtp_forward_updates_are_orthogonal_to_backprop_with_random_init(
-        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, seed: int
+        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, config: Config
     ):
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
@@ -342,8 +337,10 @@ class TestLeNet:
         # seed_everything(seed=seed, workers=True)
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=True)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        config = Config(debug=True)
+        datamodule = get_datamodule(
+            dataset="cifar10", batch_size=dtp_hparams.batch_size, num_workers=0
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -380,9 +377,8 @@ class TestLeNet:
         for key, value in angles.items():
             print(key, value)
 
-    # @pytest.mark.skip("skip for now")
     def test_dtp_forward_updates_match_backprop_with_symmetric_init(
-        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, seed: int
+        self, dtp_hparams: DTP.HParams, dtp_no_bias_model: DTP, config: Config
     ):
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
@@ -391,8 +387,9 @@ class TestLeNet:
         # seed_everything(seed=seed, workers=True)
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=True)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule = get_datamodule(
+            dataset="cifar10", num_workers=0, batch_size=dtp_hparams.batch_size
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -439,6 +436,7 @@ class TestLeNet:
         num_iters: List[int],
         noise: List[float],
         feedback_lrs: List[float],
+        config: Config,
     ):
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
@@ -451,8 +449,9 @@ class TestLeNet:
         # seed_everything(seed=seed, workers=True)
 
         # Setup CIFAR10 datamodule
-        config = Config(dataset="cifar10", num_workers=0, debug=True)
-        datamodule = config.make_datamodule(batch_size=dtp_hparams.batch_size)
+        datamodule = get_datamodule(
+            dataset="cifar10", num_workers=0, batch_size=dtp_hparams.batch_size
+        )
         datamodule.prepare_data()
         datamodule.setup(stage="fit")
 
@@ -528,7 +527,7 @@ class TestLeNet:
             y=y,
             network=no_bias_network,
             initial_weights=initial_weights,
-            network_hparams=no_bias_network.hparams,
+            network_hparams=no_bias_network.hparams,  # type: ignore
             backprop_gradients=backprop_grads_no_bias,
             beta=dtp_hparams.beta,
             n_pretraining_iterations=0,
@@ -553,7 +552,7 @@ class TestLeNet:
             y=y,
             network=no_bias_network,
             initial_weights=initial_weights,
-            network_hparams=no_bias_network.hparams,
+            network_hparams=no_bias_network.hparams,  # type: ignore
             backprop_gradients=backprop_grads_no_bias,
             beta=dtp_hparams.beta,
             n_pretraining_iterations=5000,
@@ -584,7 +583,9 @@ class TestLeNet:
         print("data:")
         print(df)
         df.to_csv(
-            os.path.join(path, "data.csv"), encoding="utf-8", index=False,
+            os.path.join(path, "data.csv"),
+            encoding="utf-8",
+            index=False,
         )
 
         # Save figure
@@ -627,15 +628,16 @@ class TestLeNet:
         dtp_model._feedback_optimizers = feedback_optimizers
 
 
-from torch import Tensor
-from target_prop.networks.lenet import LeNet
-from typing import Dict, Tuple, TypeVar
 import contextlib
 import io
-from torch import nn
-from torch.nn import functional as F
 from collections import OrderedDict
+from typing import Dict, Tuple, TypeVar
+
+from torch import Tensor, nn
+from torch.nn import functional as F
+
 from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
+from target_prop.networks.lenet import LeNet
 
 T = TypeVar("T")
 
@@ -647,7 +649,8 @@ def disable_prints():
 
 
 import typing
-from meulemans_dtp.main import Args
+
+# from meulemans_dtp.main import Args
 from target_prop.networks import Network
 
 our_network_param_names_to_theirs = {
@@ -662,7 +665,7 @@ our_network_param_names_to_theirs = {
         "fc2.linear1.weight": "_layers.3._weights",
     }
 }
-their_network_param_names_to_ours = {
+their_network_param_names_to_ours: Dict[Type[Network], Dict[str, str]] = {
     model_type: {v: k for k, v in param_name_mapping.items()}
     for model_type, param_name_mapping in our_network_param_names_to_theirs.items()
 }
@@ -680,7 +683,7 @@ def meulemans(
     n_pretraining_iterations: int,
     seed: int,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """ Minimal script to get the data of Figure 4.3 for Meuleman's DTP.
+    """Minimal script to get the data of Figure 4.3 for Meuleman's DTP.
 
     This is to be added in the test file of `lenet_test.py`.
     """
@@ -688,9 +691,9 @@ def meulemans(
     y = y.cuda()
 
     from meulemans_dtp import main
-    from meulemans_dtp.lib import train, builders, utils
+    from meulemans_dtp.final_configs.cifar10_DDTPConv import config as _config
+    from meulemans_dtp.lib import builders, train, utils
     from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
-    from meulemans_dtp.final_configs.cifar10_DDTPConv import config
 
     # Double-check that the network is at it's initial state.
     _initial_weights = network.state_dict()
@@ -705,13 +708,13 @@ def meulemans(
 
     parser = main.add_command_line_args()
     # NOTE: They seem to want those to be strings, and then they convert stuff back to lists.
-    config_with_strings = {k: str(v) if not isinstance(v, bool) else v for k, v in config.items()}
+    config_with_strings = {k: str(v) if not isinstance(v, bool) else v for k, v in _config.items()}
     parser.set_defaults(**config_with_strings)
     with disable_prints():
         args = parser.parse_args("")
         args = main.postprocess_args(args)
 
-    args = typing.cast(Args, args)  # Fake cast: doesnt do anything, it's just for the type checker.
+    # args = typing.cast(Args, args)  # Fake cast: doesnt do anything, it's just for the type checker.
 
     # NOTE: Setting this, just in case they use this value somewhere I haven't seen yet.
     args.random_seed = seed
@@ -749,7 +752,8 @@ def meulemans(
         meulemans_net=meulemans_network, x=x, y=y
     )
     _check_bp_grads_are_identical(
-        our_backprop_grads=backprop_gradients, meulemans_backprop_grads=meulemans_backprop_grads,
+        our_backprop_grads=backprop_gradients,
+        meulemans_backprop_grads=meulemans_backprop_grads,
     )
 
     # Q: the lrs have to be the same between the different models?
@@ -769,7 +773,7 @@ def meulemans(
     _check_forward_params_havent_moved(
         meulemans_net=meulemans_network, initial_network_weights=initial_network_weights
     )
-
+    loss_function: nn.Module
     # Get the loss function to use (extracted from their code, was saved on train_var).
     if args.output_activation == "softmax":
         loss_function = nn.CrossEntropyLoss()
@@ -823,9 +827,11 @@ def meulemans(
 
 
 def get_meulemans_backprop_grads(
-    meulemans_net: DDTPConvNetworkCIFAR, x: Tensor, y: Tensor,
+    meulemans_net: DDTPConvNetworkCIFAR,
+    x: Tensor,
+    y: Tensor,
 ) -> Dict[str, Tensor]:
-    """ Returns the backprop gradients for the meulemans network. """
+    """Returns the backprop gradients for the meulemans network."""
     # NOTE: Need to unfreeze the forward parameters of their network, since they apprear to be fixed
 
     meulemans_net_forward_params = _get_forward_parameters(meulemans_net)
@@ -842,7 +848,7 @@ def get_meulemans_backprop_grads(
 
 
 def translate(dtp_values: Dict[str, T]) -> "OrderedDict[str, T]":
-    """ Translate our network param names to theirs. """
+    """Translate our network param names to theirs."""
     return OrderedDict(
         [(our_network_param_names_to_theirs[LeNet][k], v) for k, v in dtp_values.items()]
     )
@@ -851,7 +857,7 @@ def translate(dtp_values: Dict[str, T]) -> "OrderedDict[str, T]":
 def translate_back(
     meulemans_values: Dict[str, T], network_type: Type[Network] = LeNet
 ) -> Dict[str, T]:
-    """ Translate thir network param names back to ours. """
+    """Translate thir network param names back to ours."""
     return {
         their_network_param_names_to_ours[network_type][k]: v for k, v in meulemans_values.items()
     }
@@ -945,7 +951,8 @@ def _check_outputs_are_identical(
 
 
 def _check_bp_grads_are_identical(
-    our_backprop_grads: Dict[str, Tensor], meulemans_backprop_grads: Dict[str, Tensor],
+    our_backprop_grads: Dict[str, Tensor],
+    meulemans_backprop_grads: Dict[str, Tensor],
 ):
     # Compares our BP gradients and theirs: they should be identical.
     # If not, then there's probably a difference between our network and theirs (e.g. activation).

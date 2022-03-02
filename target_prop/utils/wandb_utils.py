@@ -1,13 +1,13 @@
 """ Wandb utilities. """
-from typing import ClassVar, List, TypeVar
 import json
-import wandb
-from typing import Type, TypeVar, Dict, Optional
-from simple_parsing.helpers.serialization.serializable import Serializable
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from wandb.apis.public import Run
 from abc import ABC
 from pathlib import Path
+from typing import ClassVar, Dict, List, Optional, Type, TypeVar
+
+import wandb
+from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from simple_parsing.helpers.serialization.serializable import Serializable
+from wandb.apis.public import Run
 
 try:
     from simple_parsing.helpers.serialization.serializable import FrozenSerializable
@@ -17,53 +17,6 @@ except ImportError:
 S = TypeVar("S", bound=Serializable)
 
 _api: Optional[wandb.Api] = None
-
-
-class LoggedToWandb:
-    # Class attribute that indicates where objects of this type are to be found in the wandb config.
-    # NOTE: Either this value needs to be set, or the key need to be passed every time to
-    # `from_run`.
-    _stored_at_key: ClassVar[Optional[str]] = None
-
-    @classmethod
-    def from_run(
-        cls,
-        run_path: str,
-        key: str = None,
-        renamed_keys: Dict[str, str] = None,
-        removed_keys: List[str] = None,
-        cache_dir: Path = None,
-    ):
-        if key is None:
-            key = cls._stored_at_key
-        if key is None:
-            raise RuntimeError(
-                f"Don't know which key to look at in the wandb config to create entries of type "
-                f"{cls}, since `key` wasn't passed, and {cls._stored_at_key=}."
-            )
-        if not issubclass(cls, (Serializable, FrozenSerializable)):
-            raise NotImplementedError(
-                f"LoggedToWandb is supposed to be used on a subclass of either Serializable or "
-                f"FrozenSerializable."
-            )
-        if cache_dir is not None:
-            cached_file = cache_dir / Path(run_path.replace("/", "_")) / f"{cls.__name__}.json"
-            if cached_file.exists():
-                print(f"Loading from cached file at {cached_file}")
-                return cls.load_json(cached_file)
-
-        try:
-            instance = load_from_run(
-                cls, run_path, key=key, renamed_keys=renamed_keys, removed_keys=removed_keys
-            )
-        except RuntimeError as err:
-            raise RuntimeError(f"Unable to instantiate class {cls} from run {run_path}: {err}")
-
-        if cache_dir is not None:
-            cached_file = cache_dir / Path(run_path.replace("/", "_")) / f"{cls.__name__}.json"
-            cached_file.parent.mkdir(exist_ok=True, parents=True)
-            instance.save_json(cached_file)
-        return instance
 
 
 def load_from_run(

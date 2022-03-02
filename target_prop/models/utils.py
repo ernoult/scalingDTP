@@ -1,9 +1,10 @@
-from typing import Any, Sequence, Union, List
+from typing import Any, List, Sequence, Union
+
 import numpy as np
-from torch import Tensor
 import plotly.graph_objects as go
 from plotly.graph_objects import Figure
 from plotly.subplots import make_subplots
+from torch import Tensor
 
 
 def make_stacked_feedback_training_figure(
@@ -14,7 +15,7 @@ def make_stacked_feedback_training_figure(
 ) -> Figure:
     """Creates a stacked plot that shows the evolution of different values during a step of
     feedback training.
-    
+
     `all_values` should contain a sequence of list of lists. (a list of "metric_values").
     Each "metric_values" should contain the value of a metric, for each layer, for each iteration.
     `row_titles` should contain the name associated with each item in `all_values`.
@@ -50,12 +51,15 @@ def make_stacked_feedback_training_figure(
             x = np.arange(len(layer_values))
             trace = go.Scatter(x=x, y=layer_values)
             fig.add_trace(
-                trace, row=plot_id + 1, col=layer_id + 1,
+                trace,
+                row=plot_id + 1,
+                col=layer_id + 1,
             )
 
     # Add figure title
     fig.update_layout(
-        title_text=title_text, showlegend=False,
+        title_text=title_text,
+        showlegend=False,
     )
 
     for i, row_title in enumerate(row_titles):

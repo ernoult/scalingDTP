@@ -3,11 +3,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams.hparam import categorical, log_uniform, uniform
 from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
-from target_prop.layers import MaxPool2d, Reshape
 from torch import nn
 
+from target_prop.layers import MaxPool2d, Reshape
 from target_prop.networks.network import Network
 
 
@@ -15,19 +14,12 @@ class LeNet(nn.Sequential, Network):
     @dataclass
     class HParams(Network.HParams):
         channels: List[int] = list_field(32, 64)
-        activation: Type[nn.Module] = choice(
-            {
-                "relu": nn.ReLU,
-                "elu": nn.ELU,
-            },
-            default=nn.ELU,
-        )
         bias: bool = True
 
     def __init__(self, in_channels: int, n_classes: int, hparams: "LeNet.HParams" = None):
         hparams = hparams or self.HParams()
         layers: OrderedDict[str, nn.Module] = OrderedDict()
-        activation: Type[nn.Module] = hparams.activation
+        activation: Type[nn.Module] = hparams.activation_class
         channels = [in_channels] + hparams.channels
         bias: bool = hparams.bias
 
