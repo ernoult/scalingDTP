@@ -180,7 +180,7 @@ class TestDTP:
             dataset=dataset_config,
             model=hparams,
             network=network_hparams,
-            trainer=Trainer(
+            trainer=dict(
                 max_epochs=1,
                 gpus=torch.cuda.device_count(),
                 fast_dev_run=True,
