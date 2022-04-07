@@ -135,6 +135,7 @@ class Experiment(Serializable):
                 lightning_logger = hydra.utils.instantiate(lightning_logger)
             elif not isinstance(lightning_logger, LightningLoggerBase):
                 raise ValueError(f"Invalid logger value {lightning_logger}")
+            actual_loggers[name] = lightning_logger
         self.logger = list(actual_loggers.values())
 
         # Create the Trainer.
