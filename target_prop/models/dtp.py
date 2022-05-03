@@ -162,12 +162,14 @@ class DTP(LightningModule, Model):
 
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
-            [datamodule.batch_size, *datamodule.dims], device=config.device
+            [datamodule.batch_size, *datamodule.dims], device=self.config.device
         )
 
         # Create the forward and backward nets.
-        self.forward_net = network.to(config.device)
-        self.backward_net = self.create_backward_net().to(config.device)
+        self.forward_net = network.to(self.config.device)
+        self.backward_net = self.create_backward_net().to(self.config.device)
+        self._backward_net_layer_trainable = list(map(is_trainable, self.backward_net))
+        self._backward_net_layer_trainable[-1] = False  # We don't currently train G_0.
 
         if self.hp.init_symetric_weights:
             logger.info(f"Initializing the backward net with symetric weights.")
@@ -392,7 +394,7 @@ class DTP(LightningModule, Model):
             # Feedback layer
             G_i = reversed_backward_net[layer_index]
             layer_optimizer = reversed_feedback_optimizers[layer_index]
-            assert (layer_optimizer is not None) == (is_trainable(G_i))
+            assert (layer_optimizer is not None) == self._is_trainable(G_i)
 
             x_i = ys[layer_index - 1]
             y_i = ys[layer_index]
@@ -561,10 +563,14 @@ class DTP(LightningModule, Model):
         with torch.set_grad_enabled(True):
 
             # self.trainer is None in some unit tests which only use PL module
-            if self.trainer is not None:
-                probs = torch.softmax(logits, -1)
-                self.log(f"{phase}/accuracy", self.accuracy(probs, labels), prog_bar=True)
-                self.log(f"{phase}/top5_accuracy", self.top5_accuracy(probs, labels))
+            if self.trainer is not None and not self.is_multi_gpu:
+                # BUG: When training with multiple GPUs, adding the metrics are on different devices.
+                with torch.no_grad():
+                    probs = torch.softmax(logits, -1)
+                    self.accuracy(probs, labels)
+                    self.top5_accuracy(probs, labels)
+                    self.log(f"{phase}/accuracy", self.accuracy, prog_bar=True)
+                    self.log(f"{phase}/top5_accuracy", self.top5_accuracy)
 
             temp_logits = logits.detach().clone()
             temp_logits.requires_grad_(True)
@@ -714,7 +720,7 @@ class DTP(LightningModule, Model):
                 # NOTE: No learning rate for the first feedback layer atm, although we very well
                 # could train it, it wouldn't change anything about the forward weights.
                 # Non-trainable layers also don't have an optimizer.
-                assert lr == 0.0, (i, lr, self.feedback_lrs, type(feedback_layer))
+                assert lr == 0.0
             else:
                 assert lr != 0.0
                 feedback_layer_optimizer = self.hp.b_optim.make_optimizer(feedback_layer, lrs=[lr])
@@ -741,6 +747,12 @@ class DTP(LightningModule, Model):
         configs.append(forward_optim_config)
         return configs
 
+    def _is_trainable(self, layer: nn.Module) -> bool:
+        if layer in self.backward_net:
+            layer_index = {i for i, m in enumerate(self.backward_net) if m is layer}.pop()
+            return self._backward_net_layer_trainable[layer_index]
+        return is_trainable(layer)
+
     @property
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
         """Returns the list of optimizers, one per layer of the feedback/backward net:
@@ -752,16 +764,24 @@ class DTP(LightningModule, Model):
         # NOTE: self.trainer is None during unit testing
         if self.trainer is None:
             return self._feedback_optimizers
+
         _feedback_optimizers = []
-        optimizers: List[Optimizer] = list(self.optimizers())
-        for i, layer in enumerate(self.backward_net):
+        # NOTE: G[0] layer is not currently trained (although it could eventually if
+        # we wanted an end-to-end invertible network).
+        # Go until the penultimate layer of the backward net.
+        optimizers = list(self.optimizers())
+        for i, layer in enumerate(self.backward_net[:-1]):
             layer_optimizer: Optional[Optimizer] = None
-            # NOTE: First feedback layer is not currently trained (although it could eventually if
-            # we wanted an end-to-end invertible network).
-            if i != (len(self.backward_net) - 1) and is_trainable(layer):
+            if self._is_trainable(layer):
                 layer_optimizer = optimizers.pop(0)
             _feedback_optimizers.append(layer_optimizer)
-        assert len(optimizers) == 1  # Only one left: The optimizer for the forward net.
+        _feedback_optimizers.append(None)
+        # Only one left: The optimizer for the forward net.
+        # BUG: This here doesn't work when using multiple GPUs by default. Seems to be caused by
+        # is_trainable always returning False, which might be caused by some
+        # DistributedDataParallel wrapper or something like that.
+        assert len(optimizers) == 1, optimizers
+
         assert optimizers[-1] is self.forward_optimizer
         return _feedback_optimizers
 
@@ -878,3 +898,11 @@ class DTP(LightningModule, Model):
 
     def configure_callbacks(self):
         return [CompareToBackpropCallback()]
+
+    @property
+    def is_multi_gpu(self) -> bool:
+        if self.trainer.devices == -1:
+            return torch.cuda.device_count() > 1
+        return self.trainer.devices != 1 or (
+            isinstance(self.trainer.devices, list) and len(self.trainer.devices) > 1
+        )

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-
+from functools import partial
 import torch
 import wandb
 from pytorch_lightning import LightningDataModule, Trainer
@@ -63,7 +63,8 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: OptimizerConfig = field(
-            default_factory=lambda: OptimizerConfig(
+            default_factory=partial(
+                OptimizerConfig,
                 type="adam",
                 lr=[3e-4],
                 weight_decay=1e-4,
@@ -75,7 +76,8 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the forward optimizer
         f_optim: OptimizerConfig = field(
-            default_factory=lambda: OptimizerConfig(
+            default_factory=partial(
+                OptimizerConfig,
                 type="adam",
                 lr=[3e-4],
                 weight_decay=1e-4,
@@ -106,6 +108,9 @@ class ParallelDTP(DTP):
         self.criterion = nn.CrossEntropyLoss(reduction="none")
 
         self._feedback_optimizer: Optional[Optimizer] = None
+
+    def configure_sharded_model(self) -> None:
+        return super().configure_sharded_model()
 
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
@@ -164,7 +169,6 @@ class ParallelDTP(DTP):
         noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
         # NOTE: Could also use a different number of samples per layer!
         noise_samples_per_layer = [self.hp.feedback_samples_per_iteration for _ in range(n_layers)]
-
         # NOTE: We can compute all the ys for all the layers up-front, because we don't
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
@@ -191,7 +195,7 @@ class ParallelDTP(DTP):
                 # synchronize=False,
             )
             for i in range(1, n_layers)
-            if is_trainable(reversed_backward_net[i])
+            if self._is_trainable(reversed_backward_net[i])
         ]
         # Loss will now have shape [`n_layers`, `n_samples`]
         loss = torch.stack(layer_losses, dim=0)
@@ -207,7 +211,7 @@ class ParallelDTP(DTP):
                     *[
                         compute_dist_angle(self.forward_net[i], reversed_backward_net[i])
                         for i in range(1, n_layers)
-                        if is_trainable(reversed_backward_net[i])
+                        if self._is_trainable(reversed_backward_net[i])
                     ]
                 )
             if self.trainer is not None:
@@ -262,7 +266,11 @@ class ParallelDTP(DTP):
         merged_step_result = (
             step_results if isinstance(step_results, (Tensor, float)) else sum(step_results)
         )
-        loss = merged_step_result
+
+        if isinstance(merged_step_result, Tensor) and merged_step_result.numel() > 1:
+            loss = merged_step_result.mean()
+        else:
+            loss = merged_step_result
         # TODO: Move all the logs to this once we used DDP.
         # self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
         return loss

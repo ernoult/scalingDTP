@@ -7,8 +7,7 @@ import torch.nn.functional as F
 from simple_parsing.helpers import list_field
 
 from target_prop.backward_layers import invert
-from target_prop.layers import AdaptiveAvgPool2d, Reshape
-
+from target_prop.layers import Reshape
 from .network import Network
 
 
@@ -208,7 +207,7 @@ class ResNet(nn.Sequential, Network):
         )
         layers["fc"] = nn.Sequential(
             OrderedDict(
-                pool=AdaptiveAvgPool2d(
+                pool=nn.AdaptiveAvgPool2d(
                     output_size=(1, 1)
                 ),  # NOTE: This is specific for 32x32 input!
                 reshape=Reshape(target_shape=(-1,)),

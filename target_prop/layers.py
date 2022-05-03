@@ -92,17 +92,11 @@ def invert_reshape(module: Reshape) -> Reshape:
     return layer
 
 
-class AdaptiveAvgPool2d(nn.AdaptiveAvgPool2d, Invertible):
-    def __init__(self, output_size: Tuple[int, int] = None):
-        super().__init__(output_size=output_size)
-        # add_hooks(self)
-
-
 @invert.register
-def invert_adaptive_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
+def invert_adaptive_avgpool2d(module: nn.AvgPool2d) -> nn.AdaptiveAvgPool2d:
     """Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input!"""
     assert module.input_shape and module.output_shape, "Use the net before inverting."
-    return type(module)(
+    return nn.AdaptiveAvgPool2d(
         output_size=module.input_shape[-2:],  # type: ignore
     )
 
@@ -142,7 +136,7 @@ class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
             # Only inspect rather than pop the item out, because of how the feedback
             # loss uses this backward layer twice in a row (once with y and again with y+noise)
             indices = self.magic_bridge[0]
-            # indices = self.magic_bridge.pop()
+
         if output_size is None and self.output_shape:
             output_size = list(self.output_shape[-2:])
         return super().forward(input=input, indices=indices, output_size=output_size)
@@ -164,7 +158,7 @@ class MaxPool2d(nn.MaxPool2d, Invertible):
     def __init__(
         self,
         kernel_size: _size_any_t,
-        stride: _size_any_t = None,
+        stride: _size_any_t | None = None,
         padding: _size_any_t = 0,
         dilation: _size_any_t = 1,
         return_indices: bool = False,

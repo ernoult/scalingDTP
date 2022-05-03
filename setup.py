@@ -27,6 +27,7 @@ setuptools.setup(
         "simple-parsing",
         "torch",
         "pytorch-lightning",
+        "torchvision",
         "lightning-bolts",
         "tqdm",
         "wandb",
