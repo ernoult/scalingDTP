@@ -5,4 +5,5 @@ data
 **__pycache__
 build
 wandb
+logs
 checkpoints
