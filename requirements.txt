@@ -53,7 +53,6 @@ simple-parsing==0.0.17
 six==1.16.0
 smmap==5.0.0
 subprocess32==3.5.4
--e git+https://github.com/ernoult/scalingDTP.git@1b6e4e9afed1b1c1453aec3716fc5641694c8ba3#egg=target_prop
 tenacity==8.0.1
 tensorboard==2.7.0
 tensorboard-data-server==0.6.1

@@ -59,7 +59,8 @@ class CompareToBackpropCallback(Callback):
             )
         assert self.last_batch is not None
         x, y = self.last_batch
-
+        x = x.to(pl_module.device)
+        y = y.to(pl_module.device)
         for param_name, param in named_trainable_parameters(pl_module.forward_net):
             if param.grad is not None and (param.grad != 0).any():
                 warnings.warn(
