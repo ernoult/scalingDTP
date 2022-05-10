@@ -80,10 +80,28 @@ def invert_sequential(module: nn.Sequential) -> nn.Sequential:
     )
 
 
+
 @invert.register(nn.Identity)
 def invert_identity(module: nn.Identity) -> nn.Identity:
     return nn.Identity()
 
+@invert.register
+def invert_multihead(layer:nn.MultiheadAttention)-> nn.MultiheadAttention:
+    emb_size = layer.embed_dim
+    num_heads = layer.num_heads
+    backward = nn.MultiheadAttention(
+        emb_size,
+        num_heads, batch_first=True
+    )
+    return backward
+
+@invert.register
+def invert_dropout(module:nn.Dropout)->nn.Dropout:
+    p = module.p
+    return nn.Dropout(p)
+@invert.register
+def invert_layernorm(module:nn.LayerNorm)->nn.LayerNorm:
+    return nn.LayerNorm(module.normalized_shape)
 
 @invert.register
 def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
@@ -111,18 +129,22 @@ def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
         stride=(s_h, s_w),
         dilation=d_h,
         padding=(p_h, p_w),
-        # TODO: Get this value programmatically.
-        output_padding=(s_h - 1, s_w - 1),
+        # TODO: Get this value programmatically. See line below
+        # output_padding=(s_h - 1, s_w - 1), #doesn't work generically, this line fails on ViT
         bias=layer.bias is not None,
         # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
     )
     return backward
 
 
+
 @invert.register(nn.ReLU)
 def invert_relu(activation_layer: nn.Module) -> nn.Module:
     return nn.ReLU(inplace=False)
 
+@invert.register(nn.GELU)
+def invert_gelu(activation_layer: nn.Module) -> nn.Module:
+    return nn.GELU(inplace=False)
 
 @invert.register(nn.ELU)
 def _invert_elu(activation_layer: nn.ELU) -> nn.Module:

@@ -6,6 +6,7 @@ from torch import Tensor, nn
 from torch.linalg import norm
 
 from target_prop.networks.resnet import BasicBlock, InvertedBasicBlock
+from target_prop.networks.vit import EncoderBasicBlock, InvertEncoderBasicBlock
 
 
 @singledispatch
@@ -78,8 +79,28 @@ def _compute_dist_angle_conv(
     F = forward_module.weight
     G = backward_module.weight
     return compute_dist_angle(F, G)
+@compute_dist_angle(nn.MultiheadAttention)
+def _compute_dist_angle_multihead(
+    forward_module: nn.MultiheadAttention, backward_module:nn.MultiheadAttention
+)
+    F=forward_module.weight
+    G=backward_module.weight
+    return compute_dist_angle(F,G)
+@compute_dist_angle.register(EncoderBasicBlock)
+def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertedBasicBlock):
+    """""
+    Compute distance and angle between feedforward and feedback transformer encoder blocks
+    """""
+    metrics = {}
+    metrics = {
+        0: compute_dist_angle(forward_module.attn,backward_module.attn),
+        1: compute_dist_angle(forward_module.linear1,backward_module.linear1),
+        2: compute_dist_angle(forward_module.linear2,backward_module.linear2),
+        3: compute_dist_angle(forward_module.ln1,backward_module.ln1),
+        4: compute_dist_angle(forward_module.ln2,backward_module.ln2)
 
-
+    }
+    return metrics
 @compute_dist_angle.register(BasicBlock)
 def _compute_dist_angle_residual(forward_module: BasicBlock, backward_module: InvertedBasicBlock):
     """

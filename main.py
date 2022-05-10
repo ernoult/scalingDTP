@@ -17,7 +17,7 @@ from target_prop.config import Config
 from target_prop.datasets.dataset_config import DatasetConfig
 from target_prop.models import Model, DTP, VanillaDTP, TargetProp, ParallelDTP, BaselineModel
 from target_prop.models.model import Model
-from target_prop.networks import  Network, ResNet18, ResNet34, SimpleVGG, LeNet
+from target_prop.networks import  Network, ResNet18, ResNet34, SimpleVGG, LeNet, ViT
 from target_prop.networks.network import Network
 from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils.hydra_utils import get_outer_class
@@ -75,7 +75,7 @@ cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
 cs.store(group="network", name="lenet", node=LeNet.HParams())
 cs.store(group="network", name="resnet18", node=ResNet18.HParams())
 cs.store(group="network", name="resnet34", node=ResNet34.HParams())
-
+cs.store(group="network", name="vit", node=ViT.HParams())
 cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
 cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 
