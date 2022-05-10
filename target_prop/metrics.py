@@ -6,7 +6,7 @@ from torch import Tensor, nn
 from torch.linalg import norm
 
 from target_prop.networks.resnet import BasicBlock, InvertedBasicBlock
-from target_prop.networks.vit import EncoderBasicBlock, InvertEncoderBasicBlock
+from target_prop.networks.vit import EncoderBasicBlock, InvertEncoderBasicBlock,ClassificationHead,InverseClassificationHead
 
 
 @singledispatch
@@ -85,7 +85,7 @@ def _compute_dist_angle_multihead(
     forward_module: nn.MultiheadAttention, backward_module: nn.MultiheadAttention
 ) -> Tuple[Tensor,Tensor]:
     F=forward_module.out_proj.weight
-    G=backward_module.out_proj.weight.t()
+    G=backward_module.out_proj.weight
     return compute_dist_angle(F,G)
 
 @compute_dist_angle.register(nn.LayerNorm)
@@ -97,7 +97,7 @@ def _compute_dist_angle_multihead(
     return compute_dist_angle(F,G)
 
 @compute_dist_angle.register(EncoderBasicBlock)
-def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertedBasicBlock):
+def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertEncoderBasicBlock):
     """""
     Compute distance and angle between feedforward and feedback transformer encoder blocks
     """""
@@ -108,6 +108,20 @@ def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_mo
         2: compute_dist_angle(forward_module.linear2,backward_module.linear2),
         3: compute_dist_angle(forward_module.ln1,backward_module.ln1),
         4: compute_dist_angle(forward_module.ln2,backward_module.ln2)
+
+    }
+    return metrics
+
+@compute_dist_angle.register(ClassificationHead)
+def _compute_dist_angle_transformer(forward_module:ClassificationHead,backward_module:InverseClassificationHead):
+    """""
+    Compute distance and angle between feedforward and feedback transformer encoder blocks
+    """""
+    metrics = {}
+    metrics = {
+        0: compute_dist_angle(forward_module.lin,backward_module.lin),
+        1: compute_dist_angle(forward_module.ln,backward_module.ln),
+
 
     }
     return metrics

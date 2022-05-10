@@ -98,6 +98,7 @@ class EncoderBasicBlock(nn.Module):
         # fout   = self.dropout(fout)
         fout   = self.linear2(fout)
         out = fout + x
+
         return out
 
 class InvertEncoderBasicBlock(nn.Module):
@@ -127,6 +128,7 @@ class InvertEncoderBasicBlock(nn.Module):
         # x += self.dropout(fout)
         attout,_  = self.attn(x,x,x)
         out = attout + x
+
         return self.ln1(out)
 
 # Need to experiment with the inversion. Can we treat the entire Encoder as its own inversion?
@@ -148,9 +150,9 @@ class ClassificationHead(nn.Module):
         super(ClassificationHead,self).__init__()
         self.emb_size = emb_size
         self.n_classes = n_classes
-        self.num_patches = num_patches
         self.ln  = nn.LayerNorm(emb_size)
         self.lin = nn.Linear(emb_size,n_classes)
+        self.num_patches = num_patches
     def forward(self,x):
         out = x.mean(1)
         out = self.ln(out)
@@ -162,8 +164,8 @@ class InverseClassificationHead(nn.Module):
         super(InverseClassificationHead,self).__init__()
         self.emb_size = emb_size
         self.n_classes = n_classes
-        self.ln  = nn.LayerNorm(emb_size)
-        self.lin = nn.Linear(emb_size,n_classes)
+        self.ln  = invert(nn.LayerNorm(emb_size))
+        self.lin = invert(nn.Linear(emb_size,n_classes))
         self.num_patches = num_patches
         self.up  = nn.Upsample(scale_factor=num_patches+1) #num_patches +1 if using standard implementation
 
@@ -171,6 +173,7 @@ class InverseClassificationHead(nn.Module):
         out = self.lin(x)
         out = self.ln(out)
         out = self.up(out.unsqueeze(-1)).permute(0,2,1)
+
         return out
 
 @invert.register(ClassificationHead)
@@ -195,6 +198,7 @@ class ViT(nn.Sequential, Network):
                  img_size: int = 32,
                  depth: int = 2,
                  n_classes: int = 1000,
+                 num_heads: int=8,
                  hparams:"ViT.HParams"= None):
 
         layers: OrderedDict[str, nn.Module] = OrderedDict()
@@ -206,15 +210,12 @@ class ViT(nn.Sequential, Network):
         )
 
         for i in range(1,depth+1):
-            layers["layer_"+str(i)] = EncoderBasicBlock(emb_size=512, drop_p=0, forward_expansion=4,forward_drop_p=0,num_heads=8)
+            layers["layer_"+str(i)] = EncoderBasicBlock(emb_size=emb_size, drop_p=0, forward_expansion=4,forward_drop_p=0,num_heads=num_heads)
 
+        num_patches = int((img_size//patch_size)**2)
         layers["fc"] = nn.Sequential(
             OrderedDict(
-                pool=AdaptiveAvgPool2d(
-                    output_size=(1, 1)
-                ),  # NOTE: This is specific for 32x32 input!
-                reshape=Reshape(target_shape=(-1,)),
-                linear=nn.LazyLinear(out_features=n_classes, bias=True),
+                classhead=ClassificationHead(num_patches, emb_size, n_classes),
             )
         )
         super().__init__(layers)
