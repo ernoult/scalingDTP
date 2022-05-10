@@ -79,13 +79,23 @@ def _compute_dist_angle_conv(
     F = forward_module.weight
     G = backward_module.weight
     return compute_dist_angle(F, G)
-@compute_dist_angle(nn.MultiheadAttention)
+
+@compute_dist_angle.register(nn.MultiheadAttention)
 def _compute_dist_angle_multihead(
-    forward_module: nn.MultiheadAttention, backward_module:nn.MultiheadAttention
-)
+    forward_module: nn.MultiheadAttention, backward_module: nn.MultiheadAttention
+) -> Tuple[Tensor,Tensor]:
+    F=forward_module.out_proj.weight
+    G=backward_module.out_proj.weight.t()
+    return compute_dist_angle(F,G)
+
+@compute_dist_angle.register(nn.LayerNorm)
+def _compute_dist_angle_multihead(
+    forward_module: nn.LayerNorm, backward_module: nn.LayerNorm
+) -> Tuple[Tensor,Tensor]:
     F=forward_module.weight
     G=backward_module.weight
     return compute_dist_angle(F,G)
+
 @compute_dist_angle.register(EncoderBasicBlock)
 def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertedBasicBlock):
     """""

@@ -28,10 +28,8 @@ class PatchEmbedding(nn.Module):
         self.positions = nn.Parameter(torch.randn((img_size // patch_size) ** 2 + 1, emb_size))
 
     def forward(self, x):
-        print(x.shape)
         b, _, _, _ = x.shape
         x = self.conv(x)
-        print(x.shape)
         x = self.rearrange(x)
         cls_tokens = repeat(self.cls_token, '() n e -> b n e', b=b)
         # prepend the cls token to the input
@@ -52,10 +50,7 @@ class InvertPatchEmbedding(nn.Module):
     def forward(self, x):
         x  = x[:,1:,:]
         x = self.rearrange(x)
-        print(self.conv)
-        print(x.shape)
         x = self.conv(x)
-        print(x.shape)
         return x
 
 #Backward net will not train. This is just to ensure that size is consistent
