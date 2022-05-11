@@ -105,7 +105,8 @@ class EncoderBasicBlock(nn.Module):
         # fout   = self.dropout(fout)
         fout   = self.linear2(fout)
         out = fout + x
-
+        if torch.any(torch.isnan(out)):
+            print('encoder_head')
         return out
 
 class InvertEncoderBasicBlock(nn.Module):
@@ -126,62 +127,50 @@ class InvertEncoderBasicBlock(nn.Module):
         self.linear1 = invert(nn.Linear(emb_size,forward_expansion*emb_size))
         self.linear2 = invert(nn.Linear(emb_size*forward_expansion, emb_size))
         self.ln0     = invert(nn.LayerNorm(emb_size))
+
     # def forward(self,x):
     #     fout = self.ln2(x)
-    #
     #     fout = self.linear2(fout)
     #     # fout = self.dropout(fout)
     #
     #     fout = F.gelu(fout)
     #
-    #     fout = self.linear1(fout)
+    #     x = self.linear1(fout)
     #
-    #     x+=fout
-    #     fout = self.ln1(fout)
+    #
+    #     ao = self.ln1(x)
+    #
     #     # x += self.dropout(fout)
     #
-    #     attout,_  = self.attn(fout,fout,fout)
+    #     attout,_  = self.attn(ao,ao,ao)
     #
     #     out = attout + x
-    #
+    #     # out = self.ln1(out)
+    #     if torch.any(torch.isnan(out)):
+    #         print('i_encoder_head')
     #     return out
     def forward(self,x):
-        fout = self.ln2(x)
-        fout = self.linear2(fout)
-        # fout = self.dropout(fout)
 
+
+        # attout = self.layer0(attout) #split qkv, maybe not necessary
+
+
+        # x = self.dropout(attout) + x
+
+
+        # fout   = self.dropout(fout)
+
+        fout = self.linear2(x)
         fout = F.gelu(fout)
+        fout = self.linear1(fout)
+        x += self.ln2(fout)
+        attout, _ = self.attn(x, x, x)
+        attout = self.ln1(attout)
+        x+=attout
+        if torch.any(torch.isnan(x)):
+            print('i_encoder_head')
+        return x
 
-        x = self.linear1(fout)
-
-
-        ao = self.ln1(x)
-
-        # x += self.dropout(fout)
-
-        attout,_  = self.attn(ao,ao,ao)
-
-        out = attout + x
-        # out = self.ln1(out)
-
-        return out
-    # def forward(self,x):
-    #     fout = self.linear2(x)
-    #     # fout = self.dropout(fout)
-    #
-    #     fout = F.gelu(fout)
-    #
-    #     fout = self.linear1(fout)
-    #
-    #     x += self.ln2(fout)
-    #
-    #     # x += self.dropout(fout)
-    #
-    #     attout,_  = self.attn(x,x,x)
-    #
-    #     out = self.ln1(attout)
-    #     out +=x
-    #     return out
 @invert.register(EncoderBasicBlock)
 def invert_basic(module: EncoderBasicBlock) -> InvertEncoderBasicBlock:
     backward = InvertEncoderBasicBlock(
@@ -248,12 +237,12 @@ class ViT(nn.Sequential, Network):
         bias: bool = True
 
     def __init__(self, in_channels: int = 3,
-                 patch_size: int = 8,
-                 emb_size: int = 512,
+                 patch_size: int = 16,
+                 emb_size: int = 128,
                  img_size: int = 32,
-                 depth: int = 2,
+                 depth: int = 4,
                  n_classes: int = 10,
-                 num_heads: int=8,
+                 num_heads: int=16,
                  hparams:"ViT.HParams"= None):
 
         layers: OrderedDict[str, nn.Module] = OrderedDict()

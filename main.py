@@ -190,6 +190,8 @@ class Experiment(Serializable):
 
         root_logger = logging.getLogger()
         # --- Run the experiment. ---
+        print(self.model.forward_net)
+        print(self.model.backward_net)
         self.trainer.fit(self.model, datamodule=self.datamodule)
 
         val_results = self.trainer.validate(model=self.model, datamodule=self.datamodule)
