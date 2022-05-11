@@ -89,19 +89,26 @@ def _compute_dist_angle_multihead(
     return compute_dist_angle(F,G)
 
 @compute_dist_angle.register(nn.LayerNorm)
-def _compute_dist_angle_multihead(
+def _compute_dist_angle_layernorm(
     forward_module: nn.LayerNorm, backward_module: nn.LayerNorm
 ) -> Tuple[Tensor,Tensor]:
     F=forward_module.weight
     G=backward_module.weight
     return compute_dist_angle(F,G)
 
+@compute_dist_angle.register(nn.AdaptiveAvgPool1d)
+def _compute_dist_angle_layernorm(
+    forward_module: nn.LayerNorm, backward_module: nn.LayerNorm
+) -> Tuple[Tensor,Tensor]:
+    # F=forward_module.weight
+    # G=backward_module.weight
+    return 0
 @compute_dist_angle.register(EncoderBasicBlock)
 def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertEncoderBasicBlock):
     """""
     Compute distance and angle between feedforward and feedback transformer encoder blocks
     """""
-    metrics = {}
+
     metrics = {
         0: compute_dist_angle(forward_module.attn,backward_module.attn),
         1: compute_dist_angle(forward_module.linear1,backward_module.linear1),
@@ -112,17 +119,14 @@ def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_mo
     }
     return metrics
 
+
 @compute_dist_angle.register(ClassificationHead)
-def _compute_dist_angle_transformer(forward_module:ClassificationHead,backward_module:InverseClassificationHead):
+def _compute_dist_angle_classhead(forward_module:ClassificationHead,backward_module:InverseClassificationHead):
     """""
     Compute distance and angle between feedforward and feedback transformer encoder blocks
     """""
-    metrics = {}
     metrics = {
-        0: compute_dist_angle(forward_module.lin,backward_module.lin),
-        1: compute_dist_angle(forward_module.ln,backward_module.ln),
-
-
+        0: compute_dist_angle(forward_module.avpool,backward_module.avpool),
     }
     return metrics
 @compute_dist_angle.register(BasicBlock)

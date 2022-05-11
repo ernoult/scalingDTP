@@ -107,6 +107,21 @@ def invert_adaptive_avgpool2d(module: AdaptiveAvgPool2d) -> AdaptiveAvgPool2d:
     )
 
 
+class AdaptiveAvgPool1d(nn.AdaptiveAvgPool1d, Invertible):
+    def __init__(self, output_size: int = None):
+        super().__init__(output_size=output_size)
+        # add_hooks(self)
+
+
+@invert.register
+def invert_adaptive_avgpool1d(module: AdaptiveAvgPool1d) -> AdaptiveAvgPool1d:
+    """Returns a nn.AdaptiveAvgPool1d, which will actually upsample the input!"""
+    assert module.input_shape and module.output_shape, "Use the net before inverting."
+    return type(module)(
+        output_size=module.input_shape[-1],  # type: ignore
+    )
+
+
 class MaxUnpool2d(nn.MaxUnpool2d, Invertible):
     # NOTE: uses a magic_bridge deque that is shared from the forward to the backward layers
 
