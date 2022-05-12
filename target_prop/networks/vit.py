@@ -128,48 +128,80 @@ class InvertEncoderBasicBlock(nn.Module):
         self.linear2 = invert(nn.Linear(emb_size*forward_expansion, emb_size))
         self.ln0     = invert(nn.LayerNorm(emb_size))
 
-    # def forward(self,x):
-    #     fout = self.ln2(x)
-    #     fout = self.linear2(fout)
-    #     # fout = self.dropout(fout)
-    #
-    #     fout = F.gelu(fout)
-    #
-    #     x = self.linear1(fout)
-    #
-    #
-    #     ao = self.ln1(x)
-    #
-    #     # x += self.dropout(fout)
-    #
-    #     attout,_  = self.attn(ao,ao,ao)
-    #
-    #     out = attout + x
-    #     # out = self.ln1(out)
-    #     if torch.any(torch.isnan(out)):
-    #         print('i_encoder_head')
-    #     return out
     def forward(self,x):
-
-
-        # attout = self.layer0(attout) #split qkv, maybe not necessary
-
-
-        # x = self.dropout(attout) + x
-
-
-        # fout   = self.dropout(fout)
-
-        fout = self.linear2(x)
-        fout = F.gelu(fout)
-        fout = self.linear1(fout)
-        x += self.ln2(fout)
-        attout, _ = self.attn(x, x, x)
-        attout = self.ln1(attout)
-        x+=attout
+        x = F.gelu(x)
         if torch.any(torch.isnan(x)):
+            print('i_in')
+        fout = self.ln2(x)
+        if torch.any(torch.isnan(fout)):
+            print('ln2')
+        fout = self.linear2(fout)
+        if torch.any(torch.isnan(fout)):
+            print('lin2')
+        # fout = self.dropout(fout)
+
+        fout = F.gelu(fout)
+        if torch.any(torch.isnan(fout)):
+            print('gel')
+        x = self.linear1(fout)
+        if torch.any(torch.isnan(x)):
+            print('lin1')
+
+        ao = self.ln1(x)
+        if torch.any(torch.isnan(ao)):
+            print('ln1')
+
+        # x += self.dropout(fout)
+
+        attout,_  = self.attn(ao,ao,ao)
+        if torch.any(torch.isnan(a0)):
+            print('ln1')
+
+        out = attout + x
+        if torch.any(torch.isnan(out)):
+            print('out')
+
+        # out = self.ln1(out)
+        if torch.any(torch.isnan(out)):
             print('i_encoder_head')
-        return x
+        return out
+    # def forward(self,x):
+    #
+    #     x =  F.gelu(x)
+    #
+    #     # attout = self.layer0(attout) #split qkv, maybe not necessary
+    #
+    #
+    #     # x = self.dropout(attout) + x
+    #
+    #
+    #     # fout   = self.dropout(fout)
+    #     # fout = self.ln0(x)
+    #     if torch.any(torch.isnan(x)):
+    #         print('i_in')
+    #     fout = self.linear2(x)
+    #     if torch.any(torch.isnan(fout)):
+    #         print('i_lin')
+    #     fout = F.gelu(fout)
+    #     if torch.any(torch.isnan(fout)):
+    #         print('i_gel')
+    #     fout = self.linear1(fout)
+    #     if torch.any(torch.isnan(fout)):
+    #         print('i_lin2')
+    #     x = self.ln2(fout) + x
+    #     if torch.any(torch.isnan(x)):
+    #         print('i_res')
+    #     attout, _ = self.attn(x, x, x)
+    #     if torch.any(torch.isnan(attout)):
+    #         print('i_attb')
+    #     attout = self.ln1(attout)
+    #     if torch.any(torch.isnan(attout)):
+    #         print('i_ln1')
+    #     x= attout + x
+    #
+    #     if torch.any(torch.isnan(x)):
+    #         print('i_encoder_head')
+    #     return x
 
 @invert.register(EncoderBasicBlock)
 def invert_basic(module: EncoderBasicBlock) -> InvertEncoderBasicBlock:
@@ -208,7 +240,8 @@ class InverseClassificationHead(nn.Module):
         self.emb_size = emb_size
         self.n_classes = n_classes
         self.num_patches = num_patches
-        self.avpool = AdaptiveAvgPool1d(num_patches+1)
+        # self.avpool = nn.Upsample(scale_factor=17)
+        self.avpool = AdaptiveAvgPool1d(output_size=(num_patches+1))
         # self.ln  = invert(nn.LayerNorm(emb_size))
         # self.lin = invert(nn.Linear(emb_size,n_classes))
 
@@ -237,7 +270,7 @@ class ViT(nn.Sequential, Network):
         bias: bool = True
 
     def __init__(self, in_channels: int = 3,
-                 patch_size: int = 16,
+                 patch_size: int = 8,
                  emb_size: int = 128,
                  img_size: int = 32,
                  depth: int = 4,

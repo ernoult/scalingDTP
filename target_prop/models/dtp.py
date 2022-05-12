@@ -85,7 +85,7 @@ class DTP(LightningModule, Model):
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
-        feedback_training_iterations: List[int] = list_field(20, 25, 35, 45, 20)
+        feedback_training_iterations: List[int] = list_field(20, 25, 30, 35, 15)
 
         # Max number of training epochs in total.
         max_epochs: int = 90
@@ -96,7 +96,7 @@ class DTP(LightningModule, Model):
                 OptimizerConfig,
                 type="sgd",
                 # lr=[1e-4, 3.5e-4, 8e-4, 8e-4, 1e-3],
-                lr =[1e-4, 3.5e-4, 8e-3, 8e-3, 0.18],
+                lr =[1e-4, 3.5e-4, 1e-3, 2e-3, 0.08],
                 momentum=0.9,
                 weight_decay=None,
             )
