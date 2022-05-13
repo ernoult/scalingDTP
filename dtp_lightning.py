@@ -288,6 +288,6 @@ if __name__ == "__main__":
 
         # Enable these if debugging locally
         # local_mode=True,
-        resources={'cpu':4,"gpu":1},
+        #resources={'cpu':4,"gpu":1},
     )
     tune_mnist_asha()
