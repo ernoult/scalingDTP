@@ -124,9 +124,9 @@ def train_mnist(tuneconfig):
     hparams.feedback_training_iterations = tuneconfig['feedback_training_iterations']
     print("HParams:", hparams.dumps_json(indent="\t"))
 
-    
-    model = DTP(network=network,datamodule=datamodule,hparams= DTP.HParams(),network_hparams=options['network'],config=Config(seed = options['seed'],debug=options['debug']))  
-    
+
+    model = DTP(network=network,datamodule=datamodule,hparams= DTP.HParams(),network_hparams=options['network'],config=Config(seed = options['seed'],debug=options['debug']))
+
 
     trainer.fit(model,datamodule=datamodule)
 def train_mnist_no_tune():
@@ -209,23 +209,23 @@ def train_mnist_tune(tuneconfig, num_epochs=90,num_gpus=1,
 
     hparams = DTP.HParams()
 
-    feedback_training_iterations=[tuneconfig["l1i"],tuneconfig["l2i"],tuneconfig["l3i"],tuneconfig["l4i"],tuneconfig["l5i"]] 
+    feedback_training_iterations=[tuneconfig["l1i"],tuneconfig["l2i"],tuneconfig["l3i"],tuneconfig["l4i"],tuneconfig["l5i"]]
     hparams.feedback_training_iterations = feedback_training_iterations
     # hparams.backward_lr =[tuneconfig["blr1"],tuneconfig["blr2"],tuneconfig["blr3"],tuneconfig["blr4"],tuneconfig["blr5"]]
     # hparams.forward_lr = tuneconfig["forward_lr"]
     print("HParams:", hparams.dumps_json(indent="\t"))
 
-    
-    model = DTP(network=network,datamodule=datamodule,hparams= DTP.HParams(),network_hparams=options['network'],config=Config(seed = options['seed'],debug=options['debug']))  
-    
+
+    model = DTP(network=network,datamodule=datamodule,hparams= DTP.HParams(),network_hparams=options['network'],config=Config(seed = options['seed'],debug=options['debug']))
+
 
     trainer.fit(model,datamodule=datamodule)
 
 
 def tune_mnist_asha(num_samples=50, num_epochs=90, gpus_per_trial=1, data_dir="~/scalingDTP/data"):
-    
 
-    
+
+
     config = {
 
 
@@ -280,13 +280,14 @@ if __name__ == "__main__":
     # load_dotenv(verbose=True)
     print(f'Cuda available: {torch.cuda.is_available()}')
     # os.environ['TUNE_SYNCER_VERBOSITY'] = '3'  # shows full ssh commands when debugging on the cluster
+    wandb.login(key='3819aa873a634d5ce3929c0f0ef2d98e2a83d322')
 
     # Initialize ray -----------------------------------------------------------
     ray.init(
-        # address='auto',
+        address='auto',
 
         # Enable these if debugging locally
-        local_mode=True,
-        # resources={'cpu':4,"gpu":1},
+        # local_mode=True,
+        resources={'cpu':4,"gpu":1},
     )
     tune_mnist_asha()
