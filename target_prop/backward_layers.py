@@ -130,7 +130,7 @@ def invert_conv(layer: nn.Conv2d) -> nn.ConvTranspose2d:
         dilation=d_h,
         padding=(p_h, p_w),
         # TODO: Get this value programmatically. See line below
-        # output_padding=(s_h - 1, s_w - 1), #doesn't work generically, this line fails on ViT
+        #output_padding=(s_h - 1, s_w - 1), #doesn't work generically, this line fails on ViT
         bias=layer.bias is not None,
         # output_padding=(op_h + 1, op_w + 1),  # Not sure this will always hold
     )

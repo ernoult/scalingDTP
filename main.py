@@ -83,6 +83,7 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 @hydra.main(config_path="conf", config_name="config")
 def main(raw_options: DictConfig) -> None:
     print(os.getcwd())
+    print(raw_options)
     options = OmegaConf.to_object(raw_options)
     assert isinstance(options, Options)
     experiment = Experiment(options)

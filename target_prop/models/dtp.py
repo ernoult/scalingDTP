@@ -81,7 +81,7 @@ class DTP(LightningModule, Model):
         use_scheduler: bool = True
 
         # batch size
-        batch_size: int = 512
+        batch_size: int = 128
 
         # Number of training steps for the feedback weights per batch. Can be a list of
         # integers, where each value represents the number of iterations for that layer.
@@ -90,27 +90,29 @@ class DTP(LightningModule, Model):
         # Max number of training epochs in total.
         max_epochs: int = 90
 
-        # Hyper-parameters for the optimizer of the feedback weights (backward net).
+        # Hyper-parameters for the optimizer of the feedback weights (backward net)
+        # .
+        backward_lr= [1e-4, 3.5e-4, 1e-3, 2e-3, 0.08]
         b_optim: OptimizerConfig = field(
             default_factory=functools.partial(
                 OptimizerConfig,
                 type="sgd",
                 # lr=[1e-4, 3.5e-4, 8e-4, 8e-4, 1e-3],
-                lr =[1e-4, 3.5e-4, 1e-3, 2e-3, 0.08],
+                lr =backward_lr,
                 momentum=0.9,
                 weight_decay=None,
             )
         )
 
         # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
-
+        noise = [0.4, 0.4, 0.2, 0.2, 0.08]
+        forward_lr: float = 0.07
         # Hyper-parameters for the forward optimizer
         f_optim: OptimizerConfig = field(
             default_factory=functools.partial(
                 OptimizerConfig,
                 type="sgd",
-                lr=[0.04],
+                lr=[forward_lr],
                 momentum=0.9,
                 weight_decay=1e-4,
             )
@@ -234,12 +236,13 @@ class DTP(LightningModule, Model):
         # Metrics:
         self.accuracy = Accuracy()
         self.top5_accuracy = Accuracy(top_k=5)
+
         self.save_hyperparameters(
             {
                 "hp": self.hp.to_dict(),
                 "config": self.config.to_dict(),
                 "model_type": type(self).__name__,
-                "net_hp": self.net_hp.to_dict(),
+                "net_hp": dict(self.net_hp),
                 "net_type": type(self.forward_net).__name__,
             }
         )
@@ -253,7 +256,7 @@ class DTP(LightningModule, Model):
         self.automatic_optimization = False
         self.criterion = nn.CrossEntropyLoss(reduction="none")
         print("Hyper-Parameters:")
-        print(self.hp.dumps_json(indent="\t"))
+        # print(dict(self.hp).dumps_json(indent="\t"))
         # TODO: Could use a list of metrics from torchmetrics instead of just accuracy:
         # self.supervised_metrics: List[Metrics]
         self._feedback_optimizers: Optional[List[Optional[Optimizer]]] = None
@@ -629,7 +632,10 @@ class DTP(LightningModule, Model):
             if (
                 ys[i].requires_grad or phase != "train"
             ):  # Removes duplicate reshape layer loss from total loss estimate
-                layer_loss = 0.5 * ((ys[i] - targets[i]) ** 2).view(ys[i].size(0), -1).sum(1).mean()
+
+                layer_loss = 0.5 * ((ys[i] - targets[i]) ** 2).contiguous().view(ys[i].size(0), -1).sum(1).mean()
+                # why was this not working ? layer_loss = 0.5 * ((ys[i] - targets[i]) ** 2).view(ys[i].size(0), -1).sum(1).mean()
+
                 # NOTE: Apprently NOT Equivalent to the following!
                 # 0.5 * F.mse_loss(ys[i], target_tensors[i], reduction="mean")
                 forward_loss_per_layer.append(layer_loss)

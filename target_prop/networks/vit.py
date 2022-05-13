@@ -24,19 +24,22 @@ class PatchEmbedding(nn.Module):
         # using a conv layer instead of a linear one -> performance gains
         self.conv = nn.Conv2d(in_channels, emb_size, kernel_size=patch_size, stride=patch_size)
         self.rearrange = Rearrange('b e (h) (w) -> b (h w) e')
-        self.cls_token = nn.Parameter(torch.randn(1, 1, emb_size))
-        self.positions = nn.Parameter(torch.randn((img_size // patch_size) ** 2 + 1, emb_size))
+        # self.cls_token = nn.Parameter(torch.randn(1, 1, emb_size))
+        self.positions = nn.Parameter(torch.randn((img_size // patch_size) ** 2 , emb_size))
 
     def forward(self, x):
+
         b, _, _, _ = x.shape
         x = self.conv(x)
         x = self.rearrange(x)
-        cls_tokens = repeat(self.cls_token, '() n e -> b n e', b=b)
+        # cls_tokens = repeat(self.cls_token, '() n e -> b n e', b=b)
         # prepend the cls token to the input
-        x = torch.cat([cls_tokens, x], dim=1)
+        # x = torch.cat([cls_tokens, x], dim=1)
         # add position embedding
-        x += self.positions
+        x = x + self.positions
+        # print(x.shape)
         if torch.any(torch.isnan(x)):
+            # breakpoint()
             print('patch_embedding')
             return
         return x
@@ -51,10 +54,14 @@ class InvertPatchEmbedding(nn.Module):
         self.rearrange = Rearrange(' b (h w) e ->  b e (h) (w)',h=img_size//patch_size, w=img_size//patch_size)
 
     def forward(self, x):
-        x  = x[:,1:,:]
+        # print(x.shape)
+        x  = x
         x = self.rearrange(x)
+        # print(x.shape)
         x = self.conv(x)
+        # print(x.shape)
         if torch.any(torch.isnan(x)):
+            # breakpoint()
             print('i_patch_embedding')
             # return "error"
             return
@@ -93,12 +100,14 @@ class EncoderBasicBlock(nn.Module):
         self.linear2 = nn.Linear(emb_size*forward_expansion, emb_size)
 
     def forward(self,x):
+
         attout = self.ln1(x)
         # attout = self.layer0(attout) #split qkv, maybe not necessary
         attout,_ = self.attn(attout,attout,attout)
 
         # x = self.dropout(attout) + x
         x = attout+x
+
         fout   = self.ln2(x)
         fout   = self.linear1(fout)
         fout   = F.gelu(fout)
@@ -106,6 +115,7 @@ class EncoderBasicBlock(nn.Module):
         fout   = self.linear2(fout)
         out = fout + x
         if torch.any(torch.isnan(out)):
+            # breakpoint()
             print('encoder_head')
         return out
 
@@ -113,10 +123,11 @@ class InvertEncoderBasicBlock(nn.Module):
     """"
     ViT Encoder Invert. Need to test this.
     """
-    def __init__(self,emb_size: int = 768, drop_p: float = 0., forward_expansion: int = 4,forward_drop_p: float = 0.,num_heads=8):
+    def __init__(self,emb_size: int = 768, drop_p: float = 0., forward_expansion: int = 4,forward_drop_p: float = 0.,num_heads=8,use_gelu=False):
         super(InvertEncoderBasicBlock,self).__init__()
         self.emb_size = emb_size
         self.drop_p = drop_p
+        self.use_gelu = use_gelu
         self.forward_expansion = forward_expansion
         self.forward_drop_p = forward_drop_p
         self.ln1 = invert(nn.LayerNorm(emb_size))
@@ -129,7 +140,9 @@ class InvertEncoderBasicBlock(nn.Module):
         self.ln0     = invert(nn.LayerNorm(emb_size))
 
     def forward(self,x):
-        x = F.gelu(x)
+        if self.use_gelu:
+            x = F.gelu(x)
+
         if torch.any(torch.isnan(x)):
             print('i_in')
         fout = self.ln2(x)
@@ -154,7 +167,7 @@ class InvertEncoderBasicBlock(nn.Module):
         # x += self.dropout(fout)
 
         attout,_  = self.attn(ao,ao,ao)
-        if torch.any(torch.isnan(a0)):
+        if torch.any(torch.isnan(attout)):
             print('ln1')
 
         out = attout + x
@@ -167,11 +180,9 @@ class InvertEncoderBasicBlock(nn.Module):
         return out
     # def forward(self,x):
     #
-    #     x =  F.gelu(x)
+    #     # x =  F.gelu(x)
     #
     #     # attout = self.layer0(attout) #split qkv, maybe not necessary
-    #
-    #
     #     # x = self.dropout(attout) + x
     #
     #
@@ -222,15 +233,19 @@ class ClassificationHead(nn.Module):
         self.emb_size = emb_size
         self.n_classes = n_classes
         self.to_latent = nn.Identity()
-        # self.ln  = nn.LayerNorm(emb_size)
+        self.ln  = nn.LayerNorm(emb_size)
+        self.lin1 = nn.Linear(emb_size*num_patches,emb_size)
         self.num_patches = num_patches
-        # self.lin = nn.Linear(emb_size,n_classes)
+        self.lin = nn.Linear(emb_size,n_classes)
         self.avpool = AdaptiveAvgPool1d(1)
     def forward(self,x):
         out = self.avpool(x.permute(0,2,1)).squeeze()
+        # out =x.view(*x.shape[:-2],-1)
+        # print(out.shape)
         # out = self.ln(out)
         # out = self.lin(out)
         if torch.any(torch.isnan(out)):
+            # breakpoint()
             print('classification_head')
         return out
 
@@ -240,16 +255,25 @@ class InverseClassificationHead(nn.Module):
         self.emb_size = emb_size
         self.n_classes = n_classes
         self.num_patches = num_patches
-        # self.avpool = nn.Upsample(scale_factor=17)
-        self.avpool = AdaptiveAvgPool1d(output_size=(num_patches+1))
-        # self.ln  = invert(nn.LayerNorm(emb_size))
-        # self.lin = invert(nn.Linear(emb_size,n_classes))
-
+        # self.avpool = nn.Upsample(scale_factor=num_patches)
+        self.avpool = nn.AdaptiveAvgPool1d(output_size=num_patches)
+        self.ln  = invert(nn.LayerNorm(emb_size))
+        self.lin = nn.Linear(n_classes,emb_size)
+        self.lin1 = nn.Linear(emb_size,emb_size*num_patches)
     def forward(self,x):
+        # print(x.shape)
         # out = self.lin(x)
         # out = self.ln(out)
+        # out = self.ln(out)
+        # out = self.lin1(out)
+        # print(out.shape)
+        # print(self.emb_size,self.num_patches)
+        # out = x.reshape(*x.shape[:-1],self.num_patches,self.emb_size)
         out = self.avpool(x.unsqueeze(-1)).permute(0,2,1)
+        # x.reshape((x.shape[-1]*x.shape[-2]))
+        # print(out.shape)
         if torch.any(torch.isnan(out)):
+            # breakpoint()
             print('i_classification_head')
         return out
 
@@ -270,12 +294,12 @@ class ViT(nn.Sequential, Network):
         bias: bool = True
 
     def __init__(self, in_channels: int = 3,
-                 patch_size: int = 8,
-                 emb_size: int = 128,
+                 patch_size: int = 16,
+                 emb_size: int = 64,
                  img_size: int = 32,
                  depth: int = 4,
                  n_classes: int = 10,
-                 num_heads: int=16,
+                 num_heads: int=8,
                  hparams:"ViT.HParams"= None):
 
         layers: OrderedDict[str, nn.Module] = OrderedDict()
@@ -292,10 +316,10 @@ class ViT(nn.Sequential, Network):
         num_patches = int((img_size//patch_size)**2)
         layers["fc"] = nn.Sequential(
             OrderedDict(
-
-            classhead = ClassificationHead(num_patches,emb_size, n_classes),
-            ln = nn.LayerNorm(emb_size),
-            linear = nn.LazyLinear(out_features=n_classes, bias=True)
+               classhead = ClassificationHead(num_patches, emb_size, n_classes),
+                # lin1 = nn.Linear(emb_size*num_patches,emb_size),
+                ln =nn.LayerNorm(emb_size),
+                lin = nn.LazyLinear(n_classes)
 
             )
         )

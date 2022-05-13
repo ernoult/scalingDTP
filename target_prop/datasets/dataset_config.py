@@ -81,7 +81,8 @@ class DatasetConfig(Serializable):
     use_legacy_std: bool = False
 
     def make_datamodule(self, batch_size: int) -> VisionDataModule:
-        datamodule_class: Type[VisionDataModule] = self.available_datasets[self.dataset]
+
+        datamodule_class: Type[VisionDataModule] = self.available_datasets['cifar10']#self.available_datasets[self.dataset]
         datamodule = datamodule_class(
             data_dir=self.data_dir,
             batch_size=batch_size,
@@ -89,7 +90,7 @@ class DatasetConfig(Serializable):
             # pin_memory=self.pin_memory,
             shuffle=self.shuffle,
             normalize=self.normalize,
-            val_split=0.0 if self.dataset.endswith("_noval") else self.val_split,
+            val_split= self.val_split,
         )
         # NOTE: The standard transforms includes ToTensor and normalization.
         # We are adding the RandomFlip and the RandomCrop.

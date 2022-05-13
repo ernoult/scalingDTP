@@ -6,7 +6,7 @@ from torch import Tensor, nn
 from torch.linalg import norm
 
 from target_prop.networks.resnet import BasicBlock, InvertedBasicBlock
-from target_prop.networks.vit import EncoderBasicBlock, InvertEncoderBasicBlock,ClassificationHead,InverseClassificationHead
+from target_prop.networks.vit import EncoderBasicBlock,InvertEncoderBasicBlock,ClassificationHead,InverseClassificationHead
 
 
 @singledispatch
@@ -97,14 +97,14 @@ def _compute_dist_angle_layernorm(
     return compute_dist_angle(F,G)
 
 @compute_dist_angle.register(nn.AdaptiveAvgPool1d)
-def _compute_dist_angle_layernorm(
+def _compute_dist_angle_avpool(
     forward_module: nn.LayerNorm, backward_module: nn.LayerNorm
 ) -> Tuple[Tensor,Tensor]:
     # F=forward_module.weight
     # G=backward_module.weight
     return 0
 @compute_dist_angle.register(EncoderBasicBlock)
-def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertEncoderBasicBlock):
+def _compute_dist_angle_transformer(forward_module:EncoderBasicBlock,backward_module:InvertedBasicBlock):
     """""
     Compute distance and angle between feedforward and feedback transformer encoder blocks
     """""
@@ -127,6 +127,8 @@ def _compute_dist_angle_classhead(forward_module:ClassificationHead,backward_mod
     """""
     metrics = {
         0: compute_dist_angle(forward_module.avpool,backward_module.avpool),
+        # 0: compute_dist_angle(forward_module.lin,backward_module.lin),
+        # 1: compute_dist_angle(forward_module.lin1,backward_module.lin1),
     }
     return metrics
 @compute_dist_angle.register(BasicBlock)
