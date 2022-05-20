@@ -92,10 +92,14 @@ def invert_reshape(module: Reshape) -> Reshape:
     return layer
 
 
-@invert.register
+@invert.register(nn.AdaptiveAvgPool2d)
+@invert.register(nn.AvgPool2d)
 def invert_adaptive_avgpool2d(module: nn.AvgPool2d) -> nn.AdaptiveAvgPool2d:
     """Returns a nn.AdaptiveAvgPool2d, which will actually upsample the input!"""
     assert module.input_shape and module.output_shape, "Use the net before inverting."
+    # TODO: Look into using Upsample rather than AdaptiveAvgPool2d, since it might give back an
+    # output that is more like the input, e.g. using nearest neighbor interpolation.
+    # return nn.Upsample(size=module.input_shape[-2:],)
     return nn.AdaptiveAvgPool2d(
         output_size=module.input_shape[-2:],  # type: ignore
     )

@@ -44,7 +44,9 @@ class TestDTP:
         """Hyper-parameters to use for debugging, depending on the network type."""
         default_hps = cls.model_class.HParams()
         # Reduce the number of iterations, so that tests run much quicker.
-        shorter_feedback_training_iterations = [2 for _ in default_hps.feedback_training_iterations]
+        shorter_feedback_training_iterations = [
+            2 for _ in default_hps.feedback_training_iterations
+        ]
         return dataclasses.replace(
             default_hps,
             feedback_training_iterations=shorter_feedback_training_iterations,
@@ -63,7 +65,7 @@ class TestDTP:
         hparams = debug_hparams
         trainer = Trainer(
             max_epochs=1,
-            gpus=torch.cuda.device_count(),
+            gpus=1 if torch.cuda.is_available() else 0,
             accelerator=None,
             fast_dev_run=True,
             # accelerator="ddp",  # todo: debug DP/DDP
@@ -182,7 +184,7 @@ class TestDTP:
             network=network_hparams,
             trainer=dict(
                 max_epochs=1,
-                gpus=torch.cuda.device_count(),
+                gpus=1 if torch.cuda.is_available() else 0,
                 fast_dev_run=True,
                 logger=None,
                 limit_train_batches=batches,
@@ -205,6 +207,7 @@ def get_forward_weight_losses(
     y: Tensor,
     beta: float,
 ) -> List[Tensor]:
+    # TODO: Remove this, this is duplicated code from the DTP class.
     # NOTE: Sanity check: Use standard backpropagation for training rather than TP.
     ## --------
     # return super().forward_loss(x=x, y=y)

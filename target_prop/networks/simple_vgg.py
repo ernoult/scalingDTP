@@ -42,6 +42,8 @@ class SimpleVGG(nn.Sequential, Network):
                     # the indices to the backward net for this layer through a "magic bridge".
                     # We use `return_indices=False` here just so the layer doesn't also return
                     # the indices in its forward pass.
+                    # TODO: There's an issue when using this with multi-GPUs. The 'magic bridge'
+                    # thing seems to be shared across different gpus, which we don't want it to be.
                     pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
                     # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
                     # pool=nn.AvgPool2d(kernel_size=2),

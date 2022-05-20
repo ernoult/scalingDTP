@@ -19,7 +19,7 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1, use_batchnorm=False):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         # Save hyperparams relevant for inversion
         self.in_planes = in_planes
         self.planes = planes
@@ -73,7 +73,7 @@ class InvertedBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1, use_batchnorm=False):
-        super(InvertedBasicBlock, self).__init__()
+        super().__init__()
         self.in_planes = in_planes
         self.planes = planes
         self.stride = stride

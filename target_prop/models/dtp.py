@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import functools
 import logging
@@ -40,39 +42,18 @@ T = TypeVar("T")
 
 
 class DTP(LightningModule, Model):
-    """ Differential Target Propagation algorithm, implemented as a LightningModule.
-
-    This is (as far as I know) exactly equivalent with @ernoult's implementation.
-    The default values for the hyper-parameters are equivalent to what they would be when
-    running the following command:
-
-    ```console
-    python main.py --batch-size 128 \
-        --C 128 128 256 256 512 \
-        --iter 20 30 35 55 20 \
-        --epochs 90 \
-        --lr_b 1e-4 3.5e-4 8e-3 8e-3 0.18 \
-        --noise 0.4 0.4 0.2 0.2 0.08 \
-        --lr_f 0.08 \
-        --beta 0.7 \
-        --path CIFAR-10 \
-        --scheduler \
-        --wdecay 1e-4 \
-    ```
-
-    In other words, to reproduce @ernoult's results on Cifar-10, there is no need to change
-    anything here or pass any custom values from the command-line.
-    """
+    """Differential Target Propagation algorithm, implemented as a LightningModule."""
 
     @dataclass
     class HParams(Model.HParams):
         """Hyper-Parameters of the model.
 
-        The number of noise samples to use per iteration is set by `feedback_samples_per_iteration`.
+        The number of noise samples to use per iteration is set by
+        `feedback_samples_per_iteration`.
 
         NOTE: By increasing the value of `feedback_samples_per_iteration` and setting the value of
         `feedback_training_iterations` to 1 for all layers, we could get something close to a
-        "parallel" version of DTP, however the feedback layers still need to be updated in sequence.
+        "parallel" version of DTP, however the feedback layers are still updated in sequence.
         """
 
         # Arguments to be passed to the LR scheduler.
@@ -135,22 +116,13 @@ class DTP(LightningModule, Model):
         # Step interval for creating and logging plots.
         plot_every: int = 1000
 
-        def __post_init__(self):
-            for field in dataclasses.fields(self):
-                value = getattr(self, field.name)
-                from simple_parsing.utils import is_list
-
-                if is_list(field.type) and isinstance(value, np.ndarray):
-                    # Convert to a list.
-                    setattr(self, field.name, value.tolist())
-
     def __init__(
         self,
         datamodule: VisionDataModule,
         network: Network,
-        hparams: "DTP.HParams",
-        config: Config = None,
-        network_hparams: Network.HParams = None,
+        hparams: DTP.HParams,
+        config: Config | None = None,
+        network_hparams: Network.HParams | None = None,
     ):
         super().__init__()
         self.hp: DTP.HParams = hparams
@@ -168,11 +140,9 @@ class DTP(LightningModule, Model):
         # Create the forward and backward nets.
         self.forward_net = network.to(self.config.device)
         self.backward_net = self.create_backward_net().to(self.config.device)
-        self._backward_net_layer_trainable = list(map(is_trainable, self.backward_net))
-        self._backward_net_layer_trainable[-1] = False  # We don't currently train G_0.
 
         if self.hp.init_symetric_weights:
-            logger.info(f"Initializing the backward net with symetric weights.")
+            logger.info("Initializing the backward net with symetric weights.")
             init_symetric_weights(self.forward_net, self.backward_net)
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
@@ -268,6 +238,7 @@ class DTP(LightningModule, Model):
 
         assert example_out.requires_grad
         # Get the "pseudo-inverse" of the forward network:
+
         backward_net: nn.Sequential = invert(self.forward_net).to(self.config.device)  # type: ignore
 
         # Pass the output of the forward net for the `example_input_array` through the
@@ -365,7 +336,7 @@ class DTP(LightningModule, Model):
         n_layers = len(self.backward_net)
         # Reverse the backward net, just for ease of readability.
         reversed_backward_net = self.backward_net[::-1]
-        reversed_feedback_optimizers = self.feedback_optimizers[::-1]
+        reversed_feedback_optimizers = self.feedback_optimizers()[::-1]
         # Also reverse these values so they stay aligned with the net above.
         noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
         iterations_per_layer = list(reversed(self.feedback_iterations))
@@ -748,12 +719,14 @@ class DTP(LightningModule, Model):
         return configs
 
     def _is_trainable(self, layer: nn.Module) -> bool:
-        if layer in self.backward_net:
-            layer_index = {i for i, m in enumerate(self.backward_net) if m is layer}.pop()
-            return self._backward_net_layer_trainable[layer_index]
+        # TODO: is_trainable should be working, but with the DistributedDataParallel wrapper, seems
+        # like it's not always working quite right.
+        # if layer in self.backward_net:
+        #     layer_index = {
+        #         i for i, m in enumerate(self.backward_net) if m is layer
+        #     }.pop()
         return is_trainable(layer)
 
-    @property
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
         """Returns the list of optimizers, one per layer of the feedback/backward net:
         [G_N, G_N-1, ..., G_2, G_1, None]
@@ -763,6 +736,11 @@ class DTP(LightningModule, Model):
         """
         # NOTE: self.trainer is None during unit testing
         if self.trainer is None:
+            return self._feedback_optimizers
+        elif (
+            hasattr(self, "_feedback_optimizers")
+            and self._feedback_optimizers is not None
+        ):
             return self._feedback_optimizers
 
         _feedback_optimizers = []
@@ -783,6 +761,7 @@ class DTP(LightningModule, Model):
         assert len(optimizers) == 1, optimizers
 
         assert optimizers[-1] is self.forward_optimizer
+        self._feedback_optimizers = _feedback_optimizers
         return _feedback_optimizers
 
     @property
