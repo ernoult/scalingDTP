@@ -1,4 +1,4 @@
 [submodule "meulemans_dtp"]
 	path = meulemans_dtp
-	url = https://github.com/scspinney/theoretical_framework_for_target_propagation.git
-	branch = dtp
+	url = https://github.com/lebrice/theoretical_framework_for_target_propagation.git
+	branch = numerical
