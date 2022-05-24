@@ -1,4 +1,3 @@
-import enum
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
@@ -13,30 +12,25 @@ from pl_bolts.datamodules import (
     MNISTDataModule,
 )
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from simple_parsing import Serializable, choice
+from simple_parsing import choice
+from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor
-from torchvision.transforms import Compose, Normalize, RandomCrop, RandomHorizontalFlip, ToTensor
+from torchvision.transforms import (
+    Compose,
+    Normalize,
+    RandomCrop,
+    RandomHorizontalFlip,
+    ToTensor,
+)
 
-from target_prop.datasets import CIFAR10DataModule as CIFAR10NoValDataModule
 from target_prop.datasets import ImageNet32DataModule as ImageNet32NoValDataModule
 
 FILE = Path(__file__)
-REPO_ROOTDIR = FILE
-while REPO_ROOTDIR.name != "target_prop":
-    REPO_ROOTDIR = REPO_ROOTDIR.parent
-REPO_ROOTDIR = REPO_ROOTDIR.parent  # One more level: Now we're at the root of the repo.
-
-
+REPO_ROOTDIR = FILE.parent.parent  # The root of the repo.
 Transform = Callable[[Tensor], Tensor]
-
-logger = get_logger(__name__)
-
 D = TypeVar("D", bound=VisionDataModule)
 
-from abc import ABC
-from typing import Any, Optional, Union
-
-from simple_parsing.helpers.serialization.serializable import Serializable
+logger = get_logger(__name__)
 
 
 def get_datamodule(dataset: str, batch_size: int, **kwargs) -> VisionDataModule:
@@ -49,7 +43,6 @@ class DatasetConfig(Serializable):
         "mnist": MNISTDataModule,
         # MNIST_noval: # TODO: Add this when we add Sean's mnist datamodule.
         "cifar10": CIFAR10DataModule,
-        "cifar10_noval": CIFAR10NoValDataModule,
         "imagenet32_noval": ImageNet32NoValDataModule,
         "imagenet": ImagenetDataModule,
         "fmnist": FashionMNISTDataModule,
@@ -59,7 +52,9 @@ class DatasetConfig(Serializable):
     # Directory to look for the datasets.
     data_dir: str = os.environ.get("SLURM_TMPDIR", str(REPO_ROOTDIR / "data"))
     # Number of workers to use in the dataloader.
-    num_workers: int = int(os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count()))
+    num_workers: int = int(
+        os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count())
+    )
     # Wether to pin the memory, which is good when using CUDA tensors.
     # pin_memory: bool = True
     # Wether to shuffle the dataset or not.
@@ -110,7 +105,9 @@ class DatasetConfig(Serializable):
                     )
                 norm: Normalize = default_transforms.transforms[1]
                 new_norm = Normalize(
-                    mean=(0.4914, 0.4822, 0.4465), std=(0.6069, 0.5982, 0.603), inplace=norm.inplace
+                    mean=(0.4914, 0.4822, 0.4465),
+                    std=(0.6069, 0.5982, 0.603),
+                    inplace=norm.inplace,
                 )
                 default_transforms.transforms[1] = new_norm
         else:
@@ -122,7 +119,9 @@ class DatasetConfig(Serializable):
             [
                 RandomHorizontalFlip(0.5),
                 RandomCrop(
-                    size=self.image_crop_size, padding=self.image_crop_pad, padding_mode="edge"
+                    size=self.image_crop_size,
+                    padding=self.image_crop_pad,
+                    padding_mode="edge",
                 ),
                 *default_transforms.transforms,
             ]
