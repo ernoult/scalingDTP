@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import typing
 from dataclasses import dataclass
-from typing import ClassVar, Dict, Optional
+from typing import ClassVar, Optional
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from simple_parsing import Serializable, field
+from simple_parsing import Serializable
 
 from target_prop.networks.network import Network
 from target_prop.scheduler_config import LRSchedulerConfig
@@ -11,14 +13,7 @@ from target_prop.scheduler_config import LRSchedulerConfig
 if typing.TYPE_CHECKING:
     from target_prop.config import Config
 
-try:
-    from typing import Protocol
-except ImportError:
-    from typing_extensions import Protocol
-
-from abc import ABC
-
-from pytorch_lightning import LightningModule, Trainer
+from typing_extensions import Protocol, Self
 
 
 class Model(Protocol):
