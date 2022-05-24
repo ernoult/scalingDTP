@@ -159,4 +159,6 @@ def test_overfit_single_batch(overrides: list[str]) -> None:
 
         # NOTE: In this particular case, this error below is the training error, not the validation
         # error.
+        # FIXME: This threshold is really low, it should be more like > 90% accuracy, but it's
+        # currently taking a long time to get those values.
         assert accuracy > (chance_accuracy + 0.10)
