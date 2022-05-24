@@ -88,14 +88,23 @@ cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
 cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 
 
-@hydra.main(config_path="conf", config_name="config")
-def main(raw_options: DictConfig) -> None:
+@hydra.main(
+    config_path="conf",
+    config_name="config",
+    version_base="1.1",
+)
+def main(raw_options: DictConfig) -> float:
     print(os.getcwd())
     options = OmegaConf.to_object(raw_options)
     assert isinstance(options, Options)
+    # TODO: Add rich pretty-printing of the config from the lightning-hydra template repo.
+    # NOTE: Not sure there is a good reason to have this Experiment dataclass.
+    # the original idea was that we could log it with wandb, but that's not what we do with it
+    # anyway.
+    # Might be better to just replace it with something like `run_experiment(options)`.
     experiment = Experiment(options)
     assert isinstance(options, Options)
-    experiment.run()
+    return experiment.run()
 
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -156,7 +165,9 @@ class Experiment(Serializable):
         if "_target_" not in self.options.trainer:
             self.options.trainer["_target_"] = Trainer
         trainer = hydra.utils.instantiate(
-            self.options.trainer, callbacks=self.callbacks, logger=self.logger,
+            self.options.trainer,
+            callbacks=self.callbacks,
+            logger=self.logger,
         )
         assert isinstance(trainer, Trainer)
         self.trainer = trainer
@@ -204,11 +215,20 @@ class Experiment(Serializable):
         # --- Run the experiment. ---
         self.trainer.fit(self.model, datamodule=self.datamodule)
 
-        val_results = self.trainer.validate(
-            model=self.model, datamodule=self.datamodule
-        )
-        if not val_results:
-            return
+        if self.trainer.overfit_batches == 1 or (
+            self.trainer.limit_val_batches == 0 and self.trainer.limit_test_batches == 0
+        ):
+            # We want to report the training error.
+            metrics = {
+                **self.trainer.logged_metrics,
+                **self.trainer.callback_metrics,
+                **self.trainer.progress_bar_metrics,
+            }
+            train_acc = metrics["train/accuracy"]
+            train_error = 1 - train_acc
+            return train_error
+
+        val_results = self.trainer.validate(model=self.model, datamodule=self.datamodule)
 
         top1_accuracy: float = val_results[0]["val/accuracy"]
         top5_accuracy: float = val_results[0]["val/top5_accuracy"]
@@ -217,13 +237,15 @@ class Experiment(Serializable):
 
         val_error = 1 - top1_accuracy
         if not self.options.debug:
-            from orion.client import report_objective
+            try:
+                from orion.client import report_objective
 
-            report_objective(val_error)
+                report_objective(val_error)
+            except Exception as exc:
+                logger.info(f"Could not report objective to Orion: {exc}")
 
         if wandb.run:
             wandb.finish()
-
         return val_error
         # TODO: Enable this later.
         # Run on the test set:

@@ -624,9 +624,8 @@ class DTP(LightningModule, Model):
         }
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
-        """Compute the target of the previous forward layer. given ,
-        the associated feedback layer, the activations for each layer, and the target of the current
-        layer.
+        """Compute the target of the previous forward layer. given , the associated feedback layer,
+        the activations for each layer, and the target of the current layer.
 
         Parameters
         ----------
@@ -729,6 +728,7 @@ class DTP(LightningModule, Model):
 
     def feedback_optimizers(self) -> List[Optional[Optimizer]]:
         """Returns the list of optimizers, one per layer of the feedback/backward net:
+
         [G_N, G_N-1, ..., G_2, G_1, None]
 
         For the "first" feedback layer (G_0), as well as all layers without trainable weights, the
@@ -737,10 +737,7 @@ class DTP(LightningModule, Model):
         # NOTE: self.trainer is None during unit testing
         if self.trainer is None:
             return self._feedback_optimizers
-        elif (
-            hasattr(self, "_feedback_optimizers")
-            and self._feedback_optimizers is not None
-        ):
+        elif hasattr(self, "_feedback_optimizers") and self._feedback_optimizers is not None:
             return self._feedback_optimizers
 
         _feedback_optimizers = []
@@ -775,9 +772,8 @@ class DTP(LightningModule, Model):
     def _align_values_with_backward_net(
         self, values: List[T], default: T, inputs_are_forward_ordered: bool = False
     ) -> List[T]:
-        """Aligns the values in `values` so that they are aligned with the trainable
-        layers in the backward net.
-        The last layer of the backward net (G_0) is also never trained.
+        """Aligns the values in `values` so that they are aligned with the trainable layers in the
+        backward net. The last layer of the backward net (G_0) is also never trained.
 
         This assumes that `forward_ordering` is True, then `values` are forward-ordered.
         Otherwise, assumes that the input is given in the *backward* order Gn, Gn-1, ..., G0.
@@ -876,6 +872,7 @@ class DTP(LightningModule, Model):
         return backward_ordered_output
 
     def configure_callbacks(self):
+        # TODO: Move this into a config.yaml file with `CompareToBackpropCallback` as the `_target_`
         return [CompareToBackpropCallback()]
 
     @property

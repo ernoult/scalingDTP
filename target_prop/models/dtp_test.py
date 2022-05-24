@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import logging
 from collections import OrderedDict
@@ -44,9 +46,7 @@ class TestDTP:
         """Hyper-parameters to use for debugging, depending on the network type."""
         default_hps = cls.model_class.HParams()
         # Reduce the number of iterations, so that tests run much quicker.
-        shorter_feedback_training_iterations = [
-            2 for _ in default_hps.feedback_training_iterations
-        ]
+        shorter_feedback_training_iterations = [2 for _ in default_hps.feedback_training_iterations]
         return dataclasses.replace(
             default_hps,
             feedback_training_iterations=shorter_feedback_training_iterations,
@@ -55,7 +55,7 @@ class TestDTP:
 
     @pytest.mark.parametrize("dataset", ["cifar10"])
     def test_fast_dev_run(
-        self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams
+        self, dataset: str, network_type: type[Network], debug_hparams: Network.HParams
     ):
         """Run a fast dev run using a single batch of data for training/validation/testing."""
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
@@ -63,6 +63,8 @@ class TestDTP:
         # have to pass different values for each dataset.
         dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
         hparams = debug_hparams
+        batch_size = 128
+
         trainer = Trainer(
             max_epochs=1,
             gpus=1 if torch.cuda.is_available() else 0,
@@ -87,7 +89,7 @@ class TestDTP:
 
         print("HParams:", hparams.dumps_json(indent="\t"))
         # Create the datamodule:
-        datamodule = dataset_config.make_datamodule(batch_size=hparams.batch_size)
+        datamodule = dataset_config.make_datamodule(batch_size=batch_size)
 
         # Create the network
         network: nn.Sequential = network_type(

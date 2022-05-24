@@ -1,12 +1,12 @@
 # ADAPTED FROM https://github.com/facebookresearch/hydra/blob/main/examples/advanced/hydra_app_example/tests/test_example.py
 from typing import List
-from omegaconf import OmegaConf
+
 import pytest
-
-from main import Experiment, Options
 from hydra import compose, initialize, initialize_config_module
-from target_prop.datasets.dataset_config import DatasetConfig
+from omegaconf import OmegaConf
 
+from main import Experiment, Options, main
+from target_prop.datasets.dataset_config import DatasetConfig
 from target_prop.models.model import Model
 from target_prop.networks.simple_vgg import SimpleVGG
 
@@ -22,13 +22,14 @@ def test_defaults() -> None:
         assert options.dataset == DatasetConfig()
 
 
-from target_prop.models import DTP, ParallelDTP, VanillaDTP, TargetProp, BaselineModel
 from dataclasses import replace
+
+from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 
 
 def _ids(v):
     if isinstance(v, list):
-        return "_".join(map(str,v))
+        return ",".join(map(str, v))
     return None
 
 
@@ -55,7 +56,7 @@ def test_setting_model(overrides: List[str], expected: Model.HParams) -> None:
         assert options.model == expected
 
 
-from target_prop.networks import Network, LeNet, ResNet18, ResNet34, SimpleVGG
+from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
 
 
 @pytest.mark.parametrize(
@@ -75,7 +76,6 @@ def test_setting_network(overrides: List[str], expected: Model.HParams) -> None:
         options = OmegaConf.to_object(config)
         assert isinstance(options, Options)
         assert options.network == expected
-
 
 
 dtp_model_names = ["dtp", "target_prop", "vanilla_dtp"]
@@ -106,3 +106,57 @@ def test_model_network_overrides_fixes_mismatch_in_number_of_values(overrides: L
         n_layers_to_train = len(experiment.network) - 1
         assert len(options.model.feedback_training_iterations) == n_layers_to_train
         assert len(experiment.model.hp.feedback_training_iterations) == n_layers_to_train
+
+
+# TODO: Add a simple test that overfits to a single batch, for every combination!
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        [f"model={model_name}", f"network={network_name}"]
+        for model_name in dtp_model_names
+        for network_name in network_names
+    ],
+    ids=_ids,
+)
+def test_overfit_single_batch(overrides: list[str]) -> None:
+    """Test that training with a single batch for many epochs makes it possible to learn that batch
+    well.
+
+    If this doesn't work, there's no point in trying to train for longer.
+    """
+    overrides = overrides + [
+        "seed=123",
+        "callbacks=no_checkpoints",
+        "++trainer.enable_checkpointing=False",
+        "++trainer.gpus=1",
+        "++trainer.overfit_batches=1",
+        "++trainer.limit_val_batches=0.0",
+        "++trainer.limit_test_batches=0.0",
+        "++trainer.max_epochs=50",
+    ]
+    print(f"overrides: {' '.join(overrides)}")
+    with initialize(config_path="conf"):
+        config = compose(
+            config_name="config",
+            overrides=overrides,
+        )
+        options = OmegaConf.to_object(config)
+        assert isinstance(options, Options)
+
+        # NOTE: Running the experiment manually like this so that we can get the number of classes
+        # from the datamodule.
+        # TODO: If we create the experiment from the options in another (nicer) way, this will need
+        # to be updated.
+        experiment = Experiment(options)
+        assert hasattr(experiment.datamodule, "num_classes")
+        num_classes: int = experiment.datamodule.num_classes  # type: ignore
+        chance_accuracy = 1 / num_classes
+
+        classification_error = experiment.run()
+        accuracy = 1 - classification_error
+
+        # NOTE: In this particular case, this error below is the training error, not the validation
+        # error.
+        assert accuracy > (chance_accuracy + 0.10)

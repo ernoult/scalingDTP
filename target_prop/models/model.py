@@ -33,7 +33,7 @@ class Model(Protocol):
         # batch size
         batch_size: int = 128
 
-    hp: "Model.HParams"
+    hp: Model.HParams
     net_hp: Network.HParams
 
     def __init__(
@@ -42,6 +42,6 @@ class Model(Protocol):
         network: Network,
         hparams: "Model.HParams",
         config: "Config",
-        network_hparams: Network.HParams = None,
+        network_hparams: Network.HParams | None = None,
     ):
         ...
