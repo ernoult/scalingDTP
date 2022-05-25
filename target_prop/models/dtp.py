@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import dataclasses
 import functools
 import logging
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, List, Optional, TypeVar
 
 import numpy as np
 import torch
@@ -14,9 +13,7 @@ import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, field, list_field
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from simple_parsing.helpers import field, list_field
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
@@ -29,7 +26,7 @@ from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
-from target_prop.models.model import Model
+from target_prop.models.model import Model, PhaseStr, StepOutputDict
 from target_prop.networks.network import Network
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
@@ -41,7 +38,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class DTP(LightningModule, Model):
+class DTP(Model):
     """Differential Target Propagation algorithm, implemented as a LightningModule."""
 
     @dataclass
@@ -56,22 +53,23 @@ class DTP(LightningModule, Model):
         "parallel" version of DTP, however the feedback layers are still updated in sequence.
         """
 
-        # Arguments to be passed to the LR scheduler.
-        lr_scheduler: LRSchedulerConfig = field(default_factory=CosineAnnealingLRConfig)
-        # Use of a learning rate scheduler for the forward weights.
+        lr_scheduler: Optional[LRSchedulerConfig] = field(default_factory=CosineAnnealingLRConfig)
+        """ Arguments to be passed to the LR scheduler. """
+
         use_scheduler: bool = True
+        """ Use of a learning rate scheduler for the forward weights. """
 
-        # batch size
         batch_size: int = 128
+        """ batch size """
 
-        # Number of training steps for the feedback weights per batch. Can be a list of
-        # integers, where each value represents the number of iterations for that layer.
-        feedback_training_iterations: List[int] = list_field(20, 30, 35, 55, 20)
+        feedback_training_iterations: list[int] = list_field(20, 30, 35, 55, 20)
+        """ Number of training steps for the feedback weights per batch. Can be a list of
+        integers, where each value represents the number of iterations for that layer.
+        """
 
-        # Max number of training epochs in total.
         max_epochs: int = 90
+        """ Max number of training epochs in total. """
 
-        # Hyper-parameters for the optimizer of the feedback weights (backward net).
         b_optim: OptimizerConfig = field(
             default_factory=functools.partial(
                 OptimizerConfig,
@@ -81,11 +79,11 @@ class DTP(LightningModule, Model):
                 weight_decay=None,
             )
         )
+        """ Hyper-parameters for the optimizer of the feedback weights (backward net). """
 
-        # The scale of the gaussian random variable in the feedback loss calculation.
-        noise: List[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+        noise: list[float] = list_field(0.4, 0.4, 0.2, 0.2, 0.08)
+        """ The scale of the gaussian random variable in the feedback loss calculation. """
 
-        # Hyper-parameters for the forward optimizer
         f_optim: OptimizerConfig = field(
             default_factory=functools.partial(
                 OptimizerConfig,
@@ -95,26 +93,29 @@ class DTP(LightningModule, Model):
                 weight_decay=1e-4,
             )
         )
+        """ Hyper-parameters for the forward optimizer. """
 
-        # nudging parameter: Used when calculating the first target.
         beta: float = 0.7
+        """ nudging parameter: Used when calculating the first target. """
 
-        # Number of noise samples to use to get the feedback loss in a single iteration.
-        # NOTE: The loss used for each update is the average of these losses.
         feedback_samples_per_iteration: int = 1
+        """ Number of noise samples to use to get the feedback loss in a single iteration.
+        NOTE: The loss used for each update is the average of these losses.
+        """
 
-        # Max number of epochs to train for without an improvement to the validation
-        # accuracy before the training is stopped. When 0, no early stopping is used.
         early_stopping_patience: int = 0
+        """Max number of epochs to train for without an improvement to the validation
+        accuracy before the training is stopped. When 0, no early stopping is used.
+        """
 
-        # Sets symmetric weight initialization. Useful for debugging.
         init_symetric_weights: bool = False
+        """ Sets symmetric weight initialization. Useful for debugging. """
 
         # TODO: Add a Callback class to compute and plot jacobians, if that's interesting.
         # jacobian: bool = False  # compute jacobians
 
-        # Step interval for creating and logging plots.
         plot_every: int = 1000
+        """ Step interval for creating and logging plots. """
 
     def __init__(
         self,
@@ -122,28 +123,19 @@ class DTP(LightningModule, Model):
         network: Network,
         hparams: DTP.HParams,
         config: Config | None = None,
-        network_hparams: Network.HParams | None = None,
     ):
-        super().__init__()
-        self.hp: DTP.HParams = hparams
-        self.net_hp = network_hparams or network.hparams
-        self.config = config or Config()
-        if self.config.seed is not None:
-            # NOTE: This is currently being done twice: Once in main_pl and once again here.
-            seed_everything(seed=self.config.seed, workers=True)
-
-        # NOTE: Setting this property allows PL to infer the shapes and number of params.
-        self.example_input_array = torch.rand(  # type: ignore
-            [datamodule.batch_size, *datamodule.dims], device=self.config.device
-        )
-
+        super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
+        self.hp: DTP.HParams
         # Create the forward and backward nets.
-        self.forward_net = network.to(self.config.device)
         self.backward_net = self.create_backward_net().to(self.config.device)
 
         if self.hp.init_symetric_weights:
             logger.info("Initializing the backward net with symetric weights.")
             init_symetric_weights(self.forward_net, self.backward_net)
+
+        # NOTE: These properties below are in the backward ordering, while those in the hparams are
+        # in the forward order. This is so they line up with the trainable layers of
+        # self.backward_net, which is in the backward order.
 
         # The number of iterations to perform for each of the layers in `self.backward_net`.
         self.feedback_iterations = self._align_values_with_backward_net(
@@ -163,71 +155,18 @@ class DTP(LightningModule, Model):
             lrs_per_layer, default=0.0, inputs_are_forward_ordered=True
         )
 
-        if self.config.debug:
-            print(f"Forward net: ")
-            print(self.forward_net)
-            print(f"Feedback net:")
-            print(self.backward_net)
+        print(f"Feedback net:")
+        print(self.backward_net)
+        # Check that the hparams line up correctly with the trainable layers of the backward
+        # net.
+        _validate_hparam_configuration(model=self)
 
-            N = len(self.backward_net)
-            for i, (layer, lr, noise, iterations) in list(
-                enumerate(
-                    zip(
-                        self.backward_net,
-                        self.feedback_lrs,
-                        self.feedback_noise_scales,
-                        self.feedback_iterations,
-                    )
-                )
-            ):
-                logger.info(
-                    f"self.backward_net[{i}]: (G[{N-i-1}]): Type {type(layer).__name__}, LR: {lr}, "
-                    f"noise: {noise}, iterations: {iterations}"
-                )
-                if i == N - 1:
-                    # The last layer of the backward_net (the layer closest to the input) is not
-                    # currently being trained, so we expect it to not have these parameters.
-                    assert lr == 0
-                    assert noise == 0
-                    assert iterations == 0
-                    continue
-                if any(p.requires_grad for p in layer.parameters()):
-                    # For any of the trainable layers in the backward net (except the last one), we
-                    # expect to have positive values:
-                    assert lr > 0
-                    assert noise > 0
-                    assert iterations > 0
-                else:
-                    # Non-Trainable layers (e.g. Reshape) are not trained.
-                    assert lr == 0
-                    assert noise == 0
-                    assert iterations == 0
-        # Metrics:
-        self.accuracy = Accuracy()
-        self.top5_accuracy = Accuracy(top_k=5)
-        self.save_hyperparameters(
-            {
-                "hp": self.hp.to_dict(),
-                "config": self.config.to_dict(),
-                "model_type": type(self).__name__,
-                "net_hp": self.net_hp.to_dict(),
-                "net_type": type(self.forward_net).__name__,
-            }
-        )
-
-        # NOTE: These properties below are in the backward ordering, while those in the hparams are
-        # in the forward order.
-
-        self.trainer: Trainer  # type: ignore
         # Can't do automatic optimization here, since we do multiple sequential updates
         # per batch.
         self.automatic_optimization = False
         self.criterion = nn.CrossEntropyLoss(reduction="none")
-        print("Hyper-Parameters:")
-        print(self.hp.dumps_json(indent="\t"))
-        # TODO: Could use a list of metrics from torchmetrics instead of just accuracy:
-        # self.supervised_metrics: List[Metrics]
-        self._feedback_optimizers: Optional[List[Optional[Optimizer]]] = None
+
+        self._feedback_optimizers: Optional[list[Optional[Optimizer]]] = None
         self._forward_optimizer: Optional[Optimizer] = None
 
     def create_backward_net(self) -> nn.Sequential:
@@ -251,46 +190,26 @@ class DTP(LightningModule, Model):
 
         return backward_net
 
-    def forward(self, input: Tensor) -> Tuple[Tensor, Tensor]:  # type: ignore
+    def forward(self, input: Tensor) -> tuple[Tensor, Tensor]:
         # Dummy forward pass, not used in practice. We just implement it so that PL can
         # display the input/output shapes of our networks.
         y = self.forward_net(input)
         r = self.backward_net(y)
         return y, r
 
-    def training_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-    ) -> float:  # type: ignore
-        result = self.shared_step(batch, batch_idx=batch_idx, phase="train")
-        if not self.automatic_optimization:
-            return None
-        return result
-
-    def validation_step(
-        self,
-        batch: Tuple[Tensor, Tensor],
-        batch_idx: int,
-    ) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="val")
-
-    def test_step(self, batch: Tuple[Tensor, Tensor], batch_idx: int) -> float:  # type: ignore
-        return self.shared_step(batch, batch_idx=batch_idx, phase="test")
-
     def shared_step(
         self,
-        batch: Tuple[Tensor, Tensor],
+        batch: tuple[Tensor, Tensor],
         batch_idx: int,
-        phase: str,
-    ):
+        phase: PhaseStr,
+    ) -> StepOutputDict:
         """Main step, used by the `[training/valid/test]_step` methods."""
         x, y = batch
 
         # ----------- Optimize the feedback weights -------------
         # NOTE: feedback_loss here returns a dict for now, since I think that makes things easier to
         # inspect.
-        feedback_training_outputs: Dict = self.feedback_loss(x, y, phase=phase)
+        feedback_training_outputs: dict = self.feedback_loss(x, y, phase=phase)
 
         feedback_loss: Tensor = feedback_training_outputs["loss"]
         avg_feedback_loss: Tensor = feedback_training_outputs["avg_loss"]
@@ -302,7 +221,7 @@ class DTP(LightningModule, Model):
         assert not feedback_loss.requires_grad
 
         # ----------- Optimize the forward weights -------------
-        forward_training_outputs: Dict = self.forward_loss(x, y, phase=phase)
+        forward_training_outputs: dict = self.forward_loss(x, y, phase=phase)
         forward_loss: Tensor = forward_training_outputs["loss"]
 
         # During training, the forward loss will be a 'live' loss tensor, since we
@@ -329,9 +248,12 @@ class DTP(LightningModule, Model):
 
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps, if needed.
-        return float(forward_loss + feedback_loss)
+        logits = forward_training_outputs["logits"]
+        # NOTE: These logits shouldn't require grad anymore.
+        assert not logits.requires_grad
+        return {"loss": float(forward_loss + feedback_loss), "y": y, "logits": logits}
 
-    def feedback_loss(self, x: Tensor, y: Tensor, phase: str) -> Dict[str, Any]:
+    def feedback_loss(self, x: Tensor, y: Tensor, phase: str) -> dict[str, Any]:
 
         n_layers = len(self.backward_net)
         # Reverse the backward net, just for ease of readability.
@@ -597,7 +519,7 @@ class DTP(LightningModule, Model):
         # NOTE: targets[0] is the targets for the output of the first layer, not for x.
         # Make sure that all targets have been computed and that they are fixed (don't require grad)
         assert all(target is not None and not target.requires_grad for target in targets)
-        target_tensors = cast(List[Tensor], targets)  # Rename just for typing purposes.
+        target_tensors: List[Tensor] = targets  # Rename just for typing purposes.
 
         # Calculate the losses for each layer:
         forward_loss_per_layer = []
@@ -621,6 +543,7 @@ class DTP(LightningModule, Model):
         return {
             "loss": forward_loss,
             "layer_losses": forward_loss_per_layer,
+            "logits": logits.detach(),
         }
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
@@ -871,10 +794,6 @@ class DTP(LightningModule, Model):
         backward_ordered_output = values_per_layer
         return backward_ordered_output
 
-    def configure_callbacks(self):
-        # TODO: Move this into a config.yaml file with `CompareToBackpropCallback` as the `_target_`
-        return [CompareToBackpropCallback()]
-
     @property
     def is_multi_gpu(self) -> bool:
         if self.trainer.devices == -1:
@@ -882,3 +801,40 @@ class DTP(LightningModule, Model):
         return self.trainer.devices != 1 or (
             isinstance(self.trainer.devices, list) and len(self.trainer.devices) > 1
         )
+
+
+def _validate_hparam_configuration(model: DTP) -> None:
+    """Check that the hparams line up correctly with the trainable layers of the backward net."""
+    N = len(model.backward_net)
+    for i, (layer, lr, noise, iterations) in list(
+        enumerate(
+            zip(
+                model.backward_net,
+                model.feedback_lrs,
+                model.feedback_noise_scales,
+                model.feedback_iterations,
+            )
+        )
+    ):
+        logger.info(
+            f"self.backward_net[{i}]: (G[{N-i-1}]): Type {type(layer).__name__}, LR: {lr}, "
+            f"noise: {noise}, iterations: {iterations}"
+        )
+        if i == N - 1:
+            # The last layer of the backward_net (the layer closest to the input) is not
+            # currently being trained, so we expect it to not have these parameters.
+            assert lr == 0
+            assert noise == 0
+            assert iterations == 0
+            continue
+        if any(p.requires_grad for p in layer.parameters()):
+            # For any of the trainable layers in the backward net (except the last one), we
+            # expect to have positive values:
+            assert lr > 0
+            assert noise > 0
+            assert iterations > 0
+        else:
+            # Non-Trainable layers (e.g. Reshape) are not trained.
+            assert lr == 0
+            assert noise == 0
+            assert iterations == 0
