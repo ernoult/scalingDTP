@@ -229,7 +229,7 @@ class DTP(Model):
         assert forward_loss.requires_grad == (phase == "train")
         # NOTE: If this is getting called from the `ParallelDTP`, then `self.automatic_optimization`
         # will be `True`, and we let PL do the update.
-        if forward_loss.requires_grad and not self.automatic_optimization:
+        if not self.automatic_optimization and forward_loss.requires_grad:
             forward_optimizer = self.forward_optimizer
             forward_optimizer.zero_grad()
             if self.trainer:
@@ -249,9 +249,10 @@ class DTP(Model):
         # Since here we do manual optimization, we just return a float. This tells PL that we've
         # already performed the optimization steps, if needed.
         logits = forward_training_outputs["logits"]
+        total_loss = forward_loss + feedback_loss
         # NOTE: These logits shouldn't require grad anymore.
         assert not logits.requires_grad
-        return {"loss": float(forward_loss + feedback_loss), "y": y, "logits": logits}
+        return {"loss": total_loss, "y": y, "logits": logits}
 
     def feedback_loss(self, x: Tensor, y: Tensor, phase: str) -> dict[str, Any]:
 

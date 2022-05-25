@@ -3,7 +3,7 @@ from __future__ import annotations
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal, Optional, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 import torch
 from matplotlib.pyplot import step
@@ -24,8 +24,9 @@ if typing.TYPE_CHECKING:
 PhaseStr = Literal["train", "val", "test"]
 
 
-class RequiredOutputs(TypedDict):
-    """The dictionary format that is expected to be returned from `training/val/test_step`."""
+class RequiredStepOutputs(TypedDict):
+    """The dictionary format that is minimally required to be returned from
+    `training/val/test_step`."""
 
     logits: Tensor
     """The un-normalized logits."""
@@ -34,11 +35,14 @@ class RequiredOutputs(TypedDict):
     """ The class labels. """
 
 
-class StepOutputDict(RequiredOutputs, total=False):
+class StepOutputDict(RequiredStepOutputs, total=False):
     """The dictionary format that is expected to be returned from `training/val/test_step`."""
 
-    loss: Tensor | float
+    loss: Tensor
     """ Optional loss tensor that can be returned by those methods."""
+
+    log: dict[str, Tensor | Any]
+    """ Optional dictionary of things to log at each step."""
 
 
 class Model(LightningModule, ABC):
@@ -157,21 +161,24 @@ class Model(LightningModule, ABC):
             )
         logits = step_output["logits"]
         y = step_output["y"]
-        if "loss" in step_output:
-            loss = step_output["loss"].mean()
-        else:
-            loss = F.cross_entropy(logits, y, reduction="mean")
 
         probs = torch.softmax(logits, -1)
-        self.log(f"{phase}/accuracy", self.accuracy(probs, y), prog_bar=True)
+        # TODO: Validate that this makes sense for multi-GPU training.
+        self.log(f"{phase}/accuracy", self.accuracy(probs, y), prog_bar=(phase == "train"))
         self.log(f"{phase}/top5_accuracy", self.top5_accuracy(probs, y))
-        self.log(f"{phase}/F_loss", loss, prog_bar=phase == "train")
 
-        output = step_output.copy()
-        if "loss" in step_output:
-            # Replace the loss with its mean if it was there.
-            output["loss"] = loss
-        return output
+        if "cross_entropy" not in step_output:
+            ce_loss = F.cross_entropy(logits.detach(), y, reduction="mean")
+            self.log(f"{phase}/cross_entropy", ce_loss, prog_bar=phase == "train")
+
+        fused_output = step_output.copy()
+        loss: Tensor | float | None = step_output.get("loss", None)
+        if isinstance(loss, Tensor) and loss.shape:
+            # Replace the loss with its mean if it was there. This is useful when automatic
+            # optimization is enabled, for example in the baseline (backprop), where each replica
+            # returns the un-reduced cross-entropy loss
+            fused_output["loss"] = loss.mean()
+        return fused_output
 
     # TODO: Log the metrics here, so they are consistent between all the models.?
     # def training_step_end(self, step_results: Tensor | list[Tensor]) -> Tensor:
