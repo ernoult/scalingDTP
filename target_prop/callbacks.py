@@ -71,6 +71,8 @@ class CompareToBackpropCallback(Callback):
                 )
                 break
 
+        x = x.to(pl_module.device)
+        y = y.to(pl_module.device)
         distances, angles = comparison_with_backprop_gradients(
             model=pl_module, x=x, y=y, temp_beta=self.temp_beta
         )
