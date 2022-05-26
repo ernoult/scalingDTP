@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, TypeVar
 
-import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from simple_parsing import field
@@ -22,7 +21,6 @@ from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
 
-T = TypeVar("T")
 logger = getLogger(__name__)
 
 
@@ -83,11 +81,7 @@ class BaselineModel(Model):
         logits = self.forward_net(x)
 
         loss = F.cross_entropy(logits, y, reduction="none")
-        # self.log(f"{phase}/accuracy", self.accuracy(probs, y), prog_bar=True)
-        # self.log(f"{phase}/top5_accuracy", self.top5_accuracy(probs, y))
-        # self.log(f"{phase}/F_loss", loss, prog_bar=phase == "train")
-        # if phase == "train":
-        #     self.log(f"F_lr", self.optimizers().param_groups[0]["lr"])
+
         return {"logits": logits, "y": y, "loss": loss}
 
     def configure_optimizers(self) -> dict:
