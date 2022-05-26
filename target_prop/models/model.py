@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional, TypedDict
 
 import torch
-from matplotlib.pyplot import step
-from numpy import require
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import Callback, LightningModule, Trainer
 from simple_parsing.helpers.serialization.serializable import Serializable
@@ -166,7 +164,9 @@ class Model(LightningModule, ABC):
         probs = torch.softmax(logits, -1)
         # TODO: Validate that this makes sense for multi-GPU training.
         self.log(f"{phase}/accuracy", self.accuracy(probs, y), prog_bar=(phase == "train"))
-        self.log(f"{phase}/top5_accuracy", self.top5_accuracy(probs, y))
+        self.log(
+            f"{phase}/top5_accuracy", self.top5_accuracy(probs, y), prog_bar=(phase == "train")
+        )
 
         if "cross_entropy" not in step_output:
             ce_loss = F.cross_entropy(logits.detach(), y, reduction="mean")
