@@ -49,22 +49,3 @@ from omegaconf.errors import ConfigAttributeError
 omegaconf.DictConfig._validate_get = _validate_get
 # setattr(omegaconf.DictConfig, "_validate_get", _validate_get)
 import omegaconf._utils
-from omegaconf._utils import type_str as _type_str
-
-
-def type_str(t: Any) -> str:
-    # Little 'patch', so the names are a bit more useful for inner classes. Otherwise we get
-    # "HParams is not a subclass of HParams", which isn't very helpful.
-    their_value = _type_str(t)
-    if (
-        hasattr(t, "__name__")
-        and hasattr(t, "__qualname__")
-        and their_value == t.__name__
-        and t.__qualname__ != t.__name__
-    ):
-        print(f"Returning {t.__qualname__} (qualname) instead of {t.__name__} (name).")
-        return t.__qualname__
-    return their_value
-
-
-omegaconf._utils.type_str = type_str
