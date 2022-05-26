@@ -218,7 +218,10 @@ def test_overfit_single_batch(
     # itself may do more than a single update, e.g. in the case of DTP).
     num_training_iterations = 20
     # By how much the model should be better than chance accuracy to pass this test.
-    threshold_pct = 0.10
+
+    # FIXME: This threshold is really low, we should expect more like > 90% accuracy, but it's
+    # currently taking a long time to get those values.
+    better_than_chance_threshold_pct = 0.10
 
     all_overrides = (
         testing_overrides
@@ -253,6 +256,9 @@ def test_overfit_single_batch(
 
         # NOTE: In this particular case, this error below is the training error, not the validation
         # error.
-        # FIXME: This threshold is really low, it should be more like > 90% accuracy, but it's
-        # currently taking a long time to get those values.
-        assert accuracy > (chance_accuracy + threshold_pct)
+        assert accuracy > (chance_accuracy + better_than_chance_threshold_pct)
+
+
+# TODO: Add some more integration tests:
+# - running sweeps from Hydra!
+# - using the slurm launcher!
