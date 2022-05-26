@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import itertools
-import os
 import pickle
 import shutil
 from collections import defaultdict
@@ -13,9 +12,6 @@ from typing import Callable, ClassVar, Literal, NewType, Optional, Sequence
 import gdown
 import numpy as np
 from PIL import Image
-
-# pip install gdown
-# gdown https://drive.google.com/uc?id=1XAlD_wshHhGNzaqy8ML-Jk0ZhAm8J5J_
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import transforms
@@ -54,7 +50,9 @@ class ImageNet32Dataset(VisionDataset):
         self.split = "train" if self.train else "val"
         self.split_folder = f"out_data_{self.split}"
         # TODO: Look for the archive in this directory before downloading it.
-        self.readonly_datasets_dir = Path(readonly_datasets_dir) if readonly_datasets_dir else None
+        self.readonly_datasets_dir = (
+            Path(readonly_datasets_dir).expanduser().absolute() if readonly_datasets_dir else None
+        )
 
         self._data_loaded = False
         self.data: np.ndarray
@@ -94,16 +92,17 @@ class ImageNet32Dataset(VisionDataset):
         return len(self.data)
 
     def _download_dataset(self) -> None:
-        archive_path = Path(self.root) / self.archive_filename
-        extracted_path = Path(self.root) / self.base_folder
+        archive_path = (Path(self.root) / self.archive_filename).absolute()
+        extracted_path = (Path(self.root) / self.base_folder).absolute()
+        root_path = Path(self.root).absolute()
 
         def extract_archive_in_root():
             # Check if the archive is already extracted somehow?
-            logger.info(f"Extracting archive {archive_path} in {self.root}")
-            shutil.unpack_archive(archive_path, extract_dir=self.root)
-            # gdown.extractall(str(archive_path), str(archive_path.with_suffix("")))
+            logger.info(f"Extracting archive {archive_path} to {root_path}")
+            shutil.unpack_archive(archive_path, extract_dir=str(root_path))
 
         if extracted_path.exists():
+            logger.info(f"Extraction path {extracted_path} already exists.")
             try:
                 self._load_dataset()
                 logger.info(f"Archive already downloaded and extracted to {extracted_path}")
@@ -117,7 +116,6 @@ class ImageNet32Dataset(VisionDataset):
         if archive_path.exists():
             extract_archive_in_root()
             return
-
         if (
             self.readonly_datasets_dir
             and (self.readonly_datasets_dir / self.archive_filename).exists()
@@ -127,6 +125,7 @@ class ImageNet32Dataset(VisionDataset):
             logger.info(f"Copying archive from {readonly_archive_path} -> {archive_path}")
             shutil.copyfile(src=readonly_archive_path, dst=archive_path, follow_symlinks=False)
             extract_archive_in_root()
+            return
 
         if not archive_path.exists():
             logger.info(f"Downloading the archive to {archive_path}")
@@ -149,7 +148,7 @@ class ImageNet32Dataset(VisionDataset):
         logger.info(f"Loading ImageNet32 {self.split} dataset...")
         for i in range(1, 11):
             file_name = "train_data_batch_" + str(i)
-            file_path = os.path.join(self.root, self.base_folder, self.split_folder, file_name)
+            file_path = Path(self.root, self.base_folder, self.split_folder, file_name).absolute()
             with open(file_path, "rb") as f:
                 entry = pickle.load(f, encoding="latin1")
                 data.append(entry["data"])
@@ -238,7 +237,8 @@ class ImageNet32DataModule(VisionDataModule):
     def prepare_data(self) -> None:
         """Saves files to data_dir."""
         # NOTE: In our case, the download gives us both. No need to do it twice.
-        self.dataset_cls(self.data_dir, download=True)
+        self.dataset_cls(self.data_dir, train=True, download=True, **self.EXTRA_ARGS)
+        self.dataset_cls(self.data_dir, train=False, download=True, **self.EXTRA_ARGS)
 
     def setup(self, stage: Optional[StageStr] = None) -> None:
         """Creates train, val, and test dataset."""
@@ -364,7 +364,7 @@ def test_dataset_download_works():
     batch_size = 16
     datamodule = ImageNet32DataModule(
         data_dir=Path("data"),
-        readonly_datasets_dir=Path("~/scratch"),
+        readonly_datasets_dir=Path("~/scratch").expanduser(),
         batch_size=batch_size,
         num_images_per_val_class=10,
     )

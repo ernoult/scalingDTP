@@ -1,3 +1,4 @@
+import functools
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
@@ -23,10 +24,10 @@ from torchvision.transforms import (
     ToTensor,
 )
 
-from target_prop.datasets import ImageNet32DataModule as ImageNet32NoValDataModule
+from target_prop.datasets.imagenet32_datamodule import ImageNet32DataModule
 
 FILE = Path(__file__)
-REPO_ROOTDIR = FILE.parent.parent  # The root of the repo.
+REPO_ROOTDIR = FILE.parent.parent.parent  # The root of the repo.
 Transform = Callable[[Tensor], Tensor]
 D = TypeVar("D", bound=VisionDataModule)
 
@@ -37,17 +38,14 @@ def get_datamodule(dataset: str, batch_size: int, **kwargs) -> VisionDataModule:
     return DatasetConfig(dataset=dataset, **kwargs).make_datamodule(batch_size=batch_size)
 
 
-import functools
-
-
 @dataclass
 class DatasetConfig(Serializable):
     available_datasets: ClassVar[Dict[str, Type[VisionDataModule]]] = {  # type: ignore
         "mnist": MNISTDataModule,
-        # MNIST_noval: # TODO: Add this when we add Sean's mnist datamodule.
         "cifar10": CIFAR10DataModule,
+        # TODO: Remove this `no_val` variant. Instead, just use the `val_split` parameter.
         "cifar10_noval": functools.partial(CIFAR10DataModule, val_split=0.0),
-        "imagenet32_noval": ImageNet32NoValDataModule,
+        "imagenet32": ImageNet32DataModule,
         "imagenet": ImagenetDataModule,
         "fmnist": FashionMNISTDataModule,
     }

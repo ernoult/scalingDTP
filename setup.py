@@ -42,5 +42,6 @@ setuptools.setup(
         "tensorboardx",
         "orion",
         "hydra-orion-sweeper @ git+https://github.com/Delaunay/hydra.git@orion#subdirectory=plugins/hydra_orion_sweeper",
+        "gdown",
     ],
 )
