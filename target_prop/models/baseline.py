@@ -59,7 +59,6 @@ class BaselineModel(Model):
         config: Config | None = None,
     ):
         super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
-        # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp: BaselineModel.HParams
         self.automatic_optimization = True
 
@@ -76,12 +75,8 @@ class BaselineModel(Model):
         phase: PhaseStr,
     ) -> StepOutputDict:
         x, y = batch
-        # Setting this value just so we don't have to pass `phase=...` to `forward_loss`
-        # and `feedback_loss` below.
         logits = self.forward_net(x)
-
         loss = F.cross_entropy(logits, y, reduction="none")
-
         return {"logits": logits, "y": y, "loss": loss}
 
     def configure_optimizers(self) -> dict:
@@ -91,18 +86,12 @@ class BaselineModel(Model):
         optim_config: dict[str, Any] = {"optimizer": optimizer}
 
         if self.hp.use_scheduler:
-            # `main.py` seems to be using a weight scheduler only for the forward weight
-            # training.
             lr_scheduler = self.hp.lr_scheduler.make_scheduler(optimizer)
-            scheduler_config: dict[str, Any] = {"scheduler": lr_scheduler}
-            if self.automatic_optimization:
-                # Do we still need this?
-                scheduler_config.update(
-                    {
-                        "interval": self.hp.lr_scheduler.interval,
-                        "frequency": self.hp.lr_scheduler.frequency,
-                    }
-                )
+            scheduler_config: dict[str, Any] = {
+                "scheduler": lr_scheduler,
+                "interval": self.hp.lr_scheduler.interval,
+                "frequency": self.hp.lr_scheduler.frequency,
+            }
             optim_config["lr_scheduler"] = scheduler_config
         return optim_config
 

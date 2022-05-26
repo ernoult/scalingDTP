@@ -74,6 +74,7 @@ class Model(LightningModule, ABC):
         # IDEA: Could actually implement a `self.HParams` instance method that would choose the
         # default value contextually, based on the choice of datamodule! However Hydra already
         # kinda does that for us already.
+        # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp = hparams or self.HParams()
         self.net_hp = network.hparams
         self.config = config or Config()
