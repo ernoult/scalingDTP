@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sys
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Type
@@ -13,6 +14,7 @@ from pytorch_lightning.utilities.seed import seed_everything
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from main import Options, main
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
@@ -26,23 +28,44 @@ from target_prop.networks.resnet import ResNet18, ResNet34
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.utils.utils import named_trainable_parameters
 
-networks = [SimpleVGG, ResNet18, ResNet34, LeNet]
+_missing = object()
+
+
+def not_well_supported(
+    param=_missing, reason="Not well supported, so only run when -vvv is passed"
+):
+    if param is _missing:
+        return pytest.mark.skipif(
+            "-vvv" not in sys.argv,
+            reason=reason,
+        )
+
+    return pytest.param(
+        param,
+        pytest.mark.skipif(
+            "-vvv" not in sys.argv,
+            reason=reason,
+        ),
+    )
+
+
+networks = [
+    SimpleVGG,
+    ResNet18,
+    ResNet34,
+    LeNet,
+]
 
 
 class TestDTP:
+    """Test suite for the models."""
+
     # The type of model to test.
     model_class: ClassVar[Type[DTP]] = DTP
 
-    @pytest.fixture(params=networks, name="network_type")
-    @classmethod
-    def network_type(cls, request):
-        """Fixture that yields each type of network."""
-        net_type = request.param
-        yield net_type
-
     @pytest.fixture(name="debug_hparams")
     @classmethod
-    def debug_hparams(cls, network_type: Type[Network]):
+    def debug_hparams(cls):
         """Hyper-parameters to use for debugging, depending on the network type."""
         default_hps = cls.model_class.HParams()
         # Reduce the number of iterations, so that tests run much quicker.
@@ -54,6 +77,7 @@ class TestDTP:
         )
 
     @pytest.mark.parametrize("dataset", ["cifar10"])
+    @pytest.mark.parametrize("network_type", networks)
     def test_fast_dev_run(
         self, dataset: str, network_type: type[Network], debug_hparams: Network.HParams
     ):
@@ -92,7 +116,7 @@ class TestDTP:
         datamodule = dataset_config.make_datamodule(batch_size=batch_size)
 
         # Create the network
-        network: nn.Sequential = network_type(
+        network = network_type(
             in_channels=datamodule.dims[0],
             n_classes=datamodule.num_classes,
             hparams=None,
@@ -103,7 +127,6 @@ class TestDTP:
             hparams=hparams,  # type: ignore
             config=config,
             network=network,
-            network_hparams=network.hparams,
         )
         trainer.fit(model, datamodule=datamodule)
 
@@ -115,20 +138,19 @@ class TestDTP:
     @pytest.mark.timeout(30)
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("seed", [123, 456])
+    @pytest.mark.parametrize("network_type", networks)
     def test_run_is_reproducible_given_seed(
         self, dataset: str, network_type: Type[Network], debug_hparams: Network.HParams, seed: int
     ):
         """Checks that `run` produces the same result when passed the same args and seed."""
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
-            network_type=network_type,
             network_hparams=network_type.HParams(),
             hparams=debug_hparams,
             seed=seed,
         )
         perf_2 = self._get_debug_performance_given_seed(
             dataset=dataset,
-            network_type=network_type,
             network_hparams=network_type.HParams(),
             hparams=debug_hparams,
             seed=seed,
@@ -148,14 +170,12 @@ class TestDTP:
         """Tests that when `run` is passed different seeds, the results are different."""
         perf_1 = self._get_debug_performance_given_seed(
             dataset=dataset,
-            network_type=network_type,
             network_hparams=network_type.HParams(),
             hparams=debug_hparams,
             seed=seed,
         )
         perf_2 = self._get_debug_performance_given_seed(
             dataset=dataset,
-            network_type=network_type,
             network_hparams=network_type.HParams(),
             hparams=debug_hparams,
             seed=seed + 456,
@@ -165,7 +185,6 @@ class TestDTP:
     def _get_debug_performance_given_seed(
         self,
         dataset: str,
-        network_type: Type[Network],
         network_hparams: Network.HParams,
         hparams: DTP.HParams,
         seed: int,
@@ -177,8 +196,6 @@ class TestDTP:
 
         logging.getLogger().setLevel(logging.INFO)
         logging.getLogger("target_prop").setLevel(logging.DEBUG)
-
-        from main import Options, run
 
         options = Options(
             dataset=dataset_config,
@@ -196,10 +213,9 @@ class TestDTP:
             debug=True,
             seed=seed,
         )
-        test_accuracy = run(options=options)
+        error = main(options)
 
-        # print(f"Test accuracy: {test_accuracy:.1%}")
-        return test_accuracy
+        return error
 
 
 def get_forward_weight_losses(
@@ -470,7 +486,9 @@ def test_losses_of_each_layer_are_independent(
 
 
 @pytest.mark.parametrize("beta", [0.005])
-def test_grads_are_similar(forward_net: nn.Sequential, beta: float):
+def test_dtp_grads_are_close_to_backprop(forward_net: nn.Sequential, beta: float):
+    """Test that the DTP grads are similar to the backprop grads when beta is super small and the
+    weights are initialized symmetrically."""
     n_classes = 10
 
     torch.random.manual_seed(123)
