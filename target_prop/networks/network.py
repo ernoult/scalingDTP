@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Container, Iterable, Sequence, Sized
 
 from simple_parsing import choice
 from simple_parsing.helpers.serialization.serializable import Serializable
@@ -13,10 +14,19 @@ activations = {
 }
 
 
-class Network(Protocol):
+class Network(Iterable[nn.Module], Sized, Protocol):
+    """Protocol that describes what we expect to find as attributes and methods on a network.
+
+    Networks don't necessarily need to inherit from this, they just need to match the attributes and
+    methods defined here.
+    """
+
     @dataclass
     class HParams(Serializable):
+        """Dataclass containing the Hyper-Parameters of the network."""
+
         activation: str = choice(*activations.keys(), default="elu")
+        """ Choice of activation function to use. """
 
         def __post_init__(self):
             self.activation_class: type[nn.Module] = activations[self.activation]

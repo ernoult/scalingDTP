@@ -37,12 +37,16 @@ def get_datamodule(dataset: str, batch_size: int, **kwargs) -> VisionDataModule:
     return DatasetConfig(dataset=dataset, **kwargs).make_datamodule(batch_size=batch_size)
 
 
+import functools
+
+
 @dataclass
 class DatasetConfig(Serializable):
     available_datasets: ClassVar[Dict[str, Type[VisionDataModule]]] = {  # type: ignore
         "mnist": MNISTDataModule,
         # MNIST_noval: # TODO: Add this when we add Sean's mnist datamodule.
         "cifar10": CIFAR10DataModule,
+        "cifar10_noval": functools.partial(CIFAR10DataModule, val_split=0.0),
         "imagenet32_noval": ImageNet32NoValDataModule,
         "imagenet": ImagenetDataModule,
         "fmnist": FashionMNISTDataModule,
@@ -52,9 +56,7 @@ class DatasetConfig(Serializable):
     # Directory to look for the datasets.
     data_dir: str = os.environ.get("SLURM_TMPDIR", str(REPO_ROOTDIR / "data"))
     # Number of workers to use in the dataloader.
-    num_workers: int = int(
-        os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count())
-    )
+    num_workers: int = int(os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count()))
     # Wether to pin the memory, which is good when using CUDA tensors.
     # pin_memory: bool = True
     # Wether to shuffle the dataset or not.

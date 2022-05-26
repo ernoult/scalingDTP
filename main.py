@@ -48,9 +48,10 @@ class Options(Serializable):
     # datamodules. The only thing is, this class also contains config for the transforms.
     dataset: DatasetConfig
 
-    # The model used.
+    # The hyper-parameters of the model to use.
     model: Model.HParams
-    # The network to be used.
+
+    # The hyper-parameters of the network to use.
     network: Network.HParams
 
     # Keyword arguments for the Trainer constructor.
@@ -98,11 +99,10 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
     config_name="config",
     version_base=None,
 )
-def main(raw_options: DictConfig) -> float:
+def main(config: DictConfig | Options) -> float:
     print(os.getcwd())
-    experiment = Experiment.from_options(raw_options)
-    error = experiment.run()
-    return error
+    experiment = Experiment.from_options(config)
+    return experiment.run()
 
 
 @dataclass
@@ -131,14 +131,17 @@ class Experiment:
         return run_experiment(self)
 
 
-def run_experiment(exp: Experiment) -> float:
+def run_experiment(exp: Experiment | DictConfig | Options) -> float:
     """Run the experiment, and return the classification error.
 
-    By default, if validation is performed, returns the validation error. Returns the
-    training error when `trainer.overfit_batches != 0` (e.g. when debugging or testing).
-    Otherwise, if `trainer.limit_val_batches == 0`, returns the test error.
+    By default, if validation is performed, returns the validation error. Returns the training error
+    when `trainer.overfit_batches != 0` (e.g. when debugging or testing). Otherwise, if
+    `trainer.limit_val_batches == 0`, returns the test error.
     """
-    # TODO Probably log the hydra config like so:
+    if not isinstance(exp, Experiment):
+        exp = Experiment.from_options(exp)
+
+    # TODO Probably log the hydra config with something like this:
     # exp.trainer.logger.log_hyperparams()
     exp.trainer.fit(exp.model, datamodule=exp.datamodule)
 
@@ -201,9 +204,16 @@ def instantiate_experiment_components(options: Options) -> Experiment:
     elif options.verbose:
         root_logger.setLevel(logging.DEBUG)
 
+    import torch
+
     if options.seed is not None:
-        print(f"Random seed set to {options.seed}")
-        seed_everything(seed=options.seed, workers=True)
+        seed = options.seed
+        print(f"seed manually set to {options.seed}")
+    else:
+        g = torch.Generator()
+        seed = g.seed()
+        print(f"Randomly selected seed: {seed}")
+    seed_everything(seed=seed, workers=True)
 
     actual_callbacks: Dict[str, Callback] = {}
 

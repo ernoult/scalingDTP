@@ -128,10 +128,11 @@ class TestLegacyCompatibility:
         # Get PL dataloaders
         # dataset_config = DatasetConfig(dataset="cifar10_noval", num_workers=1)
         datamodule = get_datamodule(
-            dataset="cifar10_noval",
+            dataset="cifar10",
             num_workers=1,
             batch_size=pl_hparams.batch_size,
             use_legacy_std=True,
+            val_split=0.0,
         )
         datamodule.setup()
         pl_train_loader, pl_test_loader = (
@@ -151,7 +152,13 @@ class TestLegacyCompatibility:
 
         def assert_transforms_are_the_same(pl_loader: DataLoader, legacy_loader: DataLoader):
             legacy_transforms = legacy_loader.dataset.transform.transforms
-            pl_transforms = pl_loader.dataset.transform.transforms
+            from torch.utils.data import Subset
+
+            pl_dataset = pl_loader.dataset
+            if isinstance(pl_dataset, Subset):
+                pl_dataset = pl_dataset.dataset
+
+            pl_transforms = pl_dataset.transform.transforms
             assert len(legacy_transforms) == len(pl_transforms)
             assert str(legacy_transforms) == str(pl_transforms)
 

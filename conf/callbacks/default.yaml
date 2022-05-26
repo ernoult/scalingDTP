@@ -15,3 +15,6 @@ model_summary:
 
 rich_progress_bar:
   _target_: pytorch_lightning.callbacks.RichProgressBar
+# TODO: Enable this for all models except the the baseline, somehow.
+# backprop_comparison:
+#   _target_: target_prop.callbacks.CompareToBackpropCallback

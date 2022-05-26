@@ -19,7 +19,7 @@ class LeNet(nn.Sequential, Network):
 
     def __init__(self, in_channels: int, n_classes: int, hparams: LeNet.HParams | None = None):
         hparams = hparams or self.HParams()
-        layers: dict[str, nn.Module] = OrderedDict()
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
         activation: type[nn.Module] = hparams.activation_class
         channels = [in_channels] + hparams.channels
         bias: bool = hparams.bias
