@@ -20,7 +20,7 @@ from torchvision.datasets.vision import VisionDataset
 C = NewType("C", int)
 H = NewType("H", int)
 W = NewType("W", int)
-StageStr = Literal["fit", "val", "test"]
+StageStr = Literal["fit", "validate", "test"]
 logger = getLogger(__name__)
 
 
@@ -242,7 +242,7 @@ class ImageNet32DataModule(VisionDataModule):
 
     def setup(self, stage: Optional[StageStr] = None) -> None:
         """Creates train, val, and test dataset."""
-        if stage not in ["fit", "val", "test", None]:
+        if stage not in ["fit", "validate", "val", "test", None]:
             raise ValueError(f"Invalid stage: {stage}")
 
         if stage:

@@ -11,8 +11,7 @@ from pytorch_lightning import Callback, LightningModule, Trainer
 from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor, nn
 from torch.nn import functional as F
-from torchmetrics import Accuracy
-
+from torchmetrics.classification.accuracy import Accuracy
 from target_prop.networks.network import Network
 from target_prop.scheduler_config import LRSchedulerConfig
 
@@ -191,6 +190,7 @@ class Model(LightningModule, ABC):
     def configure_callbacks(self) -> list[Callback]:
         """Use this to add some callbacks that should always be included with the model."""
         callbacks = []
+        # TODO: Fix this.
         if self.hp.use_scheduler and self.trainer and self.trainer.logger:
             from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
 

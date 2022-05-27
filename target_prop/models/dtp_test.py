@@ -13,12 +13,13 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from torch import Tensor, nn
 from torch.nn import functional as F
+from target_prop.datasets.dataset_config import cifar10_config
 
 from main import Options, main
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
-from target_prop.datasets.dataset_config import DatasetConfig
+from target_prop.datasets.dataset_config import DatasetConfig, get_config, get_datamodule
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
@@ -85,7 +86,7 @@ class TestDTP:
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
         # all made for Cifar10 (e.g. hard-set to 5 layers). This would make the test uglier, as we'd
         # have to pass different values for each dataset.
-        dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
+
         hparams = debug_hparams
         batch_size = 128
 
@@ -113,7 +114,7 @@ class TestDTP:
 
         print("HParams:", hparams.dumps_json(indent="\t"))
         # Create the datamodule:
-        datamodule = dataset_config.make_datamodule(batch_size=batch_size)
+        datamodule = get_datamodule(dataset=dataset, num_workers=0, batch_size=batch_size)
 
         # Create the network
         network = network_type(
@@ -133,6 +134,7 @@ class TestDTP:
         test_results = trainer.test(model, datamodule=datamodule)
         print(test_results)
         test_accuracy: float = test_results[0]["test/accuracy"]
+        # TODO: Actually set a reasonable lower bound here.
         assert test_accuracy > 0
 
     @pytest.mark.timeout(30)
@@ -191,14 +193,13 @@ class TestDTP:
         batches: int = 1,
     ) -> float:
         print(f"Selected seed: {seed}")
-        # Note: using 0 workers to speed up testing.
-        dataset_config = DatasetConfig(dataset=dataset, num_workers=0)
 
         logging.getLogger().setLevel(logging.INFO)
         logging.getLogger("target_prop").setLevel(logging.DEBUG)
 
+        # Note: using 0 workers to speed up testing.
         options = Options(
-            dataset=dataset_config,
+            dataset=cifar10_config(num_workers=0),
             model=hparams,
             network=network_hparams,
             trainer=dict(

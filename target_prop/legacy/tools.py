@@ -343,7 +343,6 @@ def createHyperparameterfile(BASE_PATH, command_line, seed, args):
 
 
 def createDataset(args):
-
     transform_train = torchvision.transforms.Compose(
         [
             torchvision.transforms.RandomHorizontalFlip(0.5),

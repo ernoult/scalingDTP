@@ -1,39 +1,38 @@
 from __future__ import annotations
-from abc import ABC
-import functools
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
-from typing import Callable, ClassVar, Dict, Type, TypeVar
+from typing import Callable, TypeVar
 from pytorch_lightning import LightningDataModule
 
 import torch
 from pl_bolts.datamodules import (
     CIFAR10DataModule,
     FashionMNISTDataModule,
-    ImagenetDataModule,
     MNISTDataModule,
 )
-from hydra_zen import MISSING
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from simple_parsing import choice
 from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor
 from torchvision.transforms import (
     Compose,
     Normalize,
-    RandomCrop,
-    RandomHorizontalFlip,
-    ToTensor,
 )
 
 from target_prop.datasets.imagenet32_datamodule import ImageNet32DataModule
 
-from hydra_zen import builds, just, make_config, make_custom_builds_fn, instantiate
-from hydra_zen.typing import Partial, PartialBuilds
+from hydra_zen import builds, instantiate
 from hydra.core.config_store import ConfigStore
 
+
+from torchvision import transforms
+from torchvision import transforms
+from pytorch_lightning import LightningDataModule
+
+from pl_bolts.datamodules.mnist_datamodule import MNISTDataModule
+from pl_bolts.datamodules.cifar10_datamodule import cifar10_normalization
+from target_prop.datasets.imagenet32_datamodule import imagenet32_normalization
 
 FILE = Path(__file__)
 REPO_ROOTDIR = FILE.parent.parent.parent  # The root of the repo.
@@ -46,29 +45,25 @@ logger = get_logger(__name__)
 Transform = Callable[[Tensor], Tensor]
 D = TypeVar("D", bound=VisionDataModule)
 
-# NOTE:
-# datamodule_config_class = builds(CIFAR10DataModule, data_dir=DATA_DIR, ...)
-# datamodule_config = datamodule_config_class()
-# datamodule = instantiate(datamodule_config) OR datamodule_config()
+
+def get_config(group: str, name: str):
+    cs = ConfigStore.instance()
+    return cs.load(f"{group}/{name}.yaml").node
 
 
-def get_datamodule(dataset: str, batch_size: int, **kwargs) -> VisionDataModule:
-    return DatasetConfig(dataset=dataset, **kwargs).make_datamodule(batch_size=batch_size)
-
-
-from torchvision import transforms
-from torchvision import transforms
-from pytorch_lightning import LightningDataModule
-from hydra_zen import MISSING
-
-from pl_bolts.datamodules.mnist_datamodule import MNISTDataModule
-from pl_bolts.datamodules.cifar10_datamodule import cifar10_normalization
-from target_prop.datasets.imagenet32_datamodule import imagenet32_normalization
+def get_datamodule(
+    dataset: str, batch_size: int = 64, use_legacy_std: bool = False, **kwargs
+) -> VisionDataModule:
+    if use_legacy_std and dataset != "cifar10_3xstd":
+        if dataset == "cifar10":
+            dataset = "cifar10_3xstd"
+    config_node = get_config("dataset", dataset)
+    return instantiate(config_node, batch_size=batch_size, **kwargs)
 
 
 def validate_datamodule(datamodule: D) -> D:
-    """ Checks that the transforms / things are setup correctly. Returns the same datamodule.
-    
+    """Checks that the transforms / things are setup correctly. Returns the same datamodule.
+
     TODO: Could be a good occasion to wrap the datamodule with some kind of adapter that moves
     stuff to the right location!
     """
@@ -80,7 +75,7 @@ def validate_datamodule(datamodule: D) -> D:
     return datamodule
 
 
-def remove_normalization_from_transforms(datamodule: D) -> None:
+def remove_normalization_from_transforms(datamodule: VisionDataModule) -> None:
     transform_properties = (
         datamodule.train_transforms,
         datamodule.val_transforms,
@@ -112,7 +107,7 @@ TrainTransformsConfig = builds(
 
 @dataclass
 class CallableConfig:
-    """ Little mixin that makes it possible to call the config, like adam_config() -> Adam,
+    """Little mixin that makes it possible to call the config, like adam_config() -> Adam,
     instead of having to use `instantiate`.
     """
 
@@ -122,7 +117,10 @@ class CallableConfig:
 
 DatasetConfig = builds(
     LightningDataModule,
-    builds_bases=(Serializable, CallableConfig,),
+    builds_bases=(
+        Serializable,
+        CallableConfig,
+    ),
     dataclass_name="DatasetConfig",
 )
 
@@ -134,6 +132,7 @@ VisionDatasetConfig = builds(
     num_workers=NUM_WORKERS,
     val_split=0.1,
     builds_bases=(DatasetConfig,),
+    normalize=True,
     populate_full_signature=True,
     dataclass_name="VisionDataModuleConfig",
 )
@@ -156,7 +155,22 @@ mnist_config = builds(
     builds_bases=(VisionDatasetConfig,),
 )
 
-fmnist_config = builds(FashionMNISTDataModule, builds_bases=(mnist_config,),)
+fmnist_config = builds(
+    FashionMNISTDataModule,
+    builds_bases=(mnist_config,),
+)
+
+
+def cifar10_3xstd_normalization() -> transforms.Normalize:
+    # TODO: The mean and std are off by like a tiny tiny fraction.
+
+    # pl_bolts's normalization:
+    # mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+    # std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
+
+    # legacy 3x normalization:
+    return Normalize(mean=(0.4914, 0.4822, 0.4465), std=(3 * 0.2023, 3 * 0.1994, 3 * 0.2010))
+
 
 cifar10_config = builds(
     CIFAR10DataModule,
@@ -169,6 +183,25 @@ cifar10_config = builds(
         ],
     ),
     builds_bases=(VisionDatasetConfig,),
+)
+cifar10_3xstd_config = builds(
+    CIFAR10DataModule,
+    builds_bases=(cifar10_config,),
+    train_transforms=TrainTransformsConfig(
+        transforms=[
+            builds(transforms.RandomHorizontalFlip, p=0.5),
+            builds(transforms.RandomCrop, size=32, padding=4, padding_mode="edge"),
+            builds(transforms.ToTensor),
+            # builds(cifar10_normalization),
+            builds(cifar10_3xstd_normalization),
+        ],
+    ),
+    test_transforms=builds(
+        Compose, transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)]
+    ),
+    val_transforms=builds(
+        Compose, transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)]
+    ),
 )
 
 imagenet32_config = builds(
@@ -192,6 +225,7 @@ imagenet32_config = builds(
 cs = ConfigStore.instance()
 cs.store(group="dataset", name="base", node=DatasetConfig)
 cs.store(group="dataset", name="cifar10", node=cifar10_config)
+cs.store(group="dataset", name="cifar10_3xstd", node=cifar10_3xstd_config)
 cs.store(group="dataset", name="mnist", node=mnist_config)
 cs.store(group="dataset", name="fmnist", node=fmnist_config)
 cs.store(group="dataset", name="imagenet32", node=imagenet32_config)

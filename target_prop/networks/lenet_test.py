@@ -91,13 +91,8 @@ def config(seed: int):
 
 
 @pytest.fixture(scope="module")
-def dataset_config(seed: int):
-    return DatasetConfig(dataset="cifar10", num_workers=0)
-
-
-@pytest.fixture(scope="module")
-def datamodule(dataset_config: DatasetConfig, dtp_hparams: DTP.HParams):
-    return dataset_config.make_datamodule(batch_size=dtp_hparams.batch_size)
+def datamodule(dtp_hparams: DTP.HParams):
+    return get_datamodule(dataset="cifar10", num_workers=0, batch_size=dtp_hparams.batch_size)
 
 
 @pytest.fixture(scope="module")
