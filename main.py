@@ -14,13 +14,10 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning import (
-    Callback,
-    LightningDataModule,
     LightningModule,
     Trainer,
     seed_everything,
 )
-from pytorch_lightning.loggers import LightningLoggerBase
 from simple_parsing.helpers import field
 from simple_parsing.helpers.serialization.serializable import Serializable
 from hydra.utils import instantiate
@@ -28,7 +25,6 @@ from hydra.utils import instantiate
 from target_prop.config import Config
 from target_prop.datasets.dataset_config import (
     DatasetConfig,
-    remove_normalization_from_transforms,
     validate_datamodule,
 )
 from target_prop.models import (
@@ -46,6 +42,7 @@ from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils.hydra_utils import get_outer_class
 
 logger = get_logger(__name__)
+
 
 
 @dataclass

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
+import sys
+from dataclasses import replace
 
-import hydra
 import pytest
-from hydra import compose, initialize, initialize_config_module
+from hydra import compose, initialize
 from omegaconf import OmegaConf
 
 import main
 from main import Experiment, Options
 from target_prop.datasets.dataset_config import cifar10_config
+from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
 from target_prop.models.model import Model
+from target_prop.networks import LeNet, ResNet18, ResNet34, SimpleVGG
 from target_prop.networks.simple_vgg import SimpleVGG
 
 # ADAPTED FROM https://github.com/facebookresearch/hydra/blob/main/examples/advanced/hydra_app_example/tests/test_example.py
@@ -50,11 +52,6 @@ def test_defaults() -> None:
         assert options.dataset == cifar10_config()
 
 
-from dataclasses import replace
-
-from target_prop.models import DTP, BaselineModel, ParallelDTP, TargetProp, VanillaDTP
-
-
 def _ids(v):
     if isinstance(v, list):
         return ",".join(map(str, v))
@@ -87,9 +84,6 @@ def test_setting_model(
         assert options.model == expected
 
 
-from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
-
-
 @pytest.mark.parametrize(
     "overrides, expected",
     [
@@ -111,8 +105,6 @@ def test_setting_network(
         assert isinstance(options, Options)
         assert options.network == expected
 
-
-import sys
 
 # TODO: Determine this programmatically, probably using the ConfigStore API.
 model_names = ["dtp", "backprop", "parallel_dtp"] + [
@@ -152,9 +144,6 @@ def test_model_network_overrides_fixes_mismatch_in_number_of_values(
         n_layers_to_train = len(experiment.network) - 1
         assert len(options.model.feedback_training_iterations) == n_layers_to_train
         assert len(experiment.model.hp.feedback_training_iterations) == n_layers_to_train
-
-
-from pytest import param
 
 
 @pytest.mark.parametrize("network_name", network_names)
