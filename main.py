@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import warnings
 from dataclasses import dataclass
 from logging import getLogger as get_logger
@@ -16,9 +17,14 @@ from pytorch_lightning import Callback, LightningModule, Trainer, seed_everythin
 from pytorch_lightning.loggers import LightningLoggerBase
 from simple_parsing.helpers import field
 from simple_parsing.helpers.serialization.serializable import Serializable
+from hydra.utils import instantiate
 
 from target_prop.config import Config
-from target_prop.datasets.dataset_config import DatasetConfig
+from target_prop.datasets.dataset_config import (
+    DatasetConfig,
+    remove_normalization_from_transforms,
+    validate_datamodule,
+)
 from target_prop.models import (
     DTP,
     BaselineModel,
@@ -85,6 +91,21 @@ cs.store(group="model", name="vanilla_dtp", node=VanillaDTP.HParams())
 cs.store(group="model", name="target_prop", node=TargetProp.HParams())
 cs.store(group="model", name="backprop", node=BaselineModel.HParams())
 
+
+# TODO: Learn more about how variable interpolation works in Hydra, so that we can do this sort of
+# stuff:
+# from hydra_zen import builds
+# cs.store(
+#     group="network",
+#     name="simple_vgg",
+#     node=builds(
+#         SimpleVGG,
+#         hparams=builds(SimpleVGG.HParams),
+#         in_channels="${/dataset.dims[0]}",
+#         n_classes="${/dataset.num_classes}",
+#     ),
+# )
+
 cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
 cs.store(group="network", name="lenet", node=LeNet.HParams())
 cs.store(group="network", name="resnet18", node=ResNet18.HParams())
@@ -95,9 +116,7 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 
 
 @hydra.main(
-    config_path="conf",
-    config_name="config",
-    version_base=None,
+    config_path="conf", config_name="config", version_base=None,
 )
 def main(config: DictConfig | Options) -> float:
     print(os.getcwd())
@@ -112,10 +131,10 @@ class Experiment:
     Created from the Options that are parsed from Hydra. Can be used to run the experiment.
     """
 
-    trainer: Trainer
     model: Model
     network: Network
     datamodule: VisionDataModule
+    trainer: Trainer
 
     @classmethod
     def from_options(cls, options: DictConfig | Options) -> Experiment:
@@ -204,42 +223,22 @@ def instantiate_experiment_components(options: Options) -> Experiment:
     elif options.verbose:
         root_logger.setLevel(logging.DEBUG)
 
-    import torch
-
     if options.seed is not None:
         seed = options.seed
         print(f"seed manually set to {options.seed}")
     else:
-        g = torch.Generator()
-        seed = g.seed()
+        seed = random.randint(0, int(1e5))
         print(f"Randomly selected seed: {seed}")
     seed_everything(seed=seed, workers=True)
-
-    actual_callbacks: Dict[str, Callback] = {}
 
     # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
     # fields have the right type.
 
-    # Create the callbacks
-    assert isinstance(options.callbacks, dict)
-    for name, callback in options.callbacks.items():
-        if isinstance(callback, dict):
-            callback = hydra.utils.instantiate(callback)
-        elif not isinstance(callback, Callback):
-            raise ValueError(f"Invalid callback value {callback}")
-        actual_callbacks[name] = callback
-    callbacks = list(actual_callbacks.values())
+    # instantiate all the callbacks
+    callbacks = list(instantiate(options.callbacks).values())
 
     # Create the loggers, if any.
-    assert isinstance(options.logger, dict)
-    actual_loggers: Dict[str, LightningLoggerBase] = {}
-    for name, lightning_logger in options.logger.items():
-        if isinstance(lightning_logger, dict):
-            lightning_logger = hydra.utils.instantiate(lightning_logger)
-        elif not isinstance(lightning_logger, LightningLoggerBase):
-            raise ValueError(f"Invalid logger value {lightning_logger}")
-        actual_loggers[name] = lightning_logger
-    pl_logger = list(actual_loggers.values())
+    pl_logger = list(instantiate(options.logger).values())
 
     # Create the Trainer.
     assert isinstance(options.trainer, dict)
@@ -248,20 +247,24 @@ def instantiate_experiment_components(options: Options) -> Experiment:
         options.trainer["max_epochs"] = 1
     if "_target_" not in options.trainer:
         options.trainer["_target_"] = Trainer
-    trainer = hydra.utils.instantiate(
-        options.trainer,
-        callbacks=callbacks,
-        logger=pl_logger,
-    )
+    trainer = instantiate(options.trainer, callbacks=callbacks, logger=pl_logger,)
     assert isinstance(trainer, Trainer)
     trainer = trainer
 
     # Create the datamodule:
     dataset: DatasetConfig = options.dataset
-    datamodule = dataset.make_datamodule(batch_size=options.model.batch_size)
+
+    datamodule = instantiate(dataset, batch_size=options.model.batch_size)
+    datamodule = validate_datamodule(datamodule)
 
     # Create the network
     network_hparams: Network.HParams = options.network
+    # TODO: Convert the network into configs, with some value interpolation of some sort, or just
+    # by passing the in_channels and n_classes to the instantiate function:
+    # network = instantiate(
+    #     options.network, in_channels=datamodule.dims[0], n_classes=datamodule.num_classes
+    # )
+
     network_type: Type[Network] = get_outer_class(type(network_hparams))
     assert isinstance(network_hparams, network_type.HParams), "HParams type should match net type"
     network = network_type(
@@ -283,12 +286,7 @@ def instantiate_experiment_components(options: Options) -> Experiment:
     )
     assert isinstance(model, LightningModule)
 
-    return Experiment(
-        trainer=trainer,
-        model=model,
-        network=network,
-        datamodule=datamodule,
-    )
+    return Experiment(trainer=trainer, model=model, network=network, datamodule=datamodule,)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 defaults:
   - base_options
-  - dataset: cifar10.yaml
+  - dataset: cifar10
   - model: dtp
   - network: simple_vgg
-  - optional model_network: ${model}_${network}
   - trainer: default.yaml
   - callbacks: default.yaml
+  - optional model_network: ${model}_${network}
   - logger: null # use logger=wandb to enable wandb logging.
   - _self_
   - override hydra/sweeper: orion
