@@ -13,7 +13,13 @@ import wandb
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from pytorch_lightning import Callback, LightningModule, Trainer, seed_everything
+from pytorch_lightning import (
+    Callback,
+    LightningDataModule,
+    LightningModule,
+    Trainer,
+    seed_everything,
+)
 from pytorch_lightning.loggers import LightningLoggerBase
 from simple_parsing.helpers import field
 from simple_parsing.helpers.serialization.serializable import Serializable

@@ -212,6 +212,8 @@ class ParallelDTP(DTP):
                 # synchronize=False,
             )
             for i in range(1, n_layers)
+            # BUG: Can't discern a nn.Flatten layer and a layer that is trainable but we're in
+            # validation phase.
             if self._is_trainable(reversed_backward_net[i])
         ]
         # Loss will now have shape [`n_layers`, `n_samples`]

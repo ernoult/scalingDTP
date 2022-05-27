@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 
 import main
 from main import Experiment, Options
-from target_prop.datasets.dataset_config import DatasetConfig
+from target_prop.datasets.dataset_config import cifar10_config
 from target_prop.models.model import Model
 from target_prop.networks.simple_vgg import SimpleVGG
 
@@ -47,7 +47,7 @@ def test_defaults() -> None:
         assert isinstance(options, Options)
         assert options.model == DTP.HParams()
         assert options.network == SimpleVGG.HParams()
-        assert options.dataset == DatasetConfig()
+        assert options.dataset == cifar10_config()
 
 
 from dataclasses import replace
