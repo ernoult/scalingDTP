@@ -12,6 +12,7 @@ from torch.nn import functional as F
 
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
+from target_prop.networks.network import Network
 from target_prop.utils.utils import named_trainable_parameters
 
 logger = get_logger(__name__)
@@ -71,6 +72,8 @@ class CompareToBackpropCallback(Callback):
                 )
                 break
 
+        x = x.to(pl_module.device)
+        y = y.to(pl_module.device)
         distances, angles = comparison_with_backprop_gradients(
             model=pl_module, x=x, y=y, temp_beta=self.temp_beta
         )
@@ -117,7 +120,7 @@ def comparison_with_backprop_gradients(
     return distances, angles
 
 
-def get_backprop_grads(model: Union[DTP, nn.Sequential], x: Tensor, y: Tensor) -> Dict[str, Tensor]:
+def get_backprop_grads(model: Union[DTP, Network], x: Tensor, y: Tensor) -> Dict[str, Tensor]:
     # Get the normal backprop loss and gradients:
     if hasattr(model, "forward_net"):
         forward_net = model.forward_net

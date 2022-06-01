@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Type
@@ -16,7 +18,7 @@ class SimpleVGG(nn.Sequential, Network):
         channels: List[int] = list_field(128, 128, 256, 256, 512)
         bias: bool = True
 
-    def __init__(self, in_channels: int, n_classes: int, hparams: "SimpleVGG.HParams" = None):
+    def __init__(self, in_channels: int, n_classes: int, hparams: SimpleVGG.HParams | None = None):
         hparams = hparams or self.HParams()
         layers: OrderedDict[str, nn.Module] = OrderedDict()
         activation: Type[nn.Module] = hparams.activation_class
@@ -40,6 +42,8 @@ class SimpleVGG(nn.Sequential, Network):
                     # the indices to the backward net for this layer through a "magic bridge".
                     # We use `return_indices=False` here just so the layer doesn't also return
                     # the indices in its forward pass.
+                    # TODO: There's an issue when using this with multi-GPUs. The 'magic bridge'
+                    # thing seems to be shared across different gpus, which we don't want it to be.
                     pool=MaxPool2d(kernel_size=2, stride=2, return_indices=False),
                     # NOTE: Would be nice to use AvgPool, seems more "plausible" and less hacky.
                     # pool=nn.AvgPool2d(kernel_size=2),

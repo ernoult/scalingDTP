@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import functools
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -8,7 +10,6 @@ from typing import List, Union
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import list_field
-from simple_parsing.helpers.hparams import categorical
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
@@ -54,23 +55,20 @@ class VanillaDTP(DTP):
         self,
         datamodule: VisionDataModule,
         network: Network,
-        hparams: "VanillaDTP.HParams",
+        hparams: VanillaDTP.HParams,
         config: Config,
-        network_hparams: Network.HParams,
     ):
         super().__init__(
             datamodule=datamodule,
             network=network,
             hparams=hparams,
             config=config,
-            network_hparams=network_hparams,
         )
         self.hp: VanillaDTP.HParams
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
-        """Compute the target of the previous forward layer. given ,
-        the associated feedback layer, the activations for each layer, and the target of the current
-        layer.
+        """Compute the target of the previous forward layer. given , the associated feedback layer,
+        the activations for each layer, and the target of the current layer.
 
         Parameters
         ----------
@@ -126,11 +124,11 @@ def vanilla_DTP_feedback_loss(
     use_separate_streams: bool = False,
     synchronize: bool = False,
 ) -> Tensor:
-    """Computes the loss for the feedback weights, given the feedback layer and its
-    accompanying forward module.
+    """Computes the loss for the feedback weights, given the feedback layer and its accompanying
+    forward module.
 
-    Returns the loss for a single iteration.
-    Can optionally use more than one noise sample per iteration.
+    Returns the loss for a single iteration. Can optionally use more than one noise sample per
+    iteration.
     """
     x = input
     y = output
@@ -179,8 +177,8 @@ def vanilla_DTP_feedback_loss_parallel(
     noise_scale: Union[float, Tensor],
     noise_samples: int = 1,
 ) -> Tensor:
-    """Computes the loss for the feedback weights, given the feedback layer and its
-    accompanying forward module.
+    """Computes the loss for the feedback weights, given the feedback layer and its accompanying
+    forward module.
 
     Returns the loss for a single iteration.
     Can optionally use more than one noise sample per iteration.

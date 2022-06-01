@@ -7,6 +7,7 @@ from torch import Tensor, nn
 from target_prop.backward_layers import invert
 
 from .dtp_test import TestDTP as DTPTests
+from .dtp_test import not_well_supported
 from .vanilla_dtp import (
     DTP,
     VanillaDTP,
@@ -15,6 +16,7 @@ from .vanilla_dtp import (
 )
 
 
+@not_well_supported
 class TestVanillaDTP(DTPTests):
     # The type of model to test. (In this case, Vanilla DTP)
     model_class: ClassVar[Type[DTP]] = VanillaDTP

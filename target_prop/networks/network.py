@@ -1,16 +1,12 @@
-from abc import ABC
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Callable, ClassVar, Type
+from typing import Container, Iterable, Sequence, Sized
 
 from simple_parsing import choice
 from simple_parsing.helpers.serialization.serializable import Serializable
-
-try:
-    from typing import Protocol
-except ImportError:
-    from typing_extensions import Protocol
-
 from torch import Tensor, nn
+from typing_extensions import Protocol
 
 activations = {
     "relu": nn.ReLU,
@@ -18,16 +14,27 @@ activations = {
 }
 
 
-class Network(Callable, Protocol):
+class Network(Iterable[nn.Module], Sized, Protocol):
+    """Protocol that describes what we expect to find as attributes and methods on a network.
+
+    Networks don't necessarily need to inherit from this, they just need to match the attributes and
+    methods defined here.
+    """
+
     @dataclass
     class HParams(Serializable):
+        """Dataclass containing the Hyper-Parameters of the network."""
+
         activation: str = choice(*activations.keys(), default="elu")
-        batch_size: int = 128
+        """ Choice of activation function to use. """
 
         def __post_init__(self):
-            self.activation_class: Type[nn.Module] = activations[self.activation]
+            self.activation_class: type[nn.Module] = activations[self.activation]
 
-    hparams: "Network.HParams"
+    hparams: Network.HParams
 
-    def __init__(self, in_channels: int, n_classes: int, hparams: HParams = None):
+    def __init__(self, in_channels: int, n_classes: int, hparams: HParams | None = None):
+        ...
+
+    def __call__(self, input: Tensor) -> Tensor:
         ...

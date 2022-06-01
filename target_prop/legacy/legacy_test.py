@@ -1,38 +1,31 @@
-import dataclasses
-import logging
-from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import islice
-from typing import ClassVar, Iterable, List, Optional, Tuple, Type
-
+from typing import List
+from torchvision.transforms import Normalize
 import pytest
 import torch
-from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
-from simple_parsing.helpers import choice, list_field
+from simple_parsing.helpers import list_field
 from simple_parsing.helpers.serialization.serializable import Serializable
-from torch import Tensor, nn
-from torch.nn import functional as F
+from torch import nn
 from torch.utils.data import DataLoader
 
-from target_prop._weight_operations import init_symetric_weights
-from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
-from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
-from target_prop.layers import Reshape, forward_all, invert
+from target_prop.datasets.dataset_config import get_datamodule
 from target_prop.legacy import (
     VGG,
     createDataset,
     createOptimizers,
     train_backward,
-    train_batch,
     train_forward,
 )
-from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.optimizer_config import OptimizerConfig
-from target_prop.utils.utils import is_trainable, named_trainable_parameters
+from target_prop.utils.utils import is_trainable
+
+import numpy as np
+from numpy.testing import assert_allclose
 
 
 @dataclass
@@ -107,8 +100,7 @@ def pl_hparams(legacy_hparams: LegacyHparams):
 @pytest.fixture
 def pl_model(pl_hparams: DTP.HParams):
     config = Config(debug=True, seed=123, device="cpu")
-    dataset_config = DatasetConfig(dataset="cifar10", num_workers=0)
-    datamodule = dataset_config.make_datamodule(batch_size=pl_hparams.batch_size)
+    datamodule = get_datamodule(dataset="cifar10", num_workers=0, batch_size=pl_hparams.batch_size)
     network = SimpleVGG(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
     pl_model = DTP(datamodule=datamodule, hparams=pl_hparams, config=config, network=network)
     return pl_model
@@ -128,10 +120,11 @@ class TestLegacyCompatibility:
         # Get PL dataloaders
         # dataset_config = DatasetConfig(dataset="cifar10_noval", num_workers=1)
         datamodule = get_datamodule(
-            dataset="cifar10_noval",
+            dataset="cifar10",
             num_workers=1,
             batch_size=pl_hparams.batch_size,
             use_legacy_std=True,
+            val_split=0.0,
         )
         datamodule.setup()
         pl_train_loader, pl_test_loader = (
@@ -151,7 +144,13 @@ class TestLegacyCompatibility:
 
         def assert_transforms_are_the_same(pl_loader: DataLoader, legacy_loader: DataLoader):
             legacy_transforms = legacy_loader.dataset.transform.transforms
-            pl_transforms = pl_loader.dataset.transform.transforms
+            from torch.utils.data import Subset
+
+            pl_dataset = pl_loader.dataset
+            if isinstance(pl_dataset, Subset):
+                pl_dataset = pl_dataset.dataset
+
+            pl_transforms = pl_dataset.transform.transforms
             assert len(legacy_transforms) == len(pl_transforms)
             assert str(legacy_transforms) == str(pl_transforms)
 

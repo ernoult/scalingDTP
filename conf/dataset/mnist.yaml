@@ -1,3 +1,0 @@
-dataset: mnist
-image_crop_size: 28
-image_crop_pad: 4

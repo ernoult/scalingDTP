@@ -1,8 +1,6 @@
-"""
-Numerical tests for Theorems 4.2 and 4.3.
+"""Numerical tests for Theorems 4.2 and 4.3.
 
-Run the following from project root to execute tests:
-pytest target_prop/networks/lenet_test.py -s
+Run the following from project root to execute tests: pytest target_prop/networks/lenet_test.py -s
 """
 
 import os
@@ -23,7 +21,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 from target_prop._weight_operations import init_symetric_weights
-from target_prop.callbacks import get_backprop_grads
+from target_prop.callbacks import get_backprop_grads, get_dtp_grads
 from target_prop.config import Config
 from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
 from target_prop.metrics import compute_dist_angle
@@ -93,13 +91,8 @@ def config(seed: int):
 
 
 @pytest.fixture(scope="module")
-def dataset_config(seed: int):
-    return DatasetConfig(dataset="cifar10", num_workers=0)
-
-
-@pytest.fixture(scope="module")
-def datamodule(dataset_config: DatasetConfig, dtp_hparams: DTP.HParams):
-    return dataset_config.make_datamodule(batch_size=dtp_hparams.batch_size)
+def datamodule(dtp_hparams: DTP.HParams):
+    return get_datamodule(dataset="cifar10", num_workers=0, batch_size=dtp_hparams.batch_size)
 
 
 @pytest.fixture(scope="module")
@@ -121,7 +114,7 @@ def x_and_y(seed: int, config: Config, datamodule: LightningDataModule):
 
 
 @pytest.fixture(scope="module")
-def initial_weights(seed: int, datamodule: LightningDataModule, x_and_y: Tuple[Tensor, Tensor]):
+def initial_weights(seed: int, datamodule: VisionDataModule, x_and_y: Tuple[Tensor, Tensor]):
     """Module-wide fixture that gives initial weights for a given seed."""
     net = LeNet(
         in_channels=datamodule.dims[0],
@@ -137,7 +130,7 @@ def initial_weights(seed: int, datamodule: LightningDataModule, x_and_y: Tuple[T
 
 @pytest.fixture(scope="function")
 def network(
-    datamodule: LightningDataModule,
+    datamodule: VisionDataModule,
     config: Config,
     initial_weights: OrderedDict[str, Tensor],
     x_and_y: Tuple[Tensor, Tensor],
@@ -158,7 +151,7 @@ def network(
 
 @pytest.fixture(scope="function")
 def no_bias_network(
-    datamodule: LightningDataModule,
+    datamodule: VisionDataModule,
     config: Config,
     initial_weights: OrderedDict[str, Tensor],
     x_and_y: Tuple[Tensor, Tensor],
@@ -214,7 +207,7 @@ def dtp_no_bias_model(
 @pytest.fixture(scope="module")
 def backprop_grads(
     x_and_y: Tuple[Tensor, Tensor],
-    datamodule: LightningDataModule,
+    datamodule: VisionDataModule,
     initial_weights: OrderedDict[str, Tensor],
 ):
     """Returns the backprop gradients for a given network (for a given seed)."""
@@ -236,7 +229,7 @@ def backprop_grads(
 @pytest.fixture(scope="module")
 def backprop_grads_no_bias(
     x_and_y: Tuple[Tensor, Tensor],
-    datamodule: LightningDataModule,
+    datamodule: VisionDataModule,
     initial_weights: OrderedDict[str, Tensor],
 ):
     """Returns the backprop gradients for a given network without biases (for a given seed)."""
@@ -276,7 +269,7 @@ class TestLeNet:
         lr: float,
         seed: int,
     ):
-        """Figure 4.2"""
+        """Figure 4.2."""
         # TODO: Once this is checked to be working correctly, and we have results etc, replace all
         # this stuff below with the fixtures above.
         # Fix seed
@@ -405,7 +398,6 @@ class TestLeNet:
         dtp_model.to(config.device)
 
         # Get backprop and DTP grads for a batch
-        from target_prop.callbacks import get_backprop_grads, get_dtp_grads
 
         backprop_grads = get_backprop_grads(dtp_model, data, label)
         dtp_grads = get_dtp_grads(dtp_model, data, label, temp_beta=dtp_model.hp.beta)
@@ -786,7 +778,7 @@ def meulemans(
     predictions = meulemans_network(x)
     # This propagates the targets backward, computes local forward losses, and sets the gradients
     # in the forward parameters' `grad` attribute.
-    batch_accuracy, batch_loss = train.train_forward_parameters(
+    _, _ = train.train_forward_parameters(
         args,
         net=meulemans_network,
         predictions=predictions,
@@ -794,7 +786,7 @@ def meulemans(
         loss_function=loss_function,
         forward_optimizer=forward_optimizer,
     )
-    assert all(p.grad is not None for name, p in _get_forward_parameters(meulemans_network).items())
+    assert all(p.grad is not None for _, p in _get_forward_parameters(meulemans_network).items())
 
     # NOTE: the values in `p.grad` are the gradients from their DTP algorithm.
     meulemans_dtp_grads = {
@@ -835,7 +827,7 @@ def get_meulemans_backprop_grads(
     # NOTE: Need to unfreeze the forward parameters of their network, since they apprear to be fixed
 
     meulemans_net_forward_params = _get_forward_parameters(meulemans_net)
-    for name, forward_param in meulemans_net_forward_params.items():
+    for forward_param in meulemans_net_forward_params.values():
         forward_param.requires_grad_(True)
     # NOTE: The forward pass through their network is a "regular" forward pass: Grads can flow
     # between all layers.
@@ -909,6 +901,7 @@ def _check_outputs_are_identical(
     meulemans_forward_params = translate_back(
         _get_forward_parameters(meulemans_net), network_type=type(our_network)
     )
+    assert isinstance(our_network, nn.Module)
     for param_name, param in our_network.named_parameters():
         their_param = meulemans_forward_params[param_name]
         if not torch.allclose(param, their_param):

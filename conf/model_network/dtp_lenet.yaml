@@ -1,15 +1,16 @@
 # @package _global_
 model:
+  # TODO: Double-check that these are our best values for DTP/lenet/cifar10.
+  feedback_training_iterations: [41, 51, 24]
+  batch_size: 256
+  noise: [0.41640228838517584, 0.3826261146623929, 0.1395382069358601]
+  beta: 0.4655
   b_optim:
-    lr:
-    - 0.001
-    - 0.008
-    - 0.018
-  feedback_training_iterations:
-  - 10  # TODO: Actually need to set these values from the results of a sweep or something.
-  - 10
-  - 20
-  noise:
-  - 0.4
-  - 0.2
-  - 0.08
+    type: sgd
+    lr: [0.0007188427494432325, 0.00012510321884615596, 0.03541466958291287]
+    momentum: 0.9
+  f_optim:
+    type: sgd
+    lr: [0.03618]
+    weight_decay: 0.0001
+    momentum: 0.9

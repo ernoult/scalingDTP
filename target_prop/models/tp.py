@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from logging import getLogger
 from typing import List, Union
@@ -30,17 +32,15 @@ class TargetProp(VanillaDTP):
         self,
         datamodule: VisionDataModule,
         network: Network,
-        hparams: "TargetProp.HParams",
-        config: Config,
-        network_hparams: Network.HParams,
+        hparams: TargetProp.HParams | None = None,
+        config: Config | None = None,
     ):
-        super().__init__(datamodule, network, hparams, config, network_hparams)
+        super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
         self.hp: TargetProp.HParams
 
     def compute_target(self, i: int, G: nn.Module, hs: List[Tensor], prev_target: Tensor) -> Tensor:
-        """Compute the target of the previous forward layer. given ,
-        the associated feedback layer, the activations for each layer, and the target of the current
-        layer.
+        """Compute the target of the previous forward layer. given , the associated feedback layer,
+        the activations for each layer, and the target of the current layer.
 
         Parameters
         ----------

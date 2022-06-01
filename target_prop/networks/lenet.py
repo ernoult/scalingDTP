@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
+from typing import List, Type
 
-from simple_parsing.helpers import choice, list_field
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
+from simple_parsing.helpers import list_field
 from torch import nn
 
 from target_prop.layers import MaxPool2d, Reshape
@@ -13,13 +14,13 @@ from target_prop.networks.network import Network
 class LeNet(nn.Sequential, Network):
     @dataclass
     class HParams(Network.HParams):
-        channels: List[int] = list_field(32, 64)
+        channels: list[int] = list_field(32, 64)
         bias: bool = True
 
-    def __init__(self, in_channels: int, n_classes: int, hparams: "LeNet.HParams" = None):
+    def __init__(self, in_channels: int, n_classes: int, hparams: LeNet.HParams | None = None):
         hparams = hparams or self.HParams()
         layers: OrderedDict[str, nn.Module] = OrderedDict()
-        activation: Type[nn.Module] = hparams.activation_class
+        activation: type[nn.Module] = hparams.activation_class
         channels = [in_channels] + hparams.channels
         bias: bool = hparams.bias
 

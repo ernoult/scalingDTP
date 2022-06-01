@@ -1,15 +1,16 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from functools import partial
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import wandb
-from pytorch_lightning import LightningDataModule, Trainer
-from pytorch_lightning.loggers import WandbLogger
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing import field
 from simple_parsing.helpers import list_field
-from simple_parsing.helpers.fields import choice
 from torch import Tensor, nn
 from torch.optim.optimizer import Optimizer
 
@@ -17,10 +18,10 @@ from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
+from target_prop.models.model import PhaseStr, StepOutputDict
 from target_prop.networks import Network
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
-from target_prop.utils.utils import is_trainable
 
 from .dtp import DTP
 from .utils import make_stacked_feedback_training_figure
@@ -29,7 +30,7 @@ logger = get_logger(__name__)
 
 
 class ParallelDTP(DTP):
-    """ "Parallel" variant of the DTP algorithm.
+    """Parallel variant of the DTP algorithm.
 
     Performs a single fused update for all feedback weights (a single "iteration") but uses multiple
     noise samples per "iteration".
@@ -63,7 +64,8 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the "backward" optimizer
         b_optim: OptimizerConfig = field(
-            default_factory=lambda: OptimizerConfig(
+            default_factory=partial(
+                OptimizerConfig,
                 type="adam",
                 lr=[3e-4],
                 weight_decay=1e-4,
@@ -75,7 +77,8 @@ class ParallelDTP(DTP):
 
         # Hyper-parameters for the forward optimizer
         f_optim: OptimizerConfig = field(
-            default_factory=lambda: OptimizerConfig(
+            default_factory=partial(
+                OptimizerConfig,
                 type="adam",
                 lr=[3e-4],
                 weight_decay=1e-4,
@@ -87,18 +90,16 @@ class ParallelDTP(DTP):
 
     def __init__(
         self,
-        datamodule: LightningDataModule,
+        datamodule: VisionDataModule,
         network: Network,
-        hparams: "ParallelDTP.HParams",
+        hparams: ParallelDTP.HParams,
         config: Config,
-        network_hparams: Network.HParams = None,
     ):
         super().__init__(
             datamodule=datamodule,
             network=network,
             hparams=hparams,
             config=config,
-            network_hparams=network_hparams,
         )
         # Here we can do automatic optimization, since we don't need to do multiple
         # sequential optimization steps per batch ourselves.
@@ -106,6 +107,9 @@ class ParallelDTP(DTP):
         self.criterion = nn.CrossEntropyLoss(reduction="none")
 
         self._feedback_optimizer: Optional[Optimizer] = None
+
+    def configure_sharded_model(self) -> None:
+        return super().configure_sharded_model()
 
     def training_step(  # type: ignore
         self, batch: Tuple[Tensor, Tensor], batch_idx: int, optimizer_idx: int = None
@@ -119,9 +123,9 @@ class ParallelDTP(DTP):
         self,
         batch: Tuple[Tensor, Tensor],
         batch_idx: int,
-        phase: str,
+        phase: PhaseStr,
         optimizer_idx: Optional[int] = None,
-    ):
+    ) -> StepOutputDict:
         """Main step, used by the `[training/valid/test]_step` methods.
 
         NOTE: In the case of this Parallel model, we use the automatic optimization from PL.
@@ -130,28 +134,46 @@ class ParallelDTP(DTP):
         """
         x, y = batch
 
-        dtype: Optional[torch.dtype] = self.dtype if isinstance(self.dtype, torch.dtype) else None
+        dtype: torch.dtype = self.dtype if isinstance(self.dtype, torch.dtype) else torch.float
         # The total loss to be returned.
         loss: Tensor = torch.zeros(1, device=self.device, dtype=dtype)
-
+        things_to_log: dict[str, Tensor] = {}
         if optimizer_idx in [None, 0]:
             # ----------- Optimize the feedback weights -------------
             feedback_loss = self.feedback_loss(x, y, phase=phase)
             loss += feedback_loss
-            self.log(f"{phase}/B_loss", feedback_loss, prog_bar=phase == "train")
+            things_to_log["feedback_loss"] = feedback_loss
 
         if optimizer_idx in [None, 1]:
             # ----------- Optimize the forward weights -------------
             forward_outputs = self.forward_loss(x, y, phase=phase)
             forward_loss = forward_outputs["loss"]
-            self.log(f"{phase}/F_loss", forward_loss, prog_bar=phase == "train")
             loss += forward_loss
+            things_to_log["forward_loss"] = forward_loss
+            logits: Tensor = forward_outputs["logits"]
+            assert not logits.requires_grad
+        else:
+            # Only doing the feedback training, so we are missing the 'logits' output here!
+            # TODO: Not ideal that we have to do this wasteful forward pass just to log the cross
+            # entropy loss at each step!
+            # with torch.no_grad():
+            #     logits = self.forward_net(x)
+            logits = None  # type: ignore
+        return {"loss": loss, "logits": logits, "y": y, "log": things_to_log}
 
-        return loss
+    def shared_step_end(self, step_output: StepOutputDict, phase: PhaseStr) -> StepOutputDict:
+        for name, tensor in step_output.get("log", {}).items():
+            self.log(f"{phase}/{name}", tensor, prog_bar=phase == "train")
+        if step_output["logits"] is None:
+            # Bypass the aggregation logic from the base class, let PL do its thing.
+            return step_output
+        return super().shared_step_end(step_output, phase)
 
     def forward_loss(self, x: Tensor, y: Tensor, phase: str) -> Dict[str, Tensor]:
         # NOTE: Could use the same exact forward loss as the sequential model, at the
         # moment.
+        # TODO: The logs inside `DTP.forward_loss` seem to be lost when running with multiple GPUs.
+        # They need to be done in the `shared_step_end` method.
         return super().forward_loss(x=x, y=y, phase=phase)
 
     def feedback_loss(self, x: Tensor, y: Tensor, phase: str) -> Tensor:
@@ -164,7 +186,6 @@ class ParallelDTP(DTP):
         noise_scale_per_layer = list(reversed(self.feedback_noise_scales))
         # NOTE: Could also use a different number of samples per layer!
         noise_samples_per_layer = [self.hp.feedback_samples_per_iteration for _ in range(n_layers)]
-
         # NOTE: We can compute all the ys for all the layers up-front, because we don't
         # update the forward weights.
         # 1- Compute the forward activations (no grad).
@@ -191,7 +212,9 @@ class ParallelDTP(DTP):
                 # synchronize=False,
             )
             for i in range(1, n_layers)
-            if is_trainable(reversed_backward_net[i])
+            # BUG: Can't discern a nn.Flatten layer and a layer that is trainable but we're in
+            # validation phase.
+            if self._is_trainable(reversed_backward_net[i])
         ]
         # Loss will now have shape [`n_layers`, `n_samples`]
         loss = torch.stack(layer_losses, dim=0)
@@ -207,7 +230,7 @@ class ParallelDTP(DTP):
                     *[
                         compute_dist_angle(self.forward_net[i], reversed_backward_net[i])
                         for i in range(1, n_layers)
-                        if is_trainable(reversed_backward_net[i])
+                        if self._is_trainable(reversed_backward_net[i])
                     ]
                 )
             if self.trainer is not None:
@@ -246,26 +269,6 @@ class ParallelDTP(DTP):
                 wandb.log({"feedback_training": fig})
 
         return loss.sum()
-
-    def training_step_end(self, step_results: Union[Tensor, List[Tensor]]) -> Tensor:
-        """Called with the results of each worker / replica's output.
-
-        See the `training_step_end` of pytorch-lightning for more info.
-        """
-        # TODO: Actually debug it with DP/DDP. Used to work with DP, haven't tested it in a while.
-        # TODO: For now we're kinda losing the logs and stuff that happens within the
-        # workers in DP (they won't show up in the progress bar for instance).
-        # merged_step_results = {
-        #     k: sum(v_i.to(self.device) for v_i in v)
-        #     for k, v in step_results
-        # }
-        merged_step_result = (
-            step_results if isinstance(step_results, (Tensor, float)) else sum(step_results)
-        )
-        loss = merged_step_result
-        # TODO: Move all the logs to this once we used DDP.
-        # self.log(f"{self.phase}/total loss", loss, on_step=True, prog_bar=True)
-        return loss
 
     def configure_optimizers(self):
         # Feedback optimizer:

@@ -1,23 +1,42 @@
+from __future__ import annotations
+
+import logging
 import os
+import random
+import warnings
 from dataclasses import dataclass
 from logging import getLogger as get_logger
-from typing import Dict, List, Optional, Type
-import logging
-from simple_parsing.helpers.serialization.serializable import Serializable
-from simple_parsing.helpers import field
-import wandb
-from pytorch_lightning.loggers import LightningLoggerBase
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from typing import Dict, Optional, Type
+
 import hydra
+import wandb
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
-from pytorch_lightning import Callback, LightningModule, Trainer, seed_everything
+from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from pytorch_lightning import (
+    LightningModule,
+    Trainer,
+    seed_everything,
+)
+from simple_parsing.helpers import field
+from simple_parsing.helpers.serialization.serializable import Serializable
+from hydra.utils import instantiate
 
 from target_prop.config import Config
-from target_prop.datasets.dataset_config import DatasetConfig
-from target_prop.models import Model, DTP, VanillaDTP, TargetProp, ParallelDTP, BaselineModel
+from target_prop.datasets.dataset_config import (
+    DatasetConfig,
+    validate_datamodule,
+)
+from target_prop.models import (
+    DTP,
+    BaselineModel,
+    Model,
+    ParallelDTP,
+    TargetProp,
+    VanillaDTP,
+)
 from target_prop.models.model import Model
-from target_prop.networks import  Network, ResNet18, ResNet34, SimpleVGG, LeNet
+from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
 from target_prop.networks.network import Network
 from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils.hydra_utils import get_outer_class
@@ -25,20 +44,24 @@ from target_prop.utils.hydra_utils import get_outer_class
 logger = get_logger(__name__)
 
 
+
 @dataclass
 class Options(Serializable):
-    """ All the options required for a run. This dataclass acts as a schema for the Hydra configs.
-    
+    """All the options required for a run. This dataclass acts as a schema for the Hydra configs.
+
     For more info, see https://hydra.cc/docs/tutorials/structured_config/schema/
     """
 
     # Configuration for the dataset + transforms.
-    dataset: DatasetConfig  # = field(default_factory=DatasetConfig)
+    # TODO: might replace this with a simpler config with just a _target_ set to the pl_bolts
+    # datamodules. The only thing is, this class also contains config for the transforms.
+    dataset: DatasetConfig
 
-    # The model used.
-    model: Model.HParams  # = field(default_factory=Model.HParams)
-    # The network to be used.
-    network: Network.HParams  # = field(default_factory=SimpleVGG.HParams)
+    # The hyper-parameters of the model to use.
+    model: Model.HParams
+
+    # The hyper-parameters of the network to use.
+    network: Network.HParams
 
     # Keyword arguments for the Trainer constructor.
     trainer: Dict = field(default_factory=dict)  # type: ignore
@@ -71,6 +94,21 @@ cs.store(group="model", name="vanilla_dtp", node=VanillaDTP.HParams())
 cs.store(group="model", name="target_prop", node=TargetProp.HParams())
 cs.store(group="model", name="backprop", node=BaselineModel.HParams())
 
+
+# TODO: Learn more about how variable interpolation works in Hydra, so that we can do this sort of
+# stuff:
+# from hydra_zen import builds
+# cs.store(
+#     group="network",
+#     name="simple_vgg",
+#     node=builds(
+#         SimpleVGG,
+#         hparams=builds(SimpleVGG.HParams),
+#         in_channels="${/dataset.dims[0]}",
+#         n_classes="${/dataset.num_classes}",
+#     ),
+# )
+
 cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
 cs.store(group="network", name="lenet", node=LeNet.HParams())
 cs.store(group="network", name="resnet18", node=ResNet18.HParams())
@@ -80,147 +118,107 @@ cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
 cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 
 
-@hydra.main(config_path="conf", config_name="config")
-def main(raw_options: DictConfig) -> None:
+@hydra.main(
+    config_path="conf", config_name="config", version_base=None,
+)
+def main(config: DictConfig | Options) -> float:
     print(os.getcwd())
-    options = OmegaConf.to_object(raw_options)
-    assert isinstance(options, Options)
-    experiment = Experiment(options)
-    assert isinstance(options, Options)
-    experiment.run()
-
-
-from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+    experiment = Experiment.from_options(config)
+    return experiment.run()
 
 
 @dataclass
-class Experiment(Serializable):
-    """ Experiment class. Created from the Options that are parsed from Hydra. Can be used to run
-    the experiment.
+class Experiment:
+    """Experiment class.
+
+    Created from the Options that are parsed from Hydra. Can be used to run the experiment.
     """
 
-    options: Options
-    trainer: Trainer = field(init=False, to_dict=False)
-    model: Model = field(init=False, to_dict=False)
-    network: Network = field(init=False, to_dict=False)
-    datamodule: VisionDataModule = field(init=False, to_dict=False)
+    model: Model
+    network: Network
+    datamodule: VisionDataModule
+    trainer: Trainer
 
-    callbacks: List[Callback] = field(init=False, default_factory=list, to_dict=False)
-    loggers: List[LightningLoggerBase] = field(init=False, default_factory=list, to_dict=False)
-
-    def __post_init__(self) -> None:
-        """ Actually creates the callbacks and trainers etc from the options in `options`.
-        They are then stored in `self`. 
-        """
-        actual_callbacks: Dict[str, Callback] = {}
-
-        # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
-        # fields have the right type.
-
-        # Create the callbacks
-        assert isinstance(self.options.callbacks, dict)
-        for name, callback in self.options.callbacks.items():
-            if isinstance(callback, dict):
-                callback = hydra.utils.instantiate(callback)
-            elif not isinstance(callback, Callback):
-                raise ValueError(f"Invalid callback value {callback}")
-            actual_callbacks[name] = callback
-        self.callbacks = list(actual_callbacks.values())
-
-        # Create the loggers, if any.
-        assert isinstance(self.options.logger, dict)
-        actual_loggers: Dict[str, LightningLoggerBase] = {}
-        for name, lightning_logger in self.options.logger.items():
-            if isinstance(lightning_logger, dict):
-                lightning_logger = hydra.utils.instantiate(lightning_logger)
-            elif not isinstance(lightning_logger, LightningLoggerBase):
-                raise ValueError(f"Invalid logger value {lightning_logger}")
-            actual_loggers[name] = lightning_logger
-        self.logger = list(actual_loggers.values())
-
-        # Create the Trainer.
-        assert isinstance(self.options.trainer, dict)
-        if self.options.debug:
-            logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
-            self.options.trainer["max_epochs"] = 1
-        trainer = hydra.utils.instantiate(
-            self.options.trainer, callbacks=self.callbacks, logger=self.logger,
-        )
-        assert isinstance(trainer, Trainer)
-        self.trainer = trainer
-
-        # Create the datamodule:
-        dataset: DatasetConfig = self.options.dataset
-        self.datamodule = dataset.make_datamodule(batch_size=self.options.model.batch_size)
-
-        # Create the network
-        network_hparams: Network.HParams = self.options.network
-        network_type: Type[Network] = get_outer_class(type(network_hparams))
-        assert isinstance(
-            network_hparams, network_type.HParams
-        ), "HParams type should match net type"
-        self.network = network_type(
-            in_channels=self.datamodule.dims[0],
-            n_classes=self.datamodule.num_classes,  # type: ignore
-            hparams=network_hparams,
-        )
-
-        # Create the model
-        model_hparams: Model.HParams = self.options.model
-        model_type: Type[Model] = get_outer_class(type(model_hparams))
-        assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
-        self.model = model_type(
-            network=self.network,
-            datamodule=self.datamodule,
-            hparams=model_hparams,
-            network_hparams=network_hparams,
-            config=Config(seed=self.options.seed, debug=self.options.debug),
-        )
-        assert isinstance(self.model, LightningModule)
+    @classmethod
+    def from_options(cls, options: DictConfig | Options) -> Experiment:
+        """Creates all the components of an experiment from the DictConfig coming from Hydra."""
+        if isinstance(options, DictConfig):
+            converted_options = OmegaConf.to_object(options)
+            assert isinstance(converted_options, Options)
+            options = converted_options
+        exp = instantiate_experiment_components(options)
+        return exp
 
     def run(self) -> float:
-        if self.options.seed is not None:
-            seed_everything(seed=self.options.seed, workers=True)
-
-        root_logger = logging.getLogger()
-        if self.options.debug:
-            root_logger.setLevel(logging.INFO)
-        elif self.options.verbose:
-            root_logger.setLevel(logging.DEBUG)
-
-        root_logger = logging.getLogger()
-        # --- Run the experiment. ---
-        self.trainer.fit(self.model, datamodule=self.datamodule)
-
-        val_results = self.trainer.validate(model=self.model, datamodule=self.datamodule)
-        assert len(val_results) == 1
-        top1_accuracy: float = val_results[0]["val/accuracy"]
-        top5_accuracy: float = val_results[0]["val/top5_accuracy"]
-        print(f"Validation top1 accuracy: {top1_accuracy:.1%}")
-        print(f"Validation top5 accuracy: {top5_accuracy:.1%}")
-
-        val_error = 1 - top1_accuracy
-        if not self.options.debug:
-            from orion.client import report_objective
-
-            report_objective(val_error)
-
-        if wandb.run:
-            wandb.finish()
-
-        return val_error
-        # TODO: Enable this later.
-        # Run on the test set:
-        # test_results = trainer.test(model, datamodule=datamodule, verbose=True)
-        # top1_accuracy: float = test_results[0]["test/accuracy"]
-        # top5_accuracy: float = test_results[0]["test/top5_accuracy"]
-        # print(f"Test top1 accuracy: {top1_accuracy:.1%}")
-        # print(f"Test top5 accuracy: {top5_accuracy:.1%}")
+        return run_experiment(self)
 
 
-def run(options: Options):
-    if options.seed is not None:
-        seed_everything(seed=options.seed, workers=True)
+def run_experiment(exp: Experiment | DictConfig | Options) -> float:
+    """Run the experiment, and return the classification error.
+
+    By default, if validation is performed, returns the validation error. Returns the training error
+    when `trainer.overfit_batches != 0` (e.g. when debugging or testing). Otherwise, if
+    `trainer.limit_val_batches == 0`, returns the test error.
+    """
+    if not isinstance(exp, Experiment):
+        exp = Experiment.from_options(exp)
+
+    # TODO Probably log the hydra config with something like this:
+    # exp.trainer.logger.log_hyperparams()
+    exp.trainer.fit(exp.model, datamodule=exp.datamodule)
+
+    if (exp.trainer.limit_val_batches == exp.trainer.limit_test_batches == 0) or (
+        exp.trainer.overfit_batches == 1
+    ):
+        # We want to report the training error.
+        metrics = {
+            **exp.trainer.logged_metrics,
+            **exp.trainer.callback_metrics,
+            **exp.trainer.progress_bar_metrics,
+        }
+        if "train/accuracy" not in metrics:
+            raise RuntimeError(
+                f"Unable to find the train/accuracy key in the training metrics:\n"
+                f"{metrics.keys()}"
+            )
+        train_acc = metrics["train/accuracy"]
+        train_error = 1 - train_acc
+
+        # Probably not want to upload this to wandb, I'd assume.
+        return train_error
+
+    if exp.trainer.limit_val_batches != 0:
+        results = exp.trainer.validate(model=exp.model, datamodule=exp.datamodule)
+        results_type = "val"
+    else:
+        warnings.warn(
+            RuntimeWarning(
+                "About to use the test set for evaluation! This should be done in a sweep!"
+            )
+        )
+        results = exp.trainer.test(model=exp.model, datamodule=exp.datamodule)
+        results_type = "test"
+
+    top1_accuracy: float = results[0][f"{results_type}/accuracy"]
+    top5_accuracy: float = results[0][f"{results_type}/top5_accuracy"]
+    print(f"{results_type} top1 accuracy: {top1_accuracy:.1%}")
+    print(f"{results_type} top5 accuracy: {top5_accuracy:.1%}")
+
+    error = 1 - top1_accuracy
+
+    if wandb.run:
+        wandb.finish()
+    return error
+
+
+def instantiate_experiment_components(options: Options) -> Experiment:
+    """Do all the postprocessing necessary (e.g., create the network, Model, datamodule, callbacks,
+    Trainer, etc) to go from the options that come from Hydra, into all required components for the
+    experiment, which is stored as a namedtuple-like class called `Experiment`.
+
+    NOTE: This also has the effect of seeding the random number generators, so the weights that are
+    constructed are always deterministic.
+    """
 
     root_logger = logging.getLogger()
     if options.debug:
@@ -228,12 +226,70 @@ def run(options: Options):
     elif options.verbose:
         root_logger.setLevel(logging.DEBUG)
 
-    root_logger = logging.getLogger()
+    if options.seed is not None:
+        seed = options.seed
+        print(f"seed manually set to {options.seed}")
+    else:
+        seed = random.randint(0, int(1e5))
+        print(f"Randomly selected seed: {seed}")
+    seed_everything(seed=seed, workers=True)
 
-    experiment = Experiment(options=options)
+    # NOTE: Need to do a bit of sneaky type tricks to convince the outside world that these
+    # fields have the right type.
 
-    # --- Run the experiment. ---
-    return experiment.run()
+    # instantiate all the callbacks
+    callbacks = list(instantiate(options.callbacks).values())
+
+    # Create the loggers, if any.
+    pl_logger = list(instantiate(options.logger).values())
+
+    # Create the Trainer.
+    assert isinstance(options.trainer, dict)
+    if options.debug:
+        logger.info(f"Setting the max_epochs to 1, since the 'debug' flag was passed.")
+        options.trainer["max_epochs"] = 1
+    if "_target_" not in options.trainer:
+        options.trainer["_target_"] = Trainer
+    trainer = instantiate(options.trainer, callbacks=callbacks, logger=pl_logger,)
+    assert isinstance(trainer, Trainer)
+    trainer = trainer
+
+    # Create the datamodule:
+    dataset: DatasetConfig = options.dataset
+
+    datamodule = instantiate(dataset, batch_size=options.model.batch_size)
+    datamodule = validate_datamodule(datamodule)
+
+    # Create the network
+    network_hparams: Network.HParams = options.network
+    # TODO: Convert the network into configs, with some value interpolation of some sort, or just
+    # by passing the in_channels and n_classes to the instantiate function:
+    # network = instantiate(
+    #     options.network, in_channels=datamodule.dims[0], n_classes=datamodule.num_classes
+    # )
+
+    network_type: Type[Network] = get_outer_class(type(network_hparams))
+    assert isinstance(network_hparams, network_type.HParams), "HParams type should match net type"
+    network = network_type(
+        in_channels=datamodule.dims[0],
+        n_classes=datamodule.num_classes,  # type: ignore
+        hparams=network_hparams,
+    )
+    assert network.hparams is network_hparams
+
+    # Create the model
+    model_hparams: Model.HParams = options.model
+    model_type: Type[Model] = get_outer_class(type(model_hparams))
+    assert isinstance(model_hparams, model_type.HParams), "HParams type should match model type"
+    model = model_type(
+        datamodule=datamodule,
+        hparams=model_hparams,
+        config=Config(seed=options.seed, debug=options.debug),
+        network=network,
+    )
+    assert isinstance(model, LightningModule)
+
+    return Experiment(trainer=trainer, model=model, network=network, datamodule=datamodule,)
 
 
 if __name__ == "__main__":
