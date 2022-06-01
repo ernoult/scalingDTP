@@ -9,7 +9,6 @@ from logging import getLogger as get_logger
 from typing import Dict, Optional, Type
 
 import hydra
-import wandb
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
@@ -18,6 +17,7 @@ from pytorch_lightning import LightningModule, Trainer, seed_everything
 from simple_parsing.helpers import field
 from simple_parsing.helpers.serialization.serializable import Serializable
 
+import wandb
 from target_prop.config import Config
 from target_prop.datasets.dataset_config import DatasetConfig, validate_datamodule
 from target_prop.models import (
