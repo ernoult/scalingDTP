@@ -4,7 +4,6 @@ import dataclasses
 import logging
 import sys
 from collections import OrderedDict
-from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Type
 
 import pytest
@@ -13,13 +12,12 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from torch import Tensor, nn
 from torch.nn import functional as F
-from target_prop.datasets.dataset_config import cifar10_config
 
 from main import Options, main
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
 from target_prop.config import Config
-from target_prop.datasets.dataset_config import DatasetConfig, get_config, get_datamodule
+from target_prop.datasets.dataset_config import cifar10_config, get_datamodule
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP

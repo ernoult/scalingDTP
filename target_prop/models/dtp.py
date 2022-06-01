@@ -7,21 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, TypeVar
 
-import numpy as np
 import torch
 import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer
-from pytorch_lightning.loggers import WandbLogger
 from simple_parsing.helpers import field, list_field
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
-from torchmetrics.classification.accuracy import Accuracy
 
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import invert, mark_as_invertible
-from target_prop.callbacks import CompareToBackpropCallback
 from target_prop.config import Config
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import forward_all

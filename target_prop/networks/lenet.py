@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import List, Type
 
 from simple_parsing.helpers import list_field
 from torch import nn

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from itertools import islice
 from typing import List
-from torchvision.transforms import Normalize
+
 import pytest
 import torch
 from pytorch_lightning.utilities.seed import seed_everything
@@ -23,9 +23,6 @@ from target_prop.models import DTP
 from target_prop.networks.simple_vgg import SimpleVGG
 from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils.utils import is_trainable
-
-import numpy as np
-from numpy.testing import assert_allclose
 
 
 @dataclass

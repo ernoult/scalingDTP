@@ -7,7 +7,7 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, TypeVar
+from typing import Any
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from pytorch_lightning.callbacks import Callback, EarlyStopping

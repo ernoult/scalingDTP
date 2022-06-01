@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.callbacks import get_backprop_grads, get_dtp_grads
 from target_prop.config import Config
-from target_prop.datasets.dataset_config import DatasetConfig, get_datamodule
+from target_prop.datasets.dataset_config import get_datamodule
 from target_prop.metrics import compute_dist_angle
 from target_prop.models import DTP
 from target_prop.networks import LeNet
@@ -639,8 +639,6 @@ def disable_prints():
     with contextlib.redirect_stdout(io.StringIO()):
         yield
 
-
-import typing
 
 # from meulemans_dtp.main import Args
 from target_prop.networks import Network

@@ -7,7 +7,15 @@ import sys
 import torch
 from tqdm import tqdm
 
-from target_prop.legacy import *
+from target_prop.legacy import (
+    VGG,
+    createDataset,
+    createHyperparameterfile,
+    createOptimizers,
+    createPath,
+    test,
+    train_batch,
+)
 
 
 def main():

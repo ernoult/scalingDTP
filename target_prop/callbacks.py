@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
-from torch import Tensor, nn
+from torch import Tensor
 from torch.nn import functional as F
 
 from target_prop.layers import forward_all

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Container, Iterable, Sequence, Sized
+from typing import Iterable, Sized
 
 from simple_parsing import choice
 from simple_parsing.helpers.serialization.serializable import Serializable
