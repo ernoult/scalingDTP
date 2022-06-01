@@ -1,38 +1,33 @@
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Callable, TypeVar
-from pytorch_lightning import LightningDataModule
 
 import torch
+from hydra.core.config_store import ConfigStore
+from hydra_zen import instantiate
 from pl_bolts.datamodules import (
     CIFAR10DataModule,
     FashionMNISTDataModule,
     MNISTDataModule,
 )
+from pl_bolts.datamodules.cifar10_datamodule import cifar10_normalization
+from pl_bolts.datamodules.mnist_datamodule import MNISTDataModule
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from pytorch_lightning import LightningDataModule
 from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor
-from torchvision.transforms import (
-    Compose,
-    Normalize,
+from torchvision import transforms
+from torchvision.transforms import Compose, Normalize
+
+from target_prop.datasets.imagenet32_datamodule import (
+    ImageNet32DataModule,
+    imagenet32_normalization,
 )
-
-from target_prop.datasets.imagenet32_datamodule import ImageNet32DataModule
-
-from hydra_zen import builds, instantiate
-from hydra.core.config_store import ConfigStore
-
-
-from torchvision import transforms
-from torchvision import transforms
-from pytorch_lightning import LightningDataModule
-
-from pl_bolts.datamodules.mnist_datamodule import MNISTDataModule
-from pl_bolts.datamodules.cifar10_datamodule import cifar10_normalization
-from target_prop.datasets.imagenet32_datamodule import imagenet32_normalization
+from target_prop.utils.hydra_utils import builds
 
 FILE = Path(__file__)
 REPO_ROOTDIR = FILE.parent.parent.parent  # The root of the repo.

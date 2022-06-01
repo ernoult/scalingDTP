@@ -1,4 +1,5 @@
 import importlib
+import inspect
 from typing import Type
 
 
@@ -17,3 +18,27 @@ def get_outer_class(inner_class: Type) -> Type:
     # assert False, (container_class_module, class_name, child_name)
     mod = importlib.import_module(outer_class_module)
     return getattr(mod, outer_class_name)
+
+
+from hydra_zen import builds as _builds
+
+class_to_config_class: dict[type, type] = {}
+
+
+def builds(thing, *args, **kwargs):
+    kwargs.setdefault("dataclass_name", thing.__qualname__ + "Config")
+    kwargs.setdefault("populate_full_signature", True)
+
+    builds_bases = list(kwargs.pop("builds_bases", []))
+    if inspect.isclass(thing):
+        for base in thing.mro():
+            # Add the config classes for the parent to the builds_bases.
+            if base in class_to_config_class and class_to_config_class[base] not in builds_bases:
+                builds_bases.append(class_to_config_class[base])
+                # TODO: Should we do this only for the first base? or all the bases?
+    kwargs["builds_bases"] = tuple(builds_bases)
+
+    config_dataclass = _builds(thing, *args, **kwargs)
+    if thing not in class_to_config_class:
+        class_to_config_class[thing] = config_dataclass
+    return config_dataclass
