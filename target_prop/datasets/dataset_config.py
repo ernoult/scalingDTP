@@ -30,9 +30,29 @@ from target_prop.datasets.imagenet32_datamodule import (
 from target_prop.utils.hydra_utils import builds
 
 FILE = Path(__file__)
+
+
 REPO_ROOTDIR = FILE.parent.parent.parent  # The root of the repo.
-DATA_DIR = os.environ.get("SLURM_TMPDIR", str(REPO_ROOTDIR / "data"))
-NUM_WORKERS = int(os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count()))
+
+SLURM_TMPDIR: Path | None = (
+    Path(os.environ["SLURM_TMPDIR"]) if "SLURM_TMPDIR" in os.environ else None
+)
+SLURM_JOB_ID: int | None = (
+    int(os.environ["SLURM_JOB_ID"]) if "SLURM_JOB_ID" in os.environ else None
+)
+
+logger = get_logger(__name__)
+if not SLURM_TMPDIR and SLURM_JOB_ID is not None:
+    # This happens when running with `mila code`!
+    _slurm_tmpdir = Path(f"/Tmp/slurm.{SLURM_JOB_ID}.0")
+    if _slurm_tmpdir.exists():
+        SLURM_TMPDIR = _slurm_tmpdir
+DATA_DIR = SLURM_TMPDIR or (REPO_ROOTDIR / "data")
+
+
+NUM_WORKERS = int(
+    os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count())
+)
 
 logger = get_logger(__name__)
 
@@ -192,12 +212,18 @@ cifar10_3xstd_config = builds(
         ],
     ),
     test_transforms=builds(
-        Compose, transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)]
+        Compose,
+        transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)],
     ),
     val_transforms=builds(
-        Compose, transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)]
+        Compose,
+        transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)],
     ),
 )
+_torchvision_dir = Path("/network/datasets/torchvision")
+TORCHVISION_DIR: Path | None = None
+if _torchvision_dir.exists() and _torchvision_dir.is_dir():
+    TORCHVISION_DIR = _torchvision_dir
 
 imagenet32_config = builds(
     ImageNet32DataModule,
@@ -212,6 +238,7 @@ imagenet32_config = builds(
             builds(imagenet32_normalization),
         ]
     ),
+    readonly_datasets_dir=TORCHVISION_DIR,
     builds_bases=(VisionDatasetConfig,),
     # populate_full_signature=True,
 )
