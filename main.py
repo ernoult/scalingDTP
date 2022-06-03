@@ -253,9 +253,8 @@ def instantiate_experiment_components(options: Options) -> Experiment:
     trainer = trainer
 
     # Create the datamodule:
-    dataset: DatasetConfig = options.dataset
-
-    datamodule = instantiate(dataset, batch_size=options.model.batch_size)
+    dataset_config: DatasetConfig = options.dataset
+    datamodule = instantiate(dataset_config, batch_size=options.model.batch_size)
     datamodule = validate_datamodule(datamodule)
 
     # Create the network

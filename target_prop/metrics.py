@@ -14,6 +14,8 @@ def compute_dist_angle(
 ) -> Union[Tuple[float, float], Dict[Any, Union[Tuple[float, float], Any]]]:
     """
     Computes distance and angle between the feedforward and feedback weights.
+
+    TODO: Neet to fix this function, so it always returns the metrics in the same, unified format.
     """
     raise NotImplementedError((forward_module, backward_module))
 

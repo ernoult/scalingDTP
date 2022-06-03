@@ -35,9 +35,7 @@ REPO_ROOTDIR = FILE.parent.parent.parent  # The root of the repo.
 SLURM_TMPDIR: Path | None = (
     Path(os.environ["SLURM_TMPDIR"]) if "SLURM_TMPDIR" in os.environ else None
 )
-SLURM_JOB_ID: int | None = (
-    int(os.environ["SLURM_JOB_ID"]) if "SLURM_JOB_ID" in os.environ else None
-)
+SLURM_JOB_ID: int | None = int(os.environ["SLURM_JOB_ID"]) if "SLURM_JOB_ID" in os.environ else None
 
 logger = get_logger(__name__)
 if not SLURM_TMPDIR and SLURM_JOB_ID is not None:
