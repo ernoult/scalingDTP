@@ -55,6 +55,20 @@ def _weight_b_sym_linear(forward_layer: nn.Linear, backward_layer: nn.Linear) ->
         backward_layer.weight.data = forward_layer.weight.data.t()
 
 
+from target_prop.networks.resnet import BasicBlock, InvertedBasicBlock
+
+
+@init_symetric_weights.register(BasicBlock)
+def _init_symmetric_weights_residual(forward_layer: BasicBlock, backward_layer: InvertedBasicBlock):
+    init_symetric_weights(forward_layer.conv1, backward_layer.conv1),
+    init_symetric_weights(forward_layer.bn1, backward_layer.bn1),
+    init_symetric_weights(forward_layer.conv2, backward_layer.conv2),
+    init_symetric_weights(forward_layer.bn2, backward_layer.bn2),
+    if len(forward_layer.shortcut) > 0:  # Non-identity shortcut
+        init_symetric_weights(forward_layer.shortcut.conv, backward_layer.shortcut.conv)
+        init_symetric_weights(forward_layer.shortcut.bn, backward_layer.shortcut.bn)
+
+
 @singledispatch
 def weight_b_normalize(backward_layer: nn.Module, dx: Tensor, dy: Tensor, dr: Tensor) -> None:
     """TODO: I don't yet understand what this is supposed to do."""
