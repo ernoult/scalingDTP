@@ -8,23 +8,26 @@ from pathlib import Path
 from typing import Any, List, Optional, TypeVar
 
 import torch
-import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing.helpers import field, list_field
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 
+import wandb
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import invert, mark_as_invertible
-from target_prop.config import Config
+from target_prop.config import MiscConfig
+from target_prop.config.optimizer_config import OptimizerConfig
+from target_prop.config.scheduler_config import (
+    CosineAnnealingLRConfig,
+    LRSchedulerConfig,
+)
 from target_prop.feedback_loss import get_feedback_loss
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
 from target_prop.models.model import Model, PhaseStr, StepOutputDict
 from target_prop.networks.network import Network
-from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
 from target_prop.utils.utils import is_trainable
 
 from .utils import make_stacked_feedback_training_figure
@@ -117,7 +120,7 @@ class DTP(Model):
         datamodule: VisionDataModule,
         network: Network,
         hparams: DTP.HParams,
-        config: Config | None = None,
+        config: MiscConfig | None = None,
     ):
         super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
         self.hp: DTP.HParams

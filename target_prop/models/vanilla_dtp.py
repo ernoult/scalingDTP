@@ -10,9 +10,9 @@ import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from torch import Tensor, nn
 
-from target_prop.config import Config
+from target_prop.config import MiscConfig
+from target_prop.config.optimizer_config import OptimizerConfig
 from target_prop.networks.network import Network
-from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils.utils import repeat_batch
 
 logger = getLogger(__name__)
@@ -52,7 +52,7 @@ class VanillaDTP(DTP):
         datamodule: VisionDataModule,
         network: Network,
         hparams: VanillaDTP.HParams,
-        config: Config,
+        config: MiscConfig,
     ):
         super().__init__(
             datamodule=datamodule,

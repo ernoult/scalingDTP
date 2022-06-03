@@ -18,7 +18,8 @@ from simple_parsing.helpers import field
 from simple_parsing.helpers.serialization.serializable import Serializable
 
 import wandb
-from target_prop.config import Config
+from target_prop.config import MiscConfig
+from target_prop.config.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.datasets.dataset_config import DatasetConfig, validate_datamodule
 from target_prop.models import (
     DTP,
@@ -31,7 +32,6 @@ from target_prop.models import (
 from target_prop.models.model import Model
 from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
 from target_prop.networks.network import Network
-from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils.hydra_utils import get_outer_class
 
 logger = get_logger(__name__)
@@ -282,7 +282,7 @@ def instantiate_experiment_components(options: Options) -> Experiment:
     model = model_type(
         datamodule=datamodule,
         hparams=model_hparams,
-        config=Config(seed=options.seed, debug=options.debug),
+        config=MiscConfig(seed=options.seed, debug=options.debug),
         network=network,
     )
     assert isinstance(model, LightningModule)

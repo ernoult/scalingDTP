@@ -15,11 +15,14 @@ from simple_parsing import field
 from torch import Tensor
 from torch.nn import functional as F
 
-from target_prop.config import Config
+from target_prop.config import MiscConfig
+from target_prop.config.optimizer_config import OptimizerConfig
+from target_prop.config.scheduler_config import (
+    CosineAnnealingLRConfig,
+    LRSchedulerConfig,
+)
 from target_prop.models.model import Model, PhaseStr, StepOutputDict
 from target_prop.networks import Network
-from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
 
 logger = getLogger(__name__)
 
@@ -56,7 +59,7 @@ class BaselineModel(Model):
         datamodule: VisionDataModule,
         network: Network,
         hparams: HParams | None = None,
-        config: Config | None = None,
+        config: MiscConfig | None = None,
     ):
         super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
         self.hp: BaselineModel.HParams

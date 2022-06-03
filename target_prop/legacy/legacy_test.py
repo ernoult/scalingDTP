@@ -10,7 +10,8 @@ from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import nn
 from torch.utils.data import DataLoader
 
-from target_prop.config import Config
+from target_prop.config import MiscConfig
+from target_prop.config.optimizer_config import OptimizerConfig
 from target_prop.datasets.dataset_config import get_datamodule
 from target_prop.legacy import (
     VGG,
@@ -21,7 +22,6 @@ from target_prop.legacy import (
 )
 from target_prop.models import DTP
 from target_prop.networks.simple_vgg import SimpleVGG
-from target_prop.optimizer_config import OptimizerConfig
 from target_prop.utils.utils import is_trainable
 
 
@@ -96,7 +96,7 @@ def pl_hparams(legacy_hparams: LegacyHparams):
 
 @pytest.fixture
 def pl_model(pl_hparams: DTP.HParams):
-    config = Config(debug=True, seed=123, device="cpu")
+    config = MiscConfig(debug=True, seed=123, device="cpu")
     datamodule = get_datamodule(dataset="cifar10", num_workers=0, batch_size=pl_hparams.batch_size)
     network = SimpleVGG(in_channels=datamodule.dims[0], n_classes=datamodule.num_classes)
     pl_model = DTP(datamodule=datamodule, hparams=pl_hparams, config=config, network=network)

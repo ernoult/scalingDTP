@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 from functools import singledispatch
-from typing import Any, OrderedDict, Tuple, TypeVar, Union
-
-try:
-    from typing import Protocol, runtime_checkable
-except ImportError:
-    from typing_extensions import Protocol, runtime_checkable
+from typing import OrderedDict, Protocol, TypeVar, Union, runtime_checkable
 
 from torch import Tensor, nn
 

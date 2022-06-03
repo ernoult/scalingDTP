@@ -7,21 +7,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-import wandb
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
 from simple_parsing import field
 from simple_parsing.helpers import list_field
 from torch import Tensor, nn
 from torch.optim.optimizer import Optimizer
 
-from target_prop.config import Config
+import wandb
+from target_prop.config import MiscConfig
+from target_prop.config.optimizer_config import OptimizerConfig
+from target_prop.config.scheduler_config import (
+    CosineAnnealingLRConfig,
+    LRSchedulerConfig,
+)
 from target_prop.feedback_loss import get_feedback_loss_parallel
 from target_prop.layers import forward_all
 from target_prop.metrics import compute_dist_angle
 from target_prop.models.model import PhaseStr, StepOutputDict
 from target_prop.networks import Network
-from target_prop.optimizer_config import OptimizerConfig
-from target_prop.scheduler_config import CosineAnnealingLRConfig, LRSchedulerConfig
 
 from .dtp import DTP
 from .utils import make_stacked_feedback_training_figure
@@ -93,7 +96,7 @@ class ParallelDTP(DTP):
         datamodule: VisionDataModule,
         network: Network,
         hparams: ParallelDTP.HParams,
-        config: Config,
+        config: MiscConfig,
     ):
         super().__init__(
             datamodule=datamodule,

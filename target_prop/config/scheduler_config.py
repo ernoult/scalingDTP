@@ -1,13 +1,15 @@
 from abc import abstractmethod
 from dataclasses import dataclass
 
-from simple_parsing import Serializable
+from simple_parsing.helpers.serialization.serializable import Serializable
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, _LRScheduler
 from torch.optim.optimizer import Optimizer
 
 
 @dataclass
 class LRSchedulerConfig(Serializable):
+
+    # Keys used when creating the scheduler in PyTorch-Lightning's `configure_optimizers` method.
     interval: str = "epoch"
     frequency: int = 1
 

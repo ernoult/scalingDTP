@@ -16,7 +16,7 @@ from torch.nn import functional as F
 from main import Options, main
 from target_prop._weight_operations import init_symetric_weights
 from target_prop.backward_layers import mark_as_invertible
-from target_prop.config import Config
+from target_prop.config import MiscConfig
 from target_prop.datasets.dataset_config import cifar10_config, get_datamodule
 from target_prop.layers import Reshape, forward_all, invert
 from target_prop.metrics import compute_dist_angle
@@ -78,7 +78,7 @@ class TestDTP:
     @pytest.mark.parametrize("dataset", ["cifar10"])
     @pytest.mark.parametrize("network_type", networks)
     def test_fast_dev_run(
-        self, dataset: str, network_type: type[Network], debug_hparams: Network.HParams
+        self, dataset: str, network_type: type[Network], debug_hparams: DTP.HParams
     ):
         """Run a fast dev run using a single batch of data for training/validation/testing."""
         # NOTE: Not testing using other datasets for now, because the defaults on the HParams are
@@ -97,7 +97,7 @@ class TestDTP:
             logger=None,
             checkpoint_callback=False,
         )
-        config = Config(debug=True)
+        config = MiscConfig(debug=True)
         if config.seed is not None:
             seed = config.seed
         else:
