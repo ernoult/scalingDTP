@@ -1,14 +1,25 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import List, Tuple, Type
+from typing import ClassVar, List, Optional, Tuple, Type
 
-import torch.nn as nn
 import torch.nn.functional as F
 from simple_parsing.helpers import list_field
+from torch import Tensor, nn
 
 from target_prop.backward_layers import invert
 from target_prop.layers import Reshape
+
 from .network import Network
+
+
+class Residual(nn.Module):
+    def __init__(self, fn: nn.Module, shortcut: Optional[nn.Module] = None) -> None:
+        super().__init__()
+        self.fn = fn
+        self.shortcut = shortcut or nn.Sequential()
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.fn(x) + self.shortcut(x)
 
 
 class BasicBlock(nn.Module):
@@ -16,9 +27,9 @@ class BasicBlock(nn.Module):
     Basic residual block with optional BatchNorm.
     """
 
-    expansion = 1
+    expansion: ClassVar[int] = 1
 
-    def __init__(self, in_planes, planes, stride=1, use_batchnorm=False):
+    def __init__(self, in_planes: int, planes: int, stride: int = 1, use_batchnorm: bool = False):
         super().__init__()
         # Save hyperparams relevant for inversion
         self.in_planes = in_planes
@@ -41,13 +52,27 @@ class BasicBlock(nn.Module):
                     conv=nn.Conv2d(
                         in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False
                     ),
-                    bn=nn.BatchNorm2d(self.expansion * planes)
-                    if self.use_batchnorm
-                    else nn.Identity(),
+                    bn=(
+                        nn.BatchNorm2d(self.expansion * planes)
+                        if self.use_batchnorm
+                        else nn.Identity()
+                    ),
                 )
             )
 
-    def forward(self, x):
+        # IDEA: Could maybe simplify the code a little bit? However it would make accessing the
+        # weights a bit more indirect..
+        # self.residual = nn.Sequential(
+        #     Residual(
+        #         nn.Sequential(self.conv1, self.bn1, nn.ReLU(), self.conv2, self.bn2),
+        #         shortcut=self.shortcut,
+        #     ),
+        #     nn.ReLU(),
+        # )
+
+    def forward(self, x: Tensor) -> Tensor:
+        # out = F.relu(self.residual(x))
+
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
