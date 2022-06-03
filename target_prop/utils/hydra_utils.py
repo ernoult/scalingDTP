@@ -1,17 +1,20 @@
+from __future__ import annotations
+
 import importlib
 import inspect
-from typing import Type
+
+from hydra_zen import builds as _builds
 
 
-def is_inner_class(object_type: Type) -> bool:
+def is_inner_class(object_type: type) -> bool:
     return "." in object_type.__qualname__
 
 
-def get_full_name(object_type: Type) -> str:
+def get_full_name(object_type: type) -> str:
     return object_type.__module__ + "." + object_type.__qualname__
 
 
-def get_outer_class(inner_class: Type) -> Type:
+def get_outer_class(inner_class: type) -> type:
     inner_full_name = get_full_name(inner_class)
     parent_full_name, _, _ = inner_full_name.rpartition(".")
     outer_class_module, _, outer_class_name = parent_full_name.rpartition(".")
@@ -19,8 +22,6 @@ def get_outer_class(inner_class: Type) -> Type:
     mod = importlib.import_module(outer_class_module)
     return getattr(mod, outer_class_name)
 
-
-from hydra_zen import builds as _builds
 
 class_to_config_class: dict[type, type] = {}
 
