@@ -188,6 +188,8 @@ def run_experiment(exp: Experiment | DictConfig | Options) -> float:
         # Probably not want to upload this to wandb, I'd assume.
         return train_error
 
+    # BUG: The datasets get re-downloaded to the current code directory, rather than to reuse the
+    # `data_dir`.
     if exp.trainer.limit_val_batches != 0:
         results = exp.trainer.validate(model=exp.model, datamodule=exp.datamodule)
         results_type = "val"

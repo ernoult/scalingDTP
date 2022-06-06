@@ -152,9 +152,7 @@ class Meulemans(Model):
             self.train_feedback_parameters()
 
             # NOTE: Not using the outputs of this method at the moment.
-            self.train_forward_parameters(
-                inputs=x, predictions=predictions, targets=y, loss_function=loss_function
-            )
+            self.train_forward_parameters(inputs=x, predictions=predictions, targets=y)
         return {"logits": predictions, "y": y}
 
     def train_feedback_parameters(self):
