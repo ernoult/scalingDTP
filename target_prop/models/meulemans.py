@@ -102,6 +102,13 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
             h_corrupted, output_corrupted, output_noncorrupted, self.sigma
         )
 
+    def dummy_forward(self, h: Tensor, i: int) -> Tensor:
+        return super().dummy_forward(h, i)
+        # TODO: Simplify the above code into this by changing the forward method of the layers.
+        for layer in self.layers[i + 1 :]:
+            h = layer.forward(h, save_activations=False)
+        return h
+
 
 class Meulemans(Model):
     @dataclass
