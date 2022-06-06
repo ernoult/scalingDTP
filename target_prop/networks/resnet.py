@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Tuple, Type
@@ -180,7 +182,7 @@ class ResNet(nn.Sequential, Network):
         use_batchnorm: bool = False
         num_blocks: List[int] = list_field(2, 2, 2, 2)
 
-    def __init__(self, in_channels: int, n_classes: int, hparams: "ResNet.HParams" = None):
+    def __init__(self, in_channels: int, n_classes: int, hparams: ResNet.HParams | None = None):
         # Catch hparams
         hparams = hparams or self.HParams()
         use_batchnorm = hparams.use_batchnorm
