@@ -158,7 +158,11 @@ class Meulemans(Model):
     def train_feedback_parameters(self):
         """Train the feedback parameters on the current mini-batch.
 
-        Adapted from the meulemans codebase
+        Adapted from the meulemans codebase.
+
+        TODO: Extract the loss calculation logic of the layers, and instead of having all the loss
+        calculations inside the layers (as it currently is in the meulemans code) use the same kind
+        of structure as in DTP, where we sum the reconstruction losses of all the layers.
         """
         args = self.hp.args
         feedback_optimizers = self.feedback_optimizers
@@ -178,6 +182,8 @@ class Meulemans(Model):
         assert not args.train_randomized_fb
         assert not args.diff_rec_loss
 
+        # TODO: Make sure that the last layer is trained properly as well. (The [:-1] here comes
+        # from the meulemans code)
         for layer_index, layer in enumerate(net.layers[:-1]):
             n_iter = layer._nb_feedback_iterations
             for iteration in range(n_iter):
