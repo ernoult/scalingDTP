@@ -12,11 +12,12 @@ from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torchmetrics.classification.accuracy import Accuracy
+
+from target_prop.config.scheduler_config import LRSchedulerConfig
 from target_prop.networks.network import Network
-from target_prop.scheduler_config import LRSchedulerConfig
 
 if typing.TYPE_CHECKING:
-    from target_prop.config import Config
+    from target_prop.config import MiscConfig
 
 PhaseStr = Literal["train", "val", "test"]
 
@@ -64,7 +65,7 @@ class Model(LightningModule, ABC):
         datamodule: VisionDataModule,
         network: Network,
         hparams: Model.HParams | None = None,
-        config: Config | None = None,
+        config: MiscConfig | None = None,
     ):
         super().__init__()
         self.datamodule = datamodule
@@ -74,7 +75,7 @@ class Model(LightningModule, ABC):
         # NOTE: Can't exactly set the `hparams` attribute because it's a special property of PL.
         self.hp = hparams or self.HParams()
         self.net_hp = network.hparams
-        self.config = config or Config()
+        self.config = config or MiscConfig()
 
         assert isinstance(network, nn.Module)
         self.forward_net = network.to(self.config.device)

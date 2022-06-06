@@ -129,6 +129,7 @@ class ImageNet32Dataset(VisionDataset):
 
         if not archive_path.exists():
             logger.info(f"Downloading the archive to {archive_path}")
+            # TODO: This uses the ~/.cache/gdown/ directory, which is not great!
             gdown.cached_download(
                 url=self.url,
                 md5=self.md5,
@@ -178,7 +179,7 @@ class ImageNet32DataModule(VisionDataModule):
 
     def __init__(
         self,
-        data_dir: str | Path | None = None,
+        data_dir: str | Path,
         readonly_datasets_dir: str | Path | None = None,
         val_split: int | float = -1,
         num_images_per_val_class: int | None = 50,

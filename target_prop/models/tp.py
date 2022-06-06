@@ -5,12 +5,10 @@ from logging import getLogger
 from typing import List, Union
 
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from simple_parsing.helpers import list_field
 from torch import Tensor, nn
 
-from target_prop.config import Config
+from target_prop.config import MiscConfig
 from target_prop.networks.network import Network
-from target_prop.optimizer_config import OptimizerConfig
 
 from .vanilla_dtp import VanillaDTP
 
@@ -33,7 +31,7 @@ class TargetProp(VanillaDTP):
         datamodule: VisionDataModule,
         network: Network,
         hparams: TargetProp.HParams | None = None,
-        config: Config | None = None,
+        config: MiscConfig | None = None,
     ):
         super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
         self.hp: TargetProp.HParams

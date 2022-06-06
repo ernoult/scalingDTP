@@ -23,7 +23,7 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.7",
+    python_requires=">=3.9",
     install_requires=[
         "simple-parsing",
         "torch",
@@ -43,5 +43,6 @@ setuptools.setup(
         "orion",
         "hydra-orion-sweeper @ git+https://github.com/Delaunay/hydra.git@orion#subdirectory=plugins/hydra_orion_sweeper",
         "gdown",
+        "hydra-zen",
     ],
 )

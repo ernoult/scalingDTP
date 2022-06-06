@@ -9,24 +9,18 @@ from logging import getLogger as get_logger
 from typing import Dict, Optional, Type
 
 import hydra
-import wandb
 from hydra.core.config_store import ConfigStore
+from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
-from pytorch_lightning import (
-    LightningModule,
-    Trainer,
-    seed_everything,
-)
+from pytorch_lightning import LightningModule, Trainer, seed_everything
 from simple_parsing.helpers import field
 from simple_parsing.helpers.serialization.serializable import Serializable
-from hydra.utils import instantiate
 
-from target_prop.config import Config
-from target_prop.datasets.dataset_config import (
-    DatasetConfig,
-    validate_datamodule,
-)
+import wandb
+from target_prop.config import MiscConfig
+from target_prop.config.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
+from target_prop.datasets.dataset_config import DatasetConfig, validate_datamodule
 from target_prop.models import (
     DTP,
     BaselineModel,
@@ -38,11 +32,9 @@ from target_prop.models import (
 from target_prop.models.model import Model
 from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
 from target_prop.networks.network import Network
-from target_prop.scheduler_config import CosineAnnealingLRConfig, StepLRConfig
 from target_prop.utils.hydra_utils import get_outer_class
 
 logger = get_logger(__name__)
-
 
 
 @dataclass
@@ -119,7 +111,9 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 
 
 @hydra.main(
-    config_path="conf", config_name="config", version_base=None,
+    config_path="conf",
+    config_name="config",
+    version_base=None,
 )
 def main(config: DictConfig | Options) -> float:
     print(os.getcwd())
@@ -250,14 +244,17 @@ def instantiate_experiment_components(options: Options) -> Experiment:
         options.trainer["max_epochs"] = 1
     if "_target_" not in options.trainer:
         options.trainer["_target_"] = Trainer
-    trainer = instantiate(options.trainer, callbacks=callbacks, logger=pl_logger,)
+    trainer = instantiate(
+        options.trainer,
+        callbacks=callbacks,
+        logger=pl_logger,
+    )
     assert isinstance(trainer, Trainer)
     trainer = trainer
 
     # Create the datamodule:
-    dataset: DatasetConfig = options.dataset
-
-    datamodule = instantiate(dataset, batch_size=options.model.batch_size)
+    dataset_config: DatasetConfig = options.dataset
+    datamodule = instantiate(dataset_config, batch_size=options.model.batch_size)
     datamodule = validate_datamodule(datamodule)
 
     # Create the network
@@ -284,12 +281,17 @@ def instantiate_experiment_components(options: Options) -> Experiment:
     model = model_type(
         datamodule=datamodule,
         hparams=model_hparams,
-        config=Config(seed=options.seed, debug=options.debug),
+        config=MiscConfig(seed=options.seed, debug=options.debug),
         network=network,
     )
     assert isinstance(model, LightningModule)
 
-    return Experiment(trainer=trainer, model=model, network=network, datamodule=datamodule,)
+    return Experiment(
+        trainer=trainer,
+        model=model,
+        network=network,
+        datamodule=datamodule,
+    )
 
 
 if __name__ == "__main__":

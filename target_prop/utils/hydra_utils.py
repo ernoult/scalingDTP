@@ -1,19 +1,20 @@
+from __future__ import annotations
+
 import importlib
-from typing import Any, Type
+import inspect
 
-import omegaconf
-from omegaconf import DictConfig
+from hydra_zen import builds as _builds
 
 
-def is_inner_class(object_type: Type) -> bool:
+def is_inner_class(object_type: type) -> bool:
     return "." in object_type.__qualname__
 
 
-def get_full_name(object_type: Type) -> str:
+def get_full_name(object_type: type) -> str:
     return object_type.__module__ + "." + object_type.__qualname__
 
 
-def get_outer_class(inner_class: Type) -> Type:
+def get_outer_class(inner_class: type) -> type:
     inner_full_name = get_full_name(inner_class)
     parent_full_name, _, _ = inner_full_name.rpartition(".")
     outer_class_module, _, outer_class_name = parent_full_name.rpartition(".")
@@ -22,30 +23,23 @@ def get_outer_class(inner_class: Type) -> Type:
     return getattr(mod, outer_class_name)
 
 
-# "patch" for some of the Hydra logging methods, so they are more informative with inner classes.
+class_to_config_class: dict[type, type] = {}
 
 
-def _validate_get(self: DictConfig, key: Any, value: Any = None) -> None:
-    is_typed = self._is_typed()
+def builds(thing, *args, **kwargs):
+    kwargs.setdefault("dataclass_name", thing.__qualname__ + "Config")
+    kwargs.setdefault("populate_full_signature", True)
 
-    is_struct = self._get_flag("struct") is True
-    if key not in self.__dict__["_content"]:
-        if is_typed:
-            # do not raise an exception if struct is explicitly set to False
-            if self._get_node_flag("struct") is False:
-                return
-        if is_typed or is_struct:
-            if is_typed:
-                assert self._metadata.object_type is not None
-                msg = f"Key '{key}' not in '{self._metadata.object_type.__qualname__}'"  # note: changed this to make things a bit clearer.
-            else:
-                msg = f"Key '{key}' is not in struct"
-            self._format_and_raise(key=key, value=value, cause=ConfigAttributeError(msg))
+    builds_bases = list(kwargs.pop("builds_bases", []))
+    if inspect.isclass(thing):
+        for base in thing.mro():
+            # Add the config classes for the parent to the builds_bases.
+            if base in class_to_config_class and class_to_config_class[base] not in builds_bases:
+                builds_bases.append(class_to_config_class[base])
+                # TODO: Should we do this only for the first base? or all the bases?
+    kwargs["builds_bases"] = tuple(builds_bases)
 
-
-from omegaconf.errors import ConfigAttributeError
-
-# Hacky, but it works.
-omegaconf.DictConfig._validate_get = _validate_get
-# setattr(omegaconf.DictConfig, "_validate_get", _validate_get)
-import omegaconf._utils
+    config_dataclass = _builds(thing, *args, **kwargs)
+    if thing not in class_to_config_class:
+        class_to_config_class[thing] = config_dataclass
+    return config_dataclass

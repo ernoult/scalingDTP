@@ -14,11 +14,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OptimizerConfig(Serializable):
-    """Configuration options for an optimizer.
+    """Configuration options for the optimizer.
 
     TODO: Replace the choice of optimizer type with a _target_'ed config for Hydra, so that we can
     add other optimizers easily, and avoid having all the union of all their constructor arguments
     as fields here.
+    NOTE: Having the fused constructor arguments here makes it possible to switch between different
+    optimizer types during a sweep. There must however be a good way of doing it cleanly with
+    Hydra, though.
     """
 
     # Class variable that holds the types of optimizers that are available.
@@ -44,7 +47,7 @@ class OptimizerConfig(Serializable):
         if isinstance(self.lr, np.ndarray):
             self.lr = self.lr.tolist()
 
-    def make_optimizer(self, network: nn.Module, lrs: List[float] = None) -> Optimizer:
+    def make_optimizer(self, network: nn.Module, lrs: Optional[List[float]] = None) -> Optimizer:
         """Create the optimizer, using the options set in this object."""
         optimizer_class = self.available_optimizers[self.type]
         # List of learning rates for each layer.

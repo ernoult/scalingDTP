@@ -2,7 +2,6 @@ from typing import ClassVar, Type
 
 import pytest
 
-from target_prop.networks.lenet_test import network
 from target_prop.networks.network import Network
 from target_prop.networks.resnet import ResNet, ResNet18
 from target_prop.networks.simple_vgg import SimpleVGG

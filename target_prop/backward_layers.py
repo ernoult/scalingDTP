@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 from functools import singledispatch
-from typing import Any, OrderedDict, Tuple, TypeVar, Union
-
-try:
-    from typing import Protocol, runtime_checkable
-except ImportError:
-    from typing_extensions import Protocol, runtime_checkable
+from typing import OrderedDict, Protocol, TypeVar, runtime_checkable
 
 from torch import Tensor, nn
 
@@ -23,14 +18,14 @@ class Invertible(Protocol):
     Protocol for this isn't 100% necessary. Just having fun with the new structural subtyping.
     """
 
-    input_shape: Tuple[int, ...] = ()
-    output_shape: Tuple[int, ...] = ()
+    input_shape: tuple[int, ...] = ()
+    output_shape: tuple[int, ...] = ()
     enforce_shapes: bool = False
 
 
 @singledispatch
-def invert(layer: Invertible) -> Any:
-    """Returns the module to be used to compute the 'backward' version of `layer`.
+def invert(layer: nn.Module | Invertible) -> nn.Module:
+    """Returns the module to be used to compute the pseudoinverse of `layer`.
 
     NOTE: All concrete handlers below usually assume that a layer has been marked as 'invertible'.
     This is usually
@@ -178,7 +173,7 @@ def check_shapes_hook(
 
 
 @singledispatch
-def mark_as_invertible(module: ModuleType) -> Union[ModuleType, Invertible]:
+def mark_as_invertible(module: ModuleType) -> ModuleType | Invertible:
     """Makes the module easier to "invert" by adding hooks that set the
     `input_shape` and `output_shape` attributes. Modifies the module in-place.
     """
@@ -187,10 +182,10 @@ def mark_as_invertible(module: ModuleType) -> Union[ModuleType, Invertible]:
     return module
 
 
-@mark_as_invertible.register
-def mark_sequential_as_invertible(
+@mark_as_invertible.register(nn.Sequential)
+def _mark_sequential_as_invertible(
     module: nn.Sequential,
-) -> Union[nn.Sequential, Invertible]:
+) -> nn.Sequential | Invertible:
     if check_shapes_hook not in module._forward_hooks.values():
         module.register_forward_hook(check_shapes_hook)
     for layer in module:

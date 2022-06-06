@@ -35,7 +35,7 @@ Here is how the codebase is roughly structured:
 ```
 ├── main.py                # training script (legacy)
 ├── meulemans_dtp          # Codebase for DRL (Meulemans repo)
-├── numerical_experiments  # Initial scripts for creating the figures (used for fig. 4.2) 
+├── numerical_experiments  # Initial scripts for creating the figures (used for fig. 4.2)
 └── target_prop
     ├── datasets  # Datasets
     ├── legacy    # initial implementation
@@ -49,11 +49,11 @@ Here is how the codebase is roughly structured:
   ```console
   $ python -m numerical_experiments figure_4_2
   ```
-  The figure save location will then be displayed on the console. 
+  The figure save location will then be displayed on the console.
 
 - Recreating figure 4.3:
   ```console
-  $ pytest -vv target_prop/networks/lenet_test.py
+  $ pytest -vv target_prop/theorem_test.py
   $ python target_prop/legacy/plot.py
   ```
 

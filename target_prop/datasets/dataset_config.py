@@ -1,42 +1,51 @@
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from logging import getLogger as get_logger
 from pathlib import Path
 from typing import Callable, TypeVar
-from pytorch_lightning import LightningDataModule
 
 import torch
-from pl_bolts.datamodules import (
+from hydra.core.config_store import ConfigStore
+from hydra_zen import instantiate
+from pl_bolts.datamodules import FashionMNISTDataModule, MNISTDataModule
+from pl_bolts.datamodules.cifar10_datamodule import (
     CIFAR10DataModule,
-    FashionMNISTDataModule,
-    MNISTDataModule,
+    cifar10_normalization,
 )
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
+from pytorch_lightning import LightningDataModule
 from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor
-from torchvision.transforms import (
-    Compose,
-    Normalize,
+from torchvision import transforms
+from torchvision.transforms import Compose, Normalize
+
+from target_prop.datasets.imagenet32_datamodule import (
+    ImageNet32DataModule,
+    imagenet32_normalization,
 )
-
-from target_prop.datasets.imagenet32_datamodule import ImageNet32DataModule
-
-from hydra_zen import builds, instantiate
-from hydra.core.config_store import ConfigStore
-
-
-from torchvision import transforms
-from torchvision import transforms
-from pytorch_lightning import LightningDataModule
-
-from pl_bolts.datamodules.mnist_datamodule import MNISTDataModule
-from pl_bolts.datamodules.cifar10_datamodule import cifar10_normalization
-from target_prop.datasets.imagenet32_datamodule import imagenet32_normalization
+from target_prop.utils.hydra_utils import builds
 
 FILE = Path(__file__)
+
+
 REPO_ROOTDIR = FILE.parent.parent.parent  # The root of the repo.
-DATA_DIR = os.environ.get("SLURM_TMPDIR", str(REPO_ROOTDIR / "data"))
+
+SLURM_TMPDIR: Path | None = (
+    Path(os.environ["SLURM_TMPDIR"]) if "SLURM_TMPDIR" in os.environ else None
+)
+SLURM_JOB_ID: int | None = int(os.environ["SLURM_JOB_ID"]) if "SLURM_JOB_ID" in os.environ else None
+
+logger = get_logger(__name__)
+if not SLURM_TMPDIR and SLURM_JOB_ID is not None:
+    # This happens when running with `mila code`!
+    _slurm_tmpdir = Path(f"/Tmp/slurm.{SLURM_JOB_ID}.0")
+    if _slurm_tmpdir.exists():
+        SLURM_TMPDIR = _slurm_tmpdir
+DATA_DIR = SLURM_TMPDIR or (REPO_ROOTDIR / "data")
+
+
 NUM_WORKERS = int(os.environ.get("SLURM_CPUS_PER_TASK", torch.multiprocessing.cpu_count()))
 
 logger = get_logger(__name__)
@@ -54,6 +63,7 @@ def get_config(group: str, name: str):
 def get_datamodule(
     dataset: str, batch_size: int = 64, use_legacy_std: bool = False, **kwargs
 ) -> VisionDataModule:
+    """Backward-compatibility function for fetching the datamodule with the given name."""
     if use_legacy_std and dataset != "cifar10_3xstd":
         if dataset == "cifar10":
             dataset = "cifar10_3xstd"
@@ -107,9 +117,8 @@ TrainTransformsConfig = builds(
 
 @dataclass
 class CallableConfig:
-    """Little mixin that makes it possible to call the config, like adam_config() -> Adam,
-    instead of having to use `instantiate`.
-    """
+    """Little mixin that makes it possible to call the config, like adam_config() -> Adam, instead
+    of having to use `instantiate`."""
 
     def __call__(self, *args, **kwargs):
         return instantiate(self, *args, **kwargs)
@@ -162,8 +171,6 @@ fmnist_config = builds(
 
 
 def cifar10_3xstd_normalization() -> transforms.Normalize:
-    # TODO: The mean and std are off by like a tiny tiny fraction.
-
     # pl_bolts's normalization:
     # mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
     # std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
@@ -184,6 +191,11 @@ cifar10_config = builds(
     ),
     builds_bases=(VisionDatasetConfig,),
 )
+
+_cifar10_3x_val_transforms = builds(
+    Compose,
+    transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)],
+)
 cifar10_3xstd_config = builds(
     CIFAR10DataModule,
     builds_bases=(cifar10_config,),
@@ -196,13 +208,13 @@ cifar10_3xstd_config = builds(
             builds(cifar10_3xstd_normalization),
         ],
     ),
-    test_transforms=builds(
-        Compose, transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)]
-    ),
-    val_transforms=builds(
-        Compose, transforms=[builds(transforms.ToTensor), builds(cifar10_3xstd_normalization)]
-    ),
+    test_transforms=_cifar10_3x_val_transforms,
+    val_transforms=_cifar10_3x_val_transforms,
 )
+_torchvision_dir = Path("/network/datasets/torchvision")
+TORCHVISION_DIR: Path | None = None
+if _torchvision_dir.exists() and _torchvision_dir.is_dir():
+    TORCHVISION_DIR = _torchvision_dir
 
 imagenet32_config = builds(
     ImageNet32DataModule,
@@ -217,6 +229,7 @@ imagenet32_config = builds(
             builds(imagenet32_normalization),
         ]
     ),
+    readonly_datasets_dir=TORCHVISION_DIR,
     builds_bases=(VisionDatasetConfig,),
     # populate_full_signature=True,
 )

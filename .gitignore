@@ -7,3 +7,4 @@ build
 wandb
 logs
 checkpoints
+slurm_logs

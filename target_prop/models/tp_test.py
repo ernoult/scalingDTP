@@ -3,7 +3,7 @@ from typing import ClassVar, Type
 from target_prop.models.dtp_test import not_well_supported
 
 from .dtp import DTP
-from .tp import TargetProp, VanillaDTP
+from .tp import TargetProp
 from .vanilla_dtp_test import TestVanillaDTP as VanillaDTPTests
 
 

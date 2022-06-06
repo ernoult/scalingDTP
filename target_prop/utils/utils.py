@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import warnings
-from typing import Any, Dict, Iterable, List, Tuple, TypeVar, Union
+from typing import Any, Iterable, Tuple, TypeVar, Union
 
-from importlib_metadata import collections
 from simple_parsing.helpers import field
 from torch import Tensor, nn
 from torch.distributions import Normal as Normal_

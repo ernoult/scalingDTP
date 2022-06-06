@@ -1,11 +1,7 @@
 """ Wandb utilities. """
-import json
-from abc import ABC
-from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Type, TypeVar
+from typing import Dict, List, Optional, Type, TypeVar
 
 import wandb
-from simple_parsing.helpers.hparams.hyperparameters import HyperParameters
 from simple_parsing.helpers.serialization.serializable import Serializable
 from wandb.apis.public import Run
 
