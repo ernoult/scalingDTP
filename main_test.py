@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import sys
 import typing
 from dataclasses import replace
@@ -280,8 +281,13 @@ def test_experiment_reproducible_given_seed(
     #     assert value_with_different_seed != pytest.approx(first_value)
 
 
-@pytest.mark.parametrize("network_name", network_names)
-@pytest.mark.parametrize("model_name", model_names)
+@pytest.mark.parametrize(
+    "network_name, model_name",
+    list(itertools.product(network_names, model_names))
+    + [
+        ("meulemans", "meulemans"),
+    ],
+)
 def test_overfit_single_batch(
     model_name: str, network_name: str, testing_overrides: list[str]
 ) -> None:

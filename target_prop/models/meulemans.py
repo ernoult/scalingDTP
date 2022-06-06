@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from ast import literal_eval
-from dataclasses import dataclass, field
-from typing import Callable, Iterator
+from dataclasses import dataclass
+from typing import Callable, Iterator, Optional
 
+import numpy as np
 import torch
 from pl_bolts.datamodules import CIFAR10DataModule
 from simple_parsing import choice
@@ -21,13 +22,24 @@ from target_prop.networks import Network
 from target_prop.networks.network import activations
 
 
-def clean_up_config(config: dict):
+def clean_up_config_dict(config: dict):
     cleaned_up_config = config.copy()
     cleaned_up_config["epsilon"] = literal_eval(cleaned_up_config["epsilon"])
     return cleaned_up_config
 
 
-DEFAULT_ARGS = Args.from_dict(clean_up_config(_config))
+import copy
+
+
+def _replace_ndarrays_with_lists(args: Args):
+    cleaned_up_config = copy.deepcopy(args)
+    for key, value in vars(args).items():
+        if isinstance(value, np.ndarray):
+            setattr(cleaned_up_config, key, value.tolist())
+    return cleaned_up_config
+
+
+DEFAULT_ARGS = _replace_ndarrays_with_lists(Args.from_dict(clean_up_config_dict(_config)))
 
 
 class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
@@ -39,7 +51,7 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
         feedback_activation: str = "linear"
         initialization: str = "xavier_normal"
         sigma: float = 0.1
-        plots: bool | None = None
+        plots: Optional[bool] = None
         forward_requires_grad: bool = False
         nb_feedback_iterations: tuple[int, int, int, int] = (10, 20, 55, 20)
 
@@ -74,7 +86,7 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
 class Meulemans(Model):
     @dataclass
     class HParams(Model.HParams):
-        args: Args = field(default_factory=lambda: Args.from_dict(clean_up_config(_config)))
+        args: Args = DEFAULT_ARGS
         """ The arguments form the Meulemans codebase. """
 
     def __init__(
