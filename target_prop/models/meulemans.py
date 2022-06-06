@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from ast import literal_eval
 from dataclasses import dataclass
-from typing import Callable, Iterator, Optional
+from typing import Iterator, Optional
 
 import numpy as np
 import torch
 from pl_bolts.datamodules import CIFAR10DataModule
-from simple_parsing import choice
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -19,7 +18,6 @@ from meulemans_dtp.main import Args
 from target_prop.config import MiscConfig
 from target_prop.models.model import Model, StepOutputDict
 from target_prop.networks import Network
-from target_prop.networks.network import activations
 
 
 def clean_up_config_dict(config: dict):
@@ -45,18 +43,21 @@ DEFAULT_ARGS = _replace_ndarrays_with_lists(Args.from_dict(clean_up_config_dict(
 class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
     @dataclass
     class HParams(Network.HParams):
-        activation: str = choice(*activations.keys(), default="elu")
+        """Hyper-parameters of the network used by the Meulamans model below.
+
+        TODO: These are the values for CIFAR10. (DDTPConvNetworkCIFAR)
+        TODO: Check how these values would be set from the Args object (the config dict) and set
+        those as the defaults, instead of the values here.
+        """
+
         bias: bool = True
         hidden_activation: str = "tanh"  # Default was tanh, set to 'elu' to match ours.
         feedback_activation: str = "linear"
         initialization: str = "xavier_normal"
         sigma: float = 0.1
-        plots: Optional[bool] = None
         forward_requires_grad: bool = False
+        plots: Optional[bool] = None
         nb_feedback_iterations: tuple[int, int, int, int] = (10, 20, 55, 20)
-
-        def __post_init__(self):
-            self.activation_class: type[nn.Module] = activations[self.activation]
 
     def __init__(
         self, in_channels: int, n_classes: int, hparams: MeulemansNetwork.HParams | None = None
@@ -86,8 +87,10 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
 class Meulemans(Model):
     @dataclass
     class HParams(Model.HParams):
+        """Arguments for our adapted version of the Meuleman's model."""
+
         args: Args = DEFAULT_ARGS
-        """ The arguments form the Meulemans codebase. """
+        """ The arguments from the Meulemans codebase. """
 
     def __init__(
         self,
@@ -107,14 +110,8 @@ class Meulemans(Model):
         del self.forward_net
         self.network = network
 
-        # TODO: Get rid of this overlap, either by making a wrapper around the
-        # DDTPConvNetworkCIFAR that is compatible with the Network protocol, or by removing the
-        # Network protocol entirely.
-        # self.network = meulemans_network
-        # self.network.hparams = args
-        # self.net_hp = args.  # fixme: not quite right.
-
         self.automatic_optimization = False
+
         temp_forward_optimizer_list, temp_feedback_optimizer_list = utils.choose_optimizer(
             self.hp.args, self.network
         )
@@ -138,11 +135,27 @@ class Meulemans(Model):
 
     @property
     def feedback_optimizers(self) -> list[torch.optim.Optimizer]:
-        return self.optimizers()[self.n_forward_optimizers :]
+        return self.optimizers()[self.n_forward_optimizers :]  # type: ignore
 
     @property
     def forward_optimizers(self) -> list[torch.optim.Optimizer]:
-        return self.optimizers()[: self.n_forward_optimizers]
+        return self.optimizers()[: self.n_forward_optimizers]  # type: ignore
+
+    def shared_step(
+        self, batch: tuple[Tensor, Tensor], batch_idx: int, phase: str
+    ) -> StepOutputDict:
+        x, y = batch
+        # TODO: Not currently doing any of the pretraining stuff from their repo.
+
+        predictions = self.network(x)
+        if phase == "train":
+            self.train_feedback_parameters()
+
+            # NOTE: Not using the outputs of this method at the moment.
+            self.train_forward_parameters(
+                inputs=x, predictions=predictions, targets=y, loss_function=loss_function
+            )
+        return {"logits": predictions, "y": y}
 
     def train_feedback_parameters(self):
         """Train the feedback parameters on the current mini-batch.
@@ -183,22 +196,28 @@ class Meulemans(Model):
         inputs: Tensor,
         predictions: Tensor,
         targets: Tensor,
-        loss_function: Callable[[Tensor, Tensor], Tensor],
     ):
-        """Train the forward parameters on the current mini-batch."""
+        """Train the forward parameters on the current mini-batch.
 
-        args = self.hp.args
-        assert not args.train_randomized
+        NOTE: This method is an adaptation of the code from the meulemans codebase.
+        """
+        output_activation_to_loss_fn = {"softmax": F.cross_entropy, "sigmoid": F.mse_loss}
+        loss_function = output_activation_to_loss_fn[self.hp.args.output_activation]
+        # NOTE:
+        assert not self.hp.args.train_randomized
 
         # net = self.network
         forward_optimizers = self.forward_optimizers
 
-        if predictions.requires_grad == False:
+        if not predictions.requires_grad:
             # we need the gradient of the loss with respect to the network
             # output. If a LeeDTPNetwork is used, this is already the case.
             # The gradient will also be saved in the activations attribute of the
             # output layer of the network
             predictions.requires_grad = True
+            # NOTE: (@lebrice) This might be "safer", to make sure that we don't backpropagate into
+            # the weights that created the predictions:
+            # predictions = predictions.clone().detach().requires_grad_(True)
 
         # NOTE: Simplifying the code a bit by assuming that this is False, for now.
         # save_target = args.save_GN_activations_angle or args.save_BP_activations_angle
@@ -242,36 +261,14 @@ class Meulemans(Model):
                     h_target, previous_activations, self.network.forward_requires_grad
                 )
 
-        if args.classification:
-            if args.output_activation == "sigmoid":
-                batch_accuracy = utils.accuracy(predictions, utils.one_hot_to_int(targets))
-            else:  # softmax
-                batch_accuracy = utils.accuracy(predictions, targets)
-        else:
-            batch_accuracy = None
-        batch_loss = loss.detach()
+        # NOTE: Removing those, since they aren't even used atm.
+        # if self.hp.args.classification:
+        #     if self.hp.args.output_activation == "sigmoid":
+        #         batch_accuracy = utils.accuracy(predictions, utils.one_hot_to_int(targets))
+        #     else:  # softmax
+        #         batch_accuracy = utils.accuracy(predictions, targets)
+        # else:
+        #     batch_accuracy = None
+        # batch_loss = loss.detach()
 
-        return batch_accuracy, batch_loss
-
-    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> StepOutputDict:
-        return self.shared_step(batch, batch_idx, phase="train")
-
-    def shared_step(
-        self, batch: tuple[Tensor, Tensor], batch_idx: int, phase: str
-    ) -> StepOutputDict:
-        x, y = batch
-        # TODO: Not currently doing any of the pretraining stuff from their repo.
-        # NOTE: Need to do the forward pass to store the activations, which are then used for
-        # feedback training
-        predictions = self.network(x)
-        if phase == "train":
-            self.train_feedback_parameters()
-
-        output_activation_to_loss_fn = {"softmax": F.cross_entropy, "sigmoid": F.mse_loss}
-        loss_function = output_activation_to_loss_fn[self.hp.args.output_activation]
-
-        if phase == "train":
-            _, _ = self.train_forward_parameters(
-                inputs=x, predictions=predictions, targets=y, loss_function=loss_function
-            )
-        return {"logits": predictions, "y": y}
+        # return batch_accuracy, batch_loss
