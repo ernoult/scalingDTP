@@ -260,7 +260,9 @@ class Meulemans(Model):
 
         # Get the target using one backprop step with lr of beta.
         # NOTE: target_lr := beta in our paper.
-        output_target = self.network.compute_output_target(loss, target_lr=args.target_stepsize)
+        output_target = self.network.compute_output_target(
+            loss, target_lr=self.hp.args.target_stepsize
+        )
 
         # Computes and saves the gradients for the forward parameters for that layer.
         self.network.layers[-1].compute_forward_gradients(
