@@ -271,64 +271,7 @@ class Meulemans(Model):
         loss_function = output_activation_to_loss_fn[self.hp.args.output_activation]
 
         if phase == "train":
-            batch_accuracy, batch_loss = self.train_forward_parameters(
+            _, _ = self.train_forward_parameters(
                 inputs=x, predictions=predictions, targets=y, loss_function=loss_function
             )
-        else:
-            with torch.no_grad():
-                batch_loss = loss_function(predictions, y)
-
-        # TODO: The 'batch_loss' here doesn't really mean anything.. We don't current have access
-        # to the losses in the forward and feedback training steps.
         return {"logits": predictions, "y": y}
-        # train.train_feedback_parameters(
-        #     args=self.hp.args, net=self.network, feedback_optimizer=feedback_optimizer
-        # )
-
-        # Double-check that the forward parameters have not been updated:
-        # _check_forward_params_havent_moved(
-        #     meulemans_net=meulemans_network, initial_network_weights=initial_network_weights
-        # )
-        # loss_function: nn.Module
-        # Get the loss function to use (extracted from their code, was saved on train_var).
-
-        # # Make sure that there is nothing in the grads: delete all of them.
-        # self.zero_grad(set_to_none=True)
-        # predictions = meulemans_network(x)
-        # # This propagates the targets backward, computes local forward losses, and sets the gradients
-        # # in the forward parameters' `grad` attribute.
-        # batch_accuracy, batch_loss = train.train_forward_parameters(
-        #     args,
-        #     net=meulemans_network,
-        #     predictions=predictions,
-        #     targets=y,
-        #     loss_function=loss_function,
-        #     forward_optimizer=forward_optimizer,
-        # )
-        # assert all(
-        #     p.grad is not None for name, p in _get_forward_parameters(meulemans_network).items()
-        # )
-
-        # # NOTE: the values in `p.grad` are the gradients from their DTP algorithm.
-        # meulemans_dtp_grads = {
-        #     # NOTE: safe to ignore, from the check above.
-        #     name: p.grad.detach()  # type: ignore
-        #     for name, p in _get_forward_parameters(meulemans_network).items()
-        # }
-
-        # # Need to rescale these by 1 / beta as well.
-        # scaled_meulemans_dtp_grads = {
-        #     key: (1 / beta) * grad for key, grad in meulemans_dtp_grads.items()
-        # }
-
-        # distances: Dict[str, float] = {}
-        # angles: Dict[str, float] = {}
-        # with torch.no_grad():
-        #     for name, meulemans_backprop_grad in meulemans_backprop_grads.items():
-        #         # TODO: Do we need to scale the DRL grads like we do ours DTP?
-        #         meulemans_dtp_grad = scaled_meulemans_dtp_grads[name]
-        #         distance, angle = compute_dist_angle(meulemans_dtp_grad, meulemans_backprop_grad)
-
-        #         distances[name] = distance
-        #         angles[name] = angle
-        #     # NOTE: We can actually find the parameter for these:

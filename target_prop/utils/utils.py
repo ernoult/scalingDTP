@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import contextlib
 import warnings
+from logging import getLogger as get_logger
 from typing import Any, Iterable, Tuple, TypeVar, Union
 
 from simple_parsing.helpers import field
 from torch import Tensor, nn
 from torch.distributions import Normal as Normal_
 from torch.nn.parameter import Parameter
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 V = TypeVar("V", bound=Union[int, float])
@@ -182,3 +185,109 @@ def _encode_device(v: torch.device) -> str:
 @register_decode(torch.device)
 def _decode_device(v: str) -> torch.device:
     return torch.device(v)
+
+
+from typing import Sequence
+
+import rich
+import rich.syntax
+import rich.tree
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
+
+
+@rank_zero_only
+def print_config(
+    config: DictConfig,
+    print_order: Sequence[str] = (
+        "datamodule",
+        "model",
+        "callbacks",
+        "logger",
+        "trainer",
+    ),
+    resolve: bool = True,
+) -> None:
+    """Prints content of DictConfig using Rich library and its tree structure.
+
+    TAKEN FROM https://github.com/ashleve/lightning-hydra-template/blob/6a92395ed6afd573fa44dd3a054a603acbdcac06/src/utils/__init__.py#L56
+
+    Args:
+        config (DictConfig): Configuration composed by Hydra.
+        print_order (Sequence[str], optional): Determines in what order config components are printed.
+        resolve (bool, optional): Whether to resolve reference fields of DictConfig.
+    """
+
+    style = "dim"
+    tree = rich.tree.Tree("CONFIG", style=style, guide_style=style)
+
+    queue = []
+
+    for field in print_order:
+        queue.append(field) if field in config else logger.info(
+            f"Field '{field}' not found in config"
+        )
+
+    for field in config:
+        if field not in queue:
+            queue.append(field)
+
+    for field in queue:
+        branch = tree.add(field, style=style, guide_style=style)
+
+        config_group = config[field]
+        if isinstance(config_group, DictConfig):
+            branch_content = OmegaConf.to_yaml(config_group, resolve=resolve)
+        else:
+            branch_content = str(config_group)
+
+        branch.add(rich.syntax.Syntax(branch_content, "yaml"))
+
+    rich.print(tree)
+
+    with open("config_tree.log", "w") as file:
+        rich.print(tree, file=file)
+
+
+# @rank_zero_only
+# def log_hyperparameters(
+#     config: DictConfig,
+#     model: pl.LightningModule,
+#     datamodule: pl.LightningDataModule,
+#     trainer: pl.Trainer,
+#     callbacks: list[pl.Callback],
+#     logger: list[LightningLoggerBase],
+# ) -> None:
+#     """Controls which config parts are saved by Lightning loggers.
+
+#     Additionaly saves:
+#     - number of model parameters
+#     """
+
+#     if not trainer.logger:
+#         return
+
+#     hparams = {}
+
+#     # choose which parts of hydra config will be saved to loggers
+#     hparams["model"] = config["model"]
+
+#     # save number of model parameters
+#     hparams["model/params/total"] = sum(p.numel() for p in model.parameters())
+#     hparams["model/params/trainable"] = sum(
+#         p.numel() for p in model.parameters() if p.requires_grad
+#     )
+#     hparams["model/params/non_trainable"] = sum(
+#         p.numel() for p in model.parameters() if not p.requires_grad
+#     )
+
+#     hparams["datamodule"] = config["datamodule"]
+#     hparams["trainer"] = config["trainer"]
+
+#     if "seed" in config:
+#         hparams["seed"] = config["seed"]
+#     if "callbacks" in config:
+#         hparams["callbacks"] = config["callbacks"]
+
+#     # send hparams to all loggers
+#     trainer.logger.log_hyperparams(hparams)

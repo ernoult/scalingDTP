@@ -121,6 +121,9 @@ cs.store(group="lr_scheduler", name="cosine", node=CosineAnnealingLRConfig)
 )
 def main(config: DictConfig | Options) -> float:
     print(os.getcwd())
+    from target_prop.utils.utils import print_config
+
+    print_config(config)
     experiment = Experiment.from_options(config)
     return experiment.run()
 
