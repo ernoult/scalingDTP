@@ -28,7 +28,7 @@ class_to_config_class: dict[type, type] = {}
 
 def builds(thing, *args, **kwargs):
     kwargs.setdefault("dataclass_name", thing.__qualname__ + "Config")
-    kwargs.setdefault("populate_full_signature", True)
+    # kwargs.setdefault("populate_full_signature", True)
 
     builds_bases = list(kwargs.pop("builds_bases", []))
     if inspect.isclass(thing):

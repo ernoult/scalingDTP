@@ -231,7 +231,6 @@ imagenet32_config = builds(
     ),
     readonly_datasets_dir=TORCHVISION_DIR,
     builds_bases=(VisionDatasetConfig,),
-    # populate_full_signature=True,
 )
 
 
