@@ -83,6 +83,25 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
     def __len__(self) -> int:
         return len(self._layers)
 
+    def compute_feedback_gradients(self, layer_index: int):
+
+        # TODO: Adapt this so we just return a loss for that layer, if possible.
+
+        self.reconstruction_loss_index = layer_index
+        h = self.layers[layer_index].activations
+        output_noncorrupted = self.layers[-1].activations
+        assert h is not None
+        assert output_noncorrupted is not None
+
+        h_corrupted = h + self.sigma * torch.randn_like(h)
+        # NOTE: This propagates this input forward to all the subsequent layers in the network
+        # (not just one layer)
+        output_corrupted = self.dummy_forward(h_corrupted, layer_index)
+
+        self.layers[layer_index].compute_feedback_gradients(
+            h_corrupted, output_corrupted, output_noncorrupted, self.sigma
+        )
+
 
 class Meulemans(Model):
     @dataclass
