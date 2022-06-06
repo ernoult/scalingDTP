@@ -2,24 +2,32 @@ from __future__ import annotations
 
 from ast import literal_eval
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Iterator
 
 import torch
 from pl_bolts.datamodules import CIFAR10DataModule
-from pytorch_lightning import LightningModule
 from simple_parsing import choice
 from torch import Tensor, nn
 from torch.nn import functional as F
 
 from meulemans_dtp.final_configs.cifar10_DDTPConv import config as _config
-from meulemans_dtp.lib import builders, utils
+from meulemans_dtp.lib import utils
 from meulemans_dtp.lib.conv_layers import DDTPConvLayer
 from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
 from meulemans_dtp.main import Args
-from target_prop.config import Config
-from target_prop.models.model import Model
+from target_prop.config import MiscConfig
+from target_prop.models.model import Model, StepOutputDict
 from target_prop.networks import Network
 from target_prop.networks.network import activations
+
+
+def clean_up_config(config: dict):
+    cleaned_up_config = config.copy()
+    cleaned_up_config["epsilon"] = literal_eval(cleaned_up_config["epsilon"])
+    return cleaned_up_config
+
+
+DEFAULT_ARGS = Args.from_dict(clean_up_config(_config))
 
 
 class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
@@ -27,7 +35,7 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
     class HParams(Network.HParams):
         activation: str = choice(*activations.keys(), default="elu")
         bias: bool = True
-        hidden_activation: str = "tanh"
+        hidden_activation: str = "tanh"  # Default was tanh, set to 'elu' to match ours.
         feedback_activation: str = "linear"
         initialization: str = "xavier_normal"
         sigma: float = 0.1
@@ -56,14 +64,14 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
             nb_feedback_iterations=hparams.nb_feedback_iterations,
         )
 
+    def __iter__(self) -> Iterator[nn.Module]:
+        return iter(self._layers)
 
-def clean_up_config(config: dict):
-    cleaned_up_config = config.copy()
-    cleaned_up_config["epsilon"] = literal_eval(cleaned_up_config["epsilon"])
-    return cleaned_up_config
+    def __len__(self) -> int:
+        return len(self._layers)
 
 
-class Meulemans(LightningModule, Model):
+class Meulemans(Model):
     @dataclass
     class HParams(Model.HParams):
         args: Args = field(default_factory=lambda: Args.from_dict(clean_up_config(_config)))
@@ -72,41 +80,25 @@ class Meulemans(LightningModule, Model):
     def __init__(
         self,
         datamodule: CIFAR10DataModule,
-        hparams: Meulemans.HParams,
-        config: Config,
+        network: MeulemansNetwork,
+        hparams: Meulemans.HParams | None = None,
+        config: MiscConfig | None = None,
     ):
-        super().__init__()
-        self.datamodule = datamodule
-
-        self.hp: Meulemans.HParams = hparams
+        if not isinstance(network, MeulemansNetwork):
+            raise RuntimeError(
+                f"Meulemans DTP only works with a specific network architecture. "
+                f"Can't yet use networks of type {type(network)}."
+            )
+        super().__init__(datamodule=datamodule, network=network, hparams=hparams, config=config)
+        self.hp: Meulemans.HParams
         self.config = config
+        del self.forward_net
+        self.network = network
 
-        args = self.hp.args
-        # NOTE: Setting this, just in case they use this value somewhere I haven't seen yet.
-        # NOTE: Setting this to False for the LeNet equivalent network to work.
-        args.freeze_BPlayers = False
-        args.freeze_forward_weights = False
-        # NOTE: Modifying these values so their architecture matches ours perfectly.
-        args.hidden_activation = "elu"
-        # NOTE: Setting beta to the same value as ours:
-        # args.target_stepsize = beta
-        # Disable bias in their architecture if we also disable bias in ours.
-        # args.no_bias = not self.net_hp.bias
-        # Set the padding in exactly the same way as well.
-        DDTPConvNetworkCIFAR.pool_padding = 1
-        # Set the number of iterations to match ours.
-        # args.nb_feedback_iterations = [
-        #     n_pretraining_iterations for _ in args.nb_feedback_iterations
-        # ]
-
-        # Create their LeNet-equivalent network.
-        meulemans_network = builders.build_network(args).cuda()
-        # TODO: Remove if we apply their architecture on something other than CIFAR10.
-        assert isinstance(meulemans_network, DDTPConvNetworkCIFAR)
         # TODO: Get rid of this overlap, either by making a wrapper around the
         # DDTPConvNetworkCIFAR that is compatible with the Network protocol, or by removing the
         # Network protocol entirely.
-        self.network = meulemans_network
+        # self.network = meulemans_network
         # self.network.hparams = args
         # self.net_hp = args.  # fixme: not quite right.
 
@@ -158,25 +150,11 @@ class Meulemans(LightningModule, Model):
                 optimizer.zero_grad(set_to_none=set_to_none)
 
         _zero_grad()
-        # TODO: Simplifying this for now (assuming the network architecture and cifar10 dataset)
+        # TODO: Assuming these for now, to simplify the code a bit.
         assert args.direct_fb
         assert not args.train_randomized_fb
         assert not args.diff_rec_loss
 
-        # if args.train_randomized_fb and (args.diff_rec_loss or args.direct_fb):
-        #     layer_index = np.random.randint(0, net.depth - 1)
-        #     layer = net.layers[layer_index]
-        #     n_iter = layer._nb_feedback_iterations
-        #     for iteration in range(n_iter):
-        #         net.compute_feedback_gradients(layer_index)
-        #         _optimizer_step()
-        # elif args.diff_rec_loss:
-        #     for layer_index, layer in enumerate(net.layers):
-        #         n_iter = layer._nb_feedback_iterations
-        #         for iteration in range(n_iter):
-        #             net.compute_feedback_gradients(layer_index)
-        #             _optimizer_step()
-        # elif args.direct_fb:
         for layer_index, layer in enumerate(net.layers[:-1]):
             n_iter = layer._nb_feedback_iterations
             for iteration in range(n_iter):
@@ -196,7 +174,10 @@ class Meulemans(LightningModule, Model):
         loss_function: Callable[[Tensor, Tensor], Tensor],
     ):
         """Train the forward parameters on the current mini-batch."""
+
         args = self.hp.args
+        assert not args.train_randomized
+
         # net = self.network
         forward_optimizers = self.forward_optimizers
 
@@ -215,8 +196,6 @@ class Meulemans(LightningModule, Model):
             optimizer.zero_grad()
 
         loss = loss_function(predictions, targets)
-
-        assert not args.train_randomized
 
         # Get the target using one backprop step with lr of beta.
         # NOTE: target_lr := beta in our paper.
@@ -245,9 +224,6 @@ class Meulemans(LightningModule, Model):
                 previous_layer = self.network.layers[i - 1]
                 previous_activations: Tensor | None = previous_layer.activations
                 if i == self.network.nb_conv:  # flatten conv layer
-                    # previous_activations = previous_activations.view(
-                    #     previous_activations.shape[0], -1
-                    # )
                     assert previous_activations is not None
                     previous_activations = previous_activations.flatten(1)
                 layer.compute_forward_gradients(
@@ -265,37 +241,34 @@ class Meulemans(LightningModule, Model):
 
         return batch_accuracy, batch_loss
 
-    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> dict[str, Tensor]:
-        # NOTE: The forward pass through their network is a "regular" forward pass: Grads can flow
-        # between all layers.
+    def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> StepOutputDict:
+        return self.shared_step(batch, batch_idx, phase="train")
+
+    def shared_step(
+        self, batch: tuple[Tensor, Tensor], batch_idx: int, phase: str
+    ) -> StepOutputDict:
         x, y = batch
-
+        # TODO: Not currently doing any of the pretraining stuff from their repo.
+        # NOTE: Need to do the forward pass to store the activations, which are then used for
+        # feedback training
         predictions = self.network(x)
-        # forward_loss = F.cross_entropy(predictions, y)
-        # Q: the lrs have to be the same between the different models?
-        # TODO: The network I'm using for LeNet-equivalent doesn't actually allow this to work:
-        # Says "frozen blabla isn't supported with OptimizerList"
-        # forward_optim.zero_grad()
-        # self.manual_backward(forward_loss)
-        # forward_optim.step()
+        if phase == "train":
+            self.train_feedback_parameters()
 
-        # if n_pretraining_iterations > 0:
-        # NOTE: Need to do the forward pass to store the activations, which are then used for feedback
-        # training
-        predictions = self.network(x)
-        self.train_feedback_parameters()
-        if self.hp.args.output_activation == "softmax":
-            loss_function = F.cross_entropy
+        output_activation_to_loss_fn = {"softmax": F.cross_entropy, "sigmoid": F.mse_loss}
+        loss_function = output_activation_to_loss_fn[self.hp.args.output_activation]
+
+        if phase == "train":
+            batch_accuracy, batch_loss = self.train_forward_parameters(
+                inputs=x, predictions=predictions, targets=y, loss_function=loss_function
+            )
         else:
-            assert self.hp.args.output_activation == "sigmoid"
-            loss_function = F.mse_loss
+            with torch.no_grad():
+                batch_loss = loss_function(predictions, y)
 
-        batch_accuracy, batch_loss = self.train_forward_parameters(
-            inputs=x, predictions=predictions, targets=y, loss_function=loss_function
-        )
-        assert False, (batch_accuracy, batch_loss)
-        self.log("train/accuracy", batch_accuracy)
-        return None
+        # TODO: The 'batch_loss' here doesn't really mean anything.. We don't current have access
+        # to the losses in the forward and feedback training steps.
+        return {"logits": predictions, "y": y}
         # train.train_feedback_parameters(
         #     args=self.hp.args, net=self.network, feedback_optimizer=feedback_optimizer
         # )

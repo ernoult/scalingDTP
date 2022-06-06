@@ -191,8 +191,12 @@ class Model(LightningModule, ABC):
     def configure_callbacks(self) -> list[Callback]:
         """Use this to add some callbacks that should always be included with the model."""
         callbacks = []
-        # TODO: Fix this.
-        if self.hp.use_scheduler and self.trainer and self.trainer.logger:
+        if (
+            hasattr(self.hp, "use_scheduler")
+            and self.hp.use_scheduler
+            and self.trainer
+            and self.trainer.logger
+        ):
             from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
 
             return [LearningRateMonitor()]
