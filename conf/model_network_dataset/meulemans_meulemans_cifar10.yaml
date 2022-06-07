@@ -1,0 +1,18 @@
+# @package _global_
+network:
+  activation: elu
+  bias: true
+  hidden_activation: tanh
+  feedback_activation: linear
+  initialization: xavier_normal
+  sigma: 0.00921040366516759
+  forward_requires_grad: false
+  plots: null
+  # NOTE: This here was set to [1, 1, 1, 1] by @scspinney,
+  # from the default of [10, 20, 55, 20]
+  # Is that really what we want?                                                                                                                                                                          #
+  nb_feedback_iterations:
+    - 1
+    - 1
+    - 1
+    - 1
