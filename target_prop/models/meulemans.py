@@ -293,14 +293,5 @@ class Meulemans(Model):
                     h_target, previous_activations, self.network.forward_requires_grad
                 )
 
-        # NOTE: Removing those, since they aren't even used atm.
-        # if self.hp.args.classification:
-        #     if self.hp.args.output_activation == "sigmoid":
-        #         batch_accuracy = utils.accuracy(predictions, utils.one_hot_to_int(targets))
-        #     else:  # softmax
-        #         batch_accuracy = utils.accuracy(predictions, targets)
-        # else:
-        #     batch_accuracy = None
-        # batch_loss = loss.detach()
-
-        # return batch_accuracy, batch_loss
+        for f_optimizer in forward_optimizers:
+            f_optimizer.step()
