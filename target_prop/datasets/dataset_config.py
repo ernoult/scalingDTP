@@ -143,6 +143,8 @@ VisionDatasetConfig = builds(
     builds_bases=(DatasetConfig,),
     normalize=True,
     populate_full_signature=True,
+    shuffle=True,
+    pin_memory=True,
     dataclass_name="VisionDataModuleConfig",
 )
 

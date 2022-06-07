@@ -9,6 +9,7 @@ from logging import getLogger as get_logger
 from typing import Dict, Optional, Type
 
 import hydra
+import rich
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
@@ -151,67 +152,66 @@ class Experiment:
         return exp
 
     def run(self) -> float:
-        return run_experiment(self)
+        """Run the experiment, and return the classification error.
+
+        By default, if validation is performed, returns the validation error. Returns the training error
+        when `trainer.overfit_batches != 0` (e.g. when debugging or testing). Otherwise, if
+        `trainer.limit_val_batches == 0`, returns the test error.
+        """
+        # TODO Probably log the hydra config with something like this:
+        # exp.trainer.logger.log_hyperparams()
+        self.trainer.fit(self.model, datamodule=self.datamodule)
+
+        if (self.trainer.limit_val_batches == self.trainer.limit_test_batches == 0) or (
+            self.trainer.overfit_batches == 1
+        ):
+            # We want to report the training error.
+            metrics = {
+                **self.trainer.logged_metrics,
+                **self.trainer.callback_metrics,
+                **self.trainer.progress_bar_metrics,
+            }
+            if "train/accuracy" not in metrics:
+                raise RuntimeError(
+                    f"Unable to find the train/accuracy key in the training metrics:\n"
+                    f"{metrics.keys()}"
+                )
+            train_acc = metrics["train/accuracy"]
+            train_error = 1 - train_acc
+            rich.print(metrics)
+            # Probably not want to upload this to wandb, I'd assume.
+            return train_error
+
+        # BUG: The datasets get re-downloaded to the current code directory, rather than to reuse the
+        # `data_dir`.
+        if self.trainer.limit_val_batches != 0:
+            results = self.trainer.validate(model=self.model, datamodule=self.datamodule)
+            results_type = "val"
+        else:
+            warnings.warn(
+                RuntimeWarning(
+                    "About to use the test set for evaluation! This should be done in a sweep!"
+                )
+            )
+            results = self.trainer.test(model=self.model, datamodule=self.datamodule)
+            results_type = "test"
+
+        top1_accuracy: float = results[0][f"{results_type}/accuracy"]
+        top5_accuracy: float = results[0][f"{results_type}/top5_accuracy"]
+        print(f"{results_type} top1 accuracy: {top1_accuracy:.1%}")
+        print(f"{results_type} top5 accuracy: {top5_accuracy:.1%}")
+
+        error = 1 - top1_accuracy
+
+        if wandb.run:
+            wandb.finish()
+        return error
 
 
 def run_experiment(exp: Experiment | DictConfig | Options) -> float:
-    """Run the experiment, and return the classification error.
-
-    By default, if validation is performed, returns the validation error. Returns the training error
-    when `trainer.overfit_batches != 0` (e.g. when debugging or testing). Otherwise, if
-    `trainer.limit_val_batches == 0`, returns the test error.
-    """
     if not isinstance(exp, Experiment):
         exp = Experiment.from_options(exp)
-
-    # TODO Probably log the hydra config with something like this:
-    # exp.trainer.logger.log_hyperparams()
-    exp.trainer.fit(exp.model, datamodule=exp.datamodule)
-
-    if (exp.trainer.limit_val_batches == exp.trainer.limit_test_batches == 0) or (
-        exp.trainer.overfit_batches == 1
-    ):
-        # We want to report the training error.
-        metrics = {
-            **exp.trainer.logged_metrics,
-            **exp.trainer.callback_metrics,
-            **exp.trainer.progress_bar_metrics,
-        }
-        if "train/accuracy" not in metrics:
-            raise RuntimeError(
-                f"Unable to find the train/accuracy key in the training metrics:\n"
-                f"{metrics.keys()}"
-            )
-        train_acc = metrics["train/accuracy"]
-        train_error = 1 - train_acc
-
-        # Probably not want to upload this to wandb, I'd assume.
-        return train_error
-
-    # BUG: The datasets get re-downloaded to the current code directory, rather than to reuse the
-    # `data_dir`.
-    if exp.trainer.limit_val_batches != 0:
-        results = exp.trainer.validate(model=exp.model, datamodule=exp.datamodule)
-        results_type = "val"
-    else:
-        warnings.warn(
-            RuntimeWarning(
-                "About to use the test set for evaluation! This should be done in a sweep!"
-            )
-        )
-        results = exp.trainer.test(model=exp.model, datamodule=exp.datamodule)
-        results_type = "test"
-
-    top1_accuracy: float = results[0][f"{results_type}/accuracy"]
-    top5_accuracy: float = results[0][f"{results_type}/top5_accuracy"]
-    print(f"{results_type} top1 accuracy: {top1_accuracy:.1%}")
-    print(f"{results_type} top5 accuracy: {top5_accuracy:.1%}")
-
-    error = 1 - top1_accuracy
-
-    if wandb.run:
-        wandb.finish()
-    return error
+    return exp.run()
 
 
 def instantiate_experiment_components(options: Options) -> Experiment:
