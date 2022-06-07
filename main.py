@@ -78,8 +78,14 @@ class Options(Serializable):
     name: str = ""
 
 
+# Store the different configuration options for each group.
+
 cs = ConfigStore.instance()
 cs.store(name="base_options", node=Options)
+
+# NOTE: This works the same way as creating config files for each model under `conf/model`, and can
+# also be used in conjunction with config files! If you add a config file under `conf/model`, it
+# will also be available as an option from the command-line, and be validated against the schema.
 
 cs.store(group="model", name="model", node=Model.HParams())
 cs.store(group="model", name="dtp", node=DTP.HParams())
