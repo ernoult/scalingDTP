@@ -25,7 +25,7 @@ setuptools.setup(
     ],
     python_requires=">=3.9",
     install_requires=[
-        "simple-parsing",
+        "simple-parsing>=0.0.20",
         "torch",
         "pytorch-lightning",
         "torchvision",
