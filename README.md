@@ -2,7 +2,7 @@
 
 ![](dtp_cartoon.png)
 
-This repository is the official implementation of "Towards Scaling Difference Target Propagation with Backprop Targets", currently under review at ICML 2022. The following code runs on Python > 3.7 with Pytorch >= 1.7.0.
+This repository is the official implementation of "Towards Scaling Difference Target Propagation with Backprop Targets", accepted to ICML 2022 for a short presentation. The following code runs on Python > 3.7 with Pytorch >= 1.7.0.
 ## Installation
 
 ```console
