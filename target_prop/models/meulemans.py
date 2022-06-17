@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import copy
+import argparse
 import dataclasses
 from ast import literal_eval
 from dataclasses import dataclass
@@ -10,10 +10,12 @@ import numpy as np
 import torch
 from conditional_fields import HasConditionalFields, conditional_field
 from pl_bolts.datamodules import CIFAR10DataModule
-from simple_parsing import Serializable
+from simple_parsing.helpers.flatten import FlattenedAccess
+from simple_parsing.helpers.serialization.serializable import Serializable
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+import meulemans_dtp.main
 from meulemans_dtp.final_configs.cifar10_DDTPConv import config as _config
 from meulemans_dtp.lib import utils
 from meulemans_dtp.lib.conv_layers import DDTPConvLayer
@@ -32,19 +34,64 @@ from target_prop.config import MiscConfig
 from target_prop.models.model import Model, StepOutputDict
 from target_prop.networks import Network
 
-
-def clean_up_config_dict(config: dict, inplace: bool = False) -> dict:
-    cleaned_up_config = config if inplace else config.copy()
-    cleaned_up_config["epsilon"] = literal_eval(cleaned_up_config["epsilon"])
-    return cleaned_up_config
+S = TypeVar("S", bound=Serializable)
 
 
-def _replace_ndarrays_with_lists(args: Args, inplace: bool = False):
-    cleaned_up_config = args if inplace else copy.deepcopy(args)
-    for key, value in vars(args).items():
+def get_default_cifar10_args() -> Args:
+    """Returns a typed version of the `args` Namespace that is used throughout the meulemans DTP
+    codebase.
+
+    This returns the *postprocessed* object.
+    """
+    raw_args = _get_default_raw_cifar10_args()
+    # Note: This intenally calls `postprocess_args`, so it's exactly equivalent to using the raw
+    # namespace.
+    return meulemans_dtp.main.Args(**vars(raw_args))
+
+
+def _get_default_raw_cifar10_args() -> argparse.Namespace:
+    """Returns the `args` object that is used throughout the meulemans DTP codebase.
+
+    This returns the *raw* object, before the values are post-processed. The reason this is needed
+    is that we now have each these objects defined distinctly, and they now each take care of
+    post-processing their respective values: (e.g. TrainOptions takes care of normalizing the
+    learning rate, if `normalize_lr` is True).
+    """
+    parser = meulemans_dtp.main.add_command_line_args()
+    cifar10_config = _config.copy()
+    cifar10_config["epsilon"] = literal_eval(cifar10_config["epsilon"])
+    for key, value in _config.items():
         if isinstance(value, np.ndarray):
-            setattr(cleaned_up_config, key, value.tolist())
-    return cleaned_up_config
+            cifar10_config[key] = value.tolist()
+    parser.set_defaults(**cifar10_config)
+
+    args = parser.parse_args("")
+    return args
+
+
+# def _replace_ndarrays_with_lists(args: Args, inplace: bool = False):
+#     cleaned_up_config = args if inplace else copy.deepcopy(args)
+#     for key, value in vars(args).items():
+#         if isinstance(value, np.ndarray):
+#             setattr(cleaned_up_config, key, value.tolist())
+#     return cleaned_up_config
+
+
+def load_from_args(cls: type[S], raw_args: argparse.Namespace) -> S:
+    # NOTE: The `args` should *NOT* already be postprocessed.
+    kwargs = {}
+    for field in dataclasses.fields(cls):
+        name = field.name
+        value = getattr(raw_args, name)
+        kwargs[name] = value
+        assert not isinstance(value, np.ndarray)
+    return cls(**kwargs)
+
+
+# Their default values for this 'args' object.
+
+_CIFAR10_RAW_ARGS: argparse.Namespace = _get_default_raw_cifar10_args()
+_CIFAR10_ARGS: Args = get_default_cifar10_args()
 
 
 class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
@@ -119,17 +166,6 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
         return h
 
 
-from simple_parsing.helpers.flatten import FlattenedAccess
-
-DEFAULT_ARGS = _replace_ndarrays_with_lists(Args.from_dict(clean_up_config_dict(_config)))
-
-S = TypeVar("S", bound=Serializable)
-
-
-def load_from_args(cls: type[S], args: Args) -> S:
-    return cls.from_dict(dataclasses.asdict(args), drop_extra_fields=True)
-
-
 class Meulemans(Model[MeulemansNetwork]):
     @dataclass
     class HParams(Model.HParams, FlattenedAccess, HasConditionalFields):
@@ -140,12 +176,12 @@ class Meulemans(Model[MeulemansNetwork]):
         TODO: Remove the arguments of the network from this object.
         """
 
-        dataset: DatasetOptions = load_from_args(DatasetOptions, DEFAULT_ARGS)
-        training: TrainOptions = load_from_args(TrainOptions, DEFAULT_ARGS)
-        adam: AdamOptions = load_from_args(AdamOptions, DEFAULT_ARGS)
-        network: NetworkOptions = load_from_args(NetworkOptions, DEFAULT_ARGS)
-        misc: MiscOptions = load_from_args(MiscOptions, DEFAULT_ARGS)
-        logging: LoggingOptions = load_from_args(LoggingOptions, DEFAULT_ARGS)
+        dataset: DatasetOptions = load_from_args(DatasetOptions, _CIFAR10_RAW_ARGS)
+        training: TrainOptions = load_from_args(TrainOptions, _CIFAR10_RAW_ARGS)
+        adam: AdamOptions = load_from_args(AdamOptions, _CIFAR10_RAW_ARGS)
+        network: NetworkOptions = load_from_args(NetworkOptions, _CIFAR10_RAW_ARGS)
+        misc: MiscOptions = load_from_args(MiscOptions, _CIFAR10_RAW_ARGS)
+        logging: LoggingOptions = load_from_args(LoggingOptions, _CIFAR10_RAW_ARGS)
 
         save_angle: bool = conditional_field(
             lambda logging: (
@@ -182,7 +218,6 @@ class Meulemans(Model[MeulemansNetwork]):
             # NOTE: Copied over the code from `postprocess_args` to this class here.
             ### Create summary log writer
             self.logging.setup_out_dir()
-
             if not self.classification and not self.regression:
                 raise ValueError("Dataset {} is not supported.".format(self.dataset))
 
@@ -238,7 +273,7 @@ class Meulemans(Model[MeulemansNetwork]):
                 self.training.train_randomized = False
 
             if isinstance(self.logging.gn_damping, str) and "," in self.logging.gn_damping:
-                self.logging.gn_damping = utils.str_to_list(self.logging.gn_damping, type="float")
+                self.logging.gn_damping = utils.str_to_list(self.logging.gn_damping, type=float)
             else:
                 self.logging.gn_damping = float(self.logging.gn_damping)
 
@@ -302,9 +337,22 @@ class Meulemans(Model[MeulemansNetwork]):
 
         predictions = self.network(x)
         if phase == "train":
-            # NOTE: Not using the outputs of this method at the moment.
-            self.train_feedback_parameters()
+            # TODO: Make sure this is equivalent to `train_parallel`.
+            # TODO: Use `self.current_epoch` in combination with the relevant hparam from `Args`
+            # to recreate the "only train feedback weights for a given number of epochs" behaviour.
+            pass
+
+            for optim in self.forward_optimizers:
+                optim.zero_grad()
+            for optim in self.feedback_optimizers:
+                optim.zero_grad()
+
             self.train_forward_parameters(inputs=x, predictions=predictions, targets=y)
+            self.train_feedback_parameters()
+
+            for optim in self.forward_optimizers:
+                optim.step()
+            # forward_optimizer.step()
 
         return {"logits": predictions, "y": y}
 
@@ -417,5 +465,8 @@ class Meulemans(Model[MeulemansNetwork]):
                     h_target, previous_activations, self.network.forward_requires_grad
                 )
 
-        for f_optimizer in forward_optimizers:
-            f_optimizer.step()
+        # TODO: In the meulemans `train_parallel` code, they seem to do an extra `f_optimizer.step`
+        # at the end of each batch. Either it's an extra step, or it's the only step, in which case
+        # we'd have to also do it only after the feedback weights have been trained, as they do it.
+        # for f_optimizer in forward_optimizers:
+        #     f_optimizer.step()
