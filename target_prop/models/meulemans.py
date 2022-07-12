@@ -8,7 +8,7 @@ from typing import Iterator, Optional, TypeVar
 
 import numpy as np
 import torch
-from conditional_fields import HasConditionalFields, conditional_field
+from conditional_fields import conditional_field, set_conditionals
 from pl_bolts.datamodules import CIFAR10DataModule
 from simple_parsing.helpers.flatten import FlattenedAccess
 from simple_parsing.helpers.serialization.serializable import Serializable
@@ -52,10 +52,7 @@ def get_default_cifar10_args() -> Args:
 def _get_default_raw_cifar10_args() -> argparse.Namespace:
     """Returns the `args` object that is used throughout the meulemans DTP codebase.
 
-    This returns the *raw* object, before the values are post-processed. The reason this is needed
-    is that we now have each these objects defined distinctly, and they now each take care of
-    post-processing their respective values: (e.g. TrainOptions takes care of normalizing the
-    learning rate, if `normalize_lr` is True).
+    This returns the *raw* object, before the values are post-processed.
     """
     parser = meulemans_dtp.main.add_command_line_args()
     cifar10_config = _config.copy()
@@ -64,7 +61,6 @@ def _get_default_raw_cifar10_args() -> argparse.Namespace:
         if isinstance(value, np.ndarray):
             cifar10_config[key] = value.tolist()
     parser.set_defaults(**cifar10_config)
-
     args = parser.parse_args("")
     return args
 
@@ -118,8 +114,9 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
     ):
         assert in_channels == 3
         assert n_classes == 10
-        hparams = hparams or self.HParams()
-        self.hparams = hparams
+        if not hparams:
+            hparams = self.HParams()
+        self.hparams: MeulemansNetwork.HParams = hparams
         super().__init__(
             bias=hparams.bias,
             hidden_activation=hparams.hidden_activation,
@@ -141,21 +138,6 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
         return super().compute_feedback_gradients(layer_index=layer_index)
         # TODO: Adapt this so we just return a loss for that layer, if possible.
 
-        self.reconstruction_loss_index = layer_index
-        h = self.layers[layer_index].activations
-        output_noncorrupted = self.layers[-1].activations
-        assert h is not None
-        assert output_noncorrupted is not None
-
-        h_corrupted = h + self.sigma * torch.randn_like(h)
-        # NOTE: This propagates this input forward to all the subsequent layers in the network
-        # (not just one layer)
-        output_corrupted = self.dummy_forward(h_corrupted, layer_index)
-
-        self.layers[layer_index].compute_feedback_gradients(
-            h_corrupted, output_corrupted, output_noncorrupted, self.sigma
-        )
-
     def dummy_forward(self, h: Tensor, i: int) -> Tensor:
         """Propagate the activation of layer i forward through the network
         without saving the activations"""
@@ -168,20 +150,48 @@ class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
 
 class Meulemans(Model[MeulemansNetwork]):
     @dataclass
-    class HParams(Model.HParams, FlattenedAccess, HasConditionalFields):
-        """Arguments for our adapted version of the Meuleman's model."""
+    class HParams(Model.HParams, FlattenedAccess):
+        """Arguments for our adapted version of the Meuleman's model.
 
-        # args: Args = DEFAULT_ARGS
-        """ The arguments from the Meulemans codebase.
-        TODO: Remove the arguments of the network from this object.
+        NOTE: Each field here corresponds to a group of arguments from the meulemans repo main
+        script.
+        Originally, the `args` object was a namespace, but now it is a dataclass, where we grouped
+        the arguments from each group into a distinct dataclass (DatasetOptions, TrainOptions,
+        ...).
+
+        The same exact arguments are added here, but we only use a fraction of them, since we
+        control the dataset / etc differently in our repo (via the DatasetConfig object).
         """
 
-        dataset: DatasetOptions = load_from_args(DatasetOptions, _CIFAR10_RAW_ARGS)
-        training: TrainOptions = load_from_args(TrainOptions, _CIFAR10_RAW_ARGS)
-        adam: AdamOptions = load_from_args(AdamOptions, _CIFAR10_RAW_ARGS)
-        network: NetworkOptions = load_from_args(NetworkOptions, _CIFAR10_RAW_ARGS)
-        misc: MiscOptions = load_from_args(MiscOptions, _CIFAR10_RAW_ARGS)
-        logging: LoggingOptions = load_from_args(LoggingOptions, _CIFAR10_RAW_ARGS)
+        dataset: meulemans_dtp.main.DatasetOptions = load_from_args(
+            DatasetOptions, _CIFAR10_RAW_ARGS
+        )
+        training: meulemans_dtp.main.TrainOptions = load_from_args(TrainOptions, _CIFAR10_RAW_ARGS)
+        adam: meulemans_dtp.main.AdamOptions = load_from_args(AdamOptions, _CIFAR10_RAW_ARGS)
+
+        network: meulemans_dtp.main.NetworkOptions = load_from_args(
+            NetworkOptions, _CIFAR10_RAW_ARGS
+        )
+        """ Options used to create the network.
+
+        NOTE: There's some duplication here. They use the single 'Args' object will all arguments
+        to create the network, not just the "network" group (which we grouped up into the
+        `NetworkOptions`).
+
+        TODO: It might be better to move the relevant options to MeulemansNetwork.HParams, so it's
+        more consistent: The `Meulemans` model would take in a `MeulemansNetwork` as an argument,
+        and that network would be created using its own hparams.
+        """
+
+        misc: meulemans_dtp.main.MiscOptions = load_from_args(MiscOptions, _CIFAR10_RAW_ARGS)
+        """Other miscelaneous options (cuda, etc). """
+
+        logging: meulemans_dtp.main.LoggingOptions = load_from_args(
+            LoggingOptions, _CIFAR10_RAW_ARGS
+        )
+        """ Logging options. """
+
+        # NOTE: Fields below are just initialized based on other values.
 
         save_angle: bool = conditional_field(
             lambda logging: (
@@ -214,12 +224,20 @@ class Meulemans(Model[MeulemansNetwork]):
         )
 
         def __post_init__(self):
-            super().__post_init__()
-            # NOTE: Copied over the code from `postprocess_args` to this class here.
+            """Do the postprocessing of the arguments. This is largely copied from their repo.
+
+            TODO: Remove the parts of this that we don't need, once we're confident that we've
+            replicated their implementation correctly (once the repro tests pass).
+            """
+            # Initialize the conditional fields.
+            set_conditionals(self)
+
+            # NOTE: The following is copied over and adapted from the `postprocess_args` fn.
+
             ### Create summary log writer
             self.logging.setup_out_dir()
             if not self.classification and not self.regression:
-                raise ValueError("Dataset {} is not supported.".format(self.dataset))
+                raise ValueError(f"Dataset is not supported.")
 
             # initializing command line arguments if None
             if self.network.output_activation is None:
@@ -232,11 +250,15 @@ class Meulemans(Model[MeulemansNetwork]):
             if self.training.optimizer_fb is None:
                 self.training.optimizer_fb = self.training.optimizer
             if isinstance(self.network.size_hidden, str):
-                self.network.size_hidden = utils.process_hdim(self.network.size_hidden)
+                _hdim = utils.process_hdim(self.network.size_hidden)
+                assert isinstance(_hdim, int)
+                self.network.size_hidden = _hdim
             if self.network.size_mlp_fb == "None":
                 self.network.size_mlp_fb = None
             elif isinstance(self.network.size_mlp_fb, str):
-                self.network.size_mlp_fb = utils.process_hdim_fb(self.network.size_mlp_fb)
+                _size_mlp_fb = utils.process_hdim_fb(self.network.size_mlp_fb)
+                assert isinstance(_size_mlp_fb, int)
+                self.network.size_mlp_fb = _size_mlp_fb
 
             # Manipulating command line arguments if asked
             # TODO: They were manipulating these if they were strings, which isn't necessary anymore,
@@ -273,7 +295,7 @@ class Meulemans(Model[MeulemansNetwork]):
                 self.training.train_randomized = False
 
             if isinstance(self.logging.gn_damping, str) and "," in self.logging.gn_damping:
-                self.logging.gn_damping = utils.str_to_list(self.logging.gn_damping, type=float)
+                self.logging.gn_damping = utils.str_to_list(self.logging.gn_damping, type=float)  # type: ignore
             else:
                 self.logging.gn_damping = float(self.logging.gn_damping)
 
@@ -340,8 +362,6 @@ class Meulemans(Model[MeulemansNetwork]):
             # TODO: Make sure this is equivalent to `train_parallel`.
             # TODO: Use `self.current_epoch` in combination with the relevant hparam from `Args`
             # to recreate the "only train feedback weights for a given number of epochs" behaviour.
-            pass
-
             for optim in self.forward_optimizers:
                 optim.zero_grad()
             for optim in self.feedback_optimizers:
