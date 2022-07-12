@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from hydra import compose, initialize
 from numpy.testing import assert_equal
 from pl_bolts.datamodules import CIFAR10DataModule
 from pytorch_lightning import Trainer
@@ -15,6 +16,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
 
+from main import Experiment
 from meulemans_dtp import main
 from meulemans_dtp.lib.utils import FbOptimizerList, OptimizerList, choose_optimizer
 from target_prop.config import MiscConfig
@@ -71,6 +73,17 @@ def network(datamodule: CIFAR10DataModule):
     )
 
 
+def _remove_ndarrays(d: dict) -> dict:
+    return {
+        k: v.tolist()
+        if isinstance(v, np.ndarray)
+        else _remove_ndarrays(v)
+        if isinstance(v, dict)
+        else v
+        for k, v in d.items()
+    }
+
+
 class TestEquivalence:
     """Tests that our version of the Meuleman's DTP model is equivalent to the original
     implementation.
@@ -104,6 +117,54 @@ class TestEquivalence:
         We could also add one such option, like `python main.py model=meulemans_reproduce_exact`,
         which would override the other values to give us exactly what we want.
         """
+
+        their_config = _CIFAR10_ARGS
+        their_config_dict = their_config.to_dict()
+        their_config_dict = _remove_ndarrays(their_config_dict)
+
+        with initialize(config_path="../../conf"):
+            config = compose(
+                config_name="config",
+                overrides=["model=meulemans", "network=meulemans"],
+            )
+            experiment = Experiment.from_options(config)
+
+            our_config_dict = experiment.model.hp.to_dict()
+
+            # Remove one level of nesting from the dictionary.
+            our_flat_config_dict = {}
+            for k, v in our_config_dict.items():
+                if isinstance(v, dict):
+                    for k_v, v_v in v.items():
+                        if k_v in our_flat_config_dict:
+                            # There shouldn't be any key collisions. But if there are, the values
+                            # should be the same.
+                            assert our_flat_config_dict[k_v] == v_v
+                        our_flat_config_dict[k_v] = v_v
+                else:
+                    our_flat_config_dict[k] = v
+            our_flat_config_dict = _remove_ndarrays(our_flat_config_dict)
+
+            # Ignore some unused keys:
+            assert our_flat_config_dict.pop("out_dir") == "././logs"
+            assert their_config_dict.pop("out_dir") == "logs"
+            assert our_flat_config_dict.pop("lr_scheduler") == None
+
+            #  The 'lr' is different at this stage (scale_lr is applied in our config class, so we
+            # see it here, but it's done in their optimizer class (I think), so after loading
+            # these.
+            # TODO: Double-check that we are only applying this scaling once, and that we do it at
+            # the same stage as they do.
+            our_target_stepsize = our_flat_config_dict["target_stepsize"]
+            their_target_stepsize = their_config_dict["target_stepsize"]
+            assert our_target_stepsize == their_target_stepsize
+            our_lr: list[float] = our_flat_config_dict.pop("lr")
+            their_lr: list[float] = their_config_dict.pop("lr")
+
+            assert (np.array(their_lr) / np.array(our_lr)) == pytest.approx(our_target_stepsize)
+
+            # All the other arguments / configuration options should be the same.
+            assert our_flat_config_dict == their_config_dict
 
     @pytest.fixture(scope="session")
     def meulemans_cifar10_dataloaders(self, data_dir: str):
@@ -288,7 +349,7 @@ class TestEquivalence:
         our_network_state = network.state_dict()
         our_forward_optim_states = [optim.state_dict() for optim in model.forward_optimizers]
         our_feedback_optim_states = [optim.state_dict() for optim in model.feedback_optimizers]
-
+        # BUG: Not quite equal!
         assert_equal(our_network_state.values(), their_network_state.values())
 
         for our_optim_state, their_optim_state in zip(
