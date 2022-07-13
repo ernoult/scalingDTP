@@ -145,8 +145,3 @@ model:
     load_weights: false
     gn_damping_hpsearch: false
     save_nullspace_norm_ratio: false
-  save_angle: false
-  classification: true
-  regression: false
-  diff_rec_loss: false
-  direct_fb: true

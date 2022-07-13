@@ -3,23 +3,21 @@ from __future__ import annotations
 import argparse
 import dataclasses
 from ast import literal_eval
-from dataclasses import dataclass
-from typing import Iterator, Optional, TypeVar
+from dataclasses import dataclass, field
+from typing import TypeVar
 
 import numpy as np
 import torch
-from conditional_fields import conditional_field, set_conditionals
 from pl_bolts.datamodules import CIFAR10DataModule
-from simple_parsing.helpers.flatten import FlattenedAccess
 from simple_parsing.helpers.serialization.serializable import Serializable
-from torch import Tensor, nn
+from torch import Tensor
 from torch.nn import functional as F
+from torch.optim.optimizer import Optimizer
 
 import meulemans_dtp.main
 from meulemans_dtp.final_configs.cifar10_DDTPConv import config as _config
 from meulemans_dtp.lib import utils
 from meulemans_dtp.lib.conv_layers import DDTPConvLayer
-from meulemans_dtp.lib.conv_network import DDTPConvNetworkCIFAR
 from meulemans_dtp.lib.direct_feedback_layers import DDTPMLPLayer
 from meulemans_dtp.main import (
     AdamOptions,
@@ -32,7 +30,7 @@ from meulemans_dtp.main import (
 )
 from target_prop.config import MiscConfig
 from target_prop.models.model import Model, StepOutputDict
-from target_prop.networks import Network
+from target_prop.networks.meulemans_convnet import MeulemansConvNet
 
 S = TypeVar("S", bound=Serializable)
 
@@ -65,14 +63,6 @@ def _get_default_raw_cifar10_args() -> argparse.Namespace:
     return args
 
 
-# def _replace_ndarrays_with_lists(args: Args, inplace: bool = False):
-#     cleaned_up_config = args if inplace else copy.deepcopy(args)
-#     for key, value in vars(args).items():
-#         if isinstance(value, np.ndarray):
-#             setattr(cleaned_up_config, key, value.tolist())
-#     return cleaned_up_config
-
-
 def load_from_args(cls: type[S], raw_args: argparse.Namespace) -> S:
     # NOTE: The `args` should *NOT* already be postprocessed.
     kwargs = {}
@@ -90,77 +80,22 @@ _CIFAR10_RAW_ARGS: argparse.Namespace = _get_default_raw_cifar10_args()
 _CIFAR10_ARGS: Args = get_default_cifar10_args()
 
 
-class MeulemansNetwork(DDTPConvNetworkCIFAR, Network):
+class Meulemans(Model[MeulemansConvNet]):
     @dataclass
-    class HParams(Network.HParams):
-        """Hyper-parameters of the network used by the Meulamans model below.
-
-        TODO: These are the values for CIFAR10. (DDTPConvNetworkCIFAR)
-        TODO: Check how these values would be set from the Args object (the config dict) and set
-        those as the defaults, instead of the values here.
-        """
-
-        bias: bool = True
-        hidden_activation: str = "tanh"  # Default was tanh, set to 'elu' to match ours.
-        feedback_activation: str = "linear"
-        initialization: str = "xavier_normal"
-        sigma: float = 0.1
-        forward_requires_grad: bool = False
-        plots: Optional[bool] = None
-        nb_feedback_iterations: tuple[int, int, int, int] = (10, 20, 55, 20)
-
-    def __init__(
-        self, in_channels: int, n_classes: int, hparams: MeulemansNetwork.HParams | None = None
-    ):
-        assert in_channels == 3
-        assert n_classes == 10
-        if not hparams:
-            hparams = self.HParams()
-        self.hparams: MeulemansNetwork.HParams = hparams
-        super().__init__(
-            bias=hparams.bias,
-            hidden_activation=hparams.hidden_activation,
-            feedback_activation=hparams.feedback_activation,
-            initialization=hparams.initialization,
-            sigma=hparams.sigma,
-            plots=hparams.plots,
-            forward_requires_grad=hparams.forward_requires_grad,
-            nb_feedback_iterations=hparams.nb_feedback_iterations,
-        )
-
-    def __iter__(self) -> Iterator[nn.Module]:
-        return iter(self._layers)
-
-    def __len__(self) -> int:
-        return len(self._layers)
-
-    def compute_feedback_gradients(self, layer_index: int):
-        return super().compute_feedback_gradients(layer_index=layer_index)
-        # TODO: Adapt this so we just return a loss for that layer, if possible.
-
-    def dummy_forward(self, h: Tensor, i: int) -> Tensor:
-        """Propagate the activation of layer i forward through the network
-        without saving the activations"""
-        for layer in self.layers[i + 1 :]:
-            if isinstance(layer, DDTPMLPLayer) and h.ndim == 4:
-                h = h.flatten(1)
-            h = layer.dummy_forward(h)
-        return h
-
-
-class Meulemans(Model[MeulemansNetwork]):
-    @dataclass
-    class HParams(Model.HParams, FlattenedAccess):
+    class HParams(Model.HParams):
         """Arguments for our adapted version of the Meuleman's model.
 
         NOTE: Each field here corresponds to a group of arguments from the meulemans repo main
-        script.
-        Originally, the `args` object was a namespace, but now it is a dataclass, where we grouped
-        the arguments from each group into a distinct dataclass (DatasetOptions, TrainOptions,
-        ...).
+        script. Originally, the `args` object was a namespace, but now it is a dataclass, where we
+        grouped the arguments from each group into a distinct dataclass (DatasetOptions,
+        TrainOptions, etc). All these classes are combined to create the `Args` class.
 
-        The same exact arguments are added here, but we only use a fraction of them, since we
-        control the dataset / etc differently in our repo (via the DatasetConfig object).
+        Here, we have the same exact arguments, but they are structured a bit differently.
+        Each group is set on a different property. We also only actually use a fraction of them,
+        since we control the dataset / etc differently in our repo (via the DatasetConfig object).
+
+        This is kind of an in-between solution, until we re-implement the network/training logic
+        from their codebase.
         """
 
         dataset: meulemans_dtp.main.DatasetOptions = load_from_args(
@@ -192,36 +127,12 @@ class Meulemans(Model[MeulemansNetwork]):
         """ Logging options. """
 
         # NOTE: Fields below are just initialized based on other values.
-
-        save_angle: bool = conditional_field(
-            lambda logging: (
-                logging.save_GN_activations_angle
-                or logging.save_BP_activations_angle
-                or logging.save_BP_angle
-                or logging.save_GN_angle
-                or logging.save_GNT_angle
-            )
-        )
-        classification: bool = conditional_field(
-            lambda dataset: dataset.dataset in ["mnist", "fashion_mnist", "cifar10"]
-        )
-        regression: bool = conditional_field(
-            lambda dataset: dataset.dataset in ["student_teacher", "boston"]
-        )
-        diff_rec_loss: bool = conditional_field(lambda network: network.network_type in ["DTPDR"])
-        direct_fb: bool = conditional_field(
-            lambda network: network.network_type
-            in [
-                "DKDTP",
-                "DKDTP2",
-                "DMLPDTP",
-                "DMLPDTP2",
-                "DDTPControl",
-                "DDTPConv",
-                "DDTPConvCIFAR",
-                "DDTPConvControlCIFAR",
-            ]
-        )
+        # NOTE: Simplifying these, since we only care about img classification atm.
+        classification: bool = field(default=True, init=False)
+        regression: bool = field(default=False, init=False)
+        diff_rec_loss: bool = field(default=False, init=False)
+        direct_fb: bool = field(default=True, init=False)
+        save_angle: bool = field(default=False, init=False)
 
         def __post_init__(self):
             """Do the postprocessing of the arguments. This is largely copied from their repo.
@@ -229,8 +140,13 @@ class Meulemans(Model[MeulemansNetwork]):
             TODO: Remove the parts of this that we don't need, once we're confident that we've
             replicated their implementation correctly (once the repro tests pass).
             """
-            # Initialize the conditional fields.
-            set_conditionals(self)
+            self.save_angle = (
+                self.logging.save_GN_activations_angle
+                or self.logging.save_BP_activations_angle
+                or self.logging.save_BP_angle
+                or self.logging.save_GN_angle
+                or self.logging.save_GNT_angle
+            )
 
             # NOTE: The following is copied over and adapted from the `postprocess_args` fn.
 
@@ -246,15 +162,15 @@ class Meulemans(Model[MeulemansNetwork]):
                 self.network.fb_activation = self.network.hidden_activation
             if self.network.hidden_fb_activation is None:
                 self.network.hidden_fb_activation = self.network.hidden_activation
-
-            if self.training.optimizer_fb is None:
-                self.training.optimizer_fb = self.training.optimizer
             if isinstance(self.network.size_hidden, str):
                 _hdim = utils.process_hdim(self.network.size_hidden)
                 assert isinstance(_hdim, int)
                 self.network.size_hidden = _hdim
             if self.network.size_mlp_fb == "None":
                 self.network.size_mlp_fb = None
+
+            if self.training.optimizer_fb is None:
+                self.training.optimizer_fb = self.training.optimizer
             elif isinstance(self.network.size_mlp_fb, str):
                 _size_mlp_fb = utils.process_hdim_fb(self.network.size_mlp_fb)
                 assert isinstance(_size_mlp_fb, int)
@@ -266,7 +182,12 @@ class Meulemans(Model[MeulemansNetwork]):
             self.misc.random_seed = int(self.misc.random_seed)
 
             if self.training.normalize_lr:
-                self.training.lr = (np.array(self.lr) / self.training.target_stepsize).tolist()
+                self.training.lr = (
+                    np.array(self.training.lr) / self.training.target_stepsize
+                ).tolist()
+
+            # NOTE: The following lines are not currently used, since we currently only have
+            # "DDTPConvCifar" as a network.
 
             if self.network.network_type in ["GN", "GN2"]:
                 # if the GN variant of the network is used, the fb weights do not need
@@ -288,7 +209,7 @@ class Meulemans(Model[MeulemansNetwork]):
                 self.network.fb_activation = "linear"
                 self.training.train_randomized = False
 
-            elif self.network_type == "DFAConvCIFAR":
+            elif self.network.network_type == "DFAConvCIFAR":
                 self.training.freeze_fb_weights = True
                 self.network.network_type = "DDTPConvCIFAR"
                 self.network.fb_activation = "linear"
@@ -311,11 +232,11 @@ class Meulemans(Model[MeulemansNetwork]):
     def __init__(
         self,
         datamodule: CIFAR10DataModule,
-        network: MeulemansNetwork,
+        network: MeulemansConvNet,
         hparams: Meulemans.HParams | None = None,
         config: MiscConfig | None = None,
     ):
-        if not isinstance(network, MeulemansNetwork):
+        if not isinstance(network, MeulemansConvNet):
             raise RuntimeError(
                 f"Meulemans DTP only works with a specific network architecture. "
                 f"Can't yet use networks of type {type(network)}."
@@ -324,23 +245,113 @@ class Meulemans(Model[MeulemansNetwork]):
         self.hp: Meulemans.HParams
         self.automatic_optimization = False
 
-        temp_forward_optimizer_list, temp_feedback_optimizer_list = utils.choose_optimizer(
-            self.hp, self.network
-        )
-        self.n_forward_optimizers = len(temp_forward_optimizer_list._optimizer_list)
-        self.n_feedback_optimizers = len(temp_feedback_optimizer_list._optimizer_list)
+        self.n_forward_optimizers = len(network)
+        self.n_feedback_optimizers = 1
 
     def forward(self, x: Tensor) -> Tensor:
         return self.network(x)
 
     def configure_optimizers(self):
-        forward_optimizer_list, feedback_optimizer_list = utils.choose_optimizer(
-            self.hp, self.network
-        )
-        assert len(forward_optimizer_list._optimizer_list) == self.n_forward_optimizers
-        assert len(feedback_optimizer_list._optimizer_list) == self.n_feedback_optimizers
+        """Create the optimizers."""
+        # NOTE: Extracted and adapted these few lines in order to make it possible for us to
+        # change the structure and contents of the hparams class of this model later.
 
-        return [*forward_optimizer_list._optimizer_list, *feedback_optimizer_list._optimizer_list]
+        # forward_optimizer_list, feedback_optimizer_list = utils.choose_optimizer(
+        #     self.hp, self.network
+        # )
+        # assert len(forward_optimizer_list._optimizer_list) == self.n_forward_optimizers
+        # assert len(feedback_optimizer_list._optimizer_list) == self.n_feedback_optimizers
+        # return [*forward_optimizer_list._optimizer_list, *feedback_optimizer_list._optimizer_list]
+
+        forward_optimizers: list[Optimizer] = []
+        assert len(self.hp.training.lr) == len(self.network)
+        for i, (lr, layer) in enumerate(zip(self.hp.training.lr, self.network)):
+            assert isinstance(layer, (DDTPConvLayer, DDTPMLPLayer))
+
+            if self.hp.network.no_bias:
+                assert not hasattr(layer, "bias") or layer.bias is None
+                parameters = [layer.weights]
+            else:
+                parameters = [layer.weights, layer.bias]
+
+            if self.hp.training.optimizer == "SGD":
+                optimizer = torch.optim.SGD(
+                    parameters,
+                    lr=lr,
+                    momentum=self.hp.training.momentum,
+                    weight_decay=self.hp.training.forward_wd,
+                )
+            else:
+                assert self.hp.training.optimizer == "Adam"
+                eps = self.hp.adam.epsilon[i]
+                optimizer = torch.optim.Adam(
+                    parameters,
+                    lr=lr,
+                    betas=(self.hp.adam.beta1, self.hp.adam.beta2),
+                    eps=eps,
+                    weight_decay=self.hp.training.forward_wd,
+                )
+            forward_optimizers.append(optimizer)
+
+        feedback_params = self.network.get_feedback_parameter_list()
+        if isinstance(self.hp.training.lr_fb, float):
+            if self.hp.training.optimizer_fb == "SGD":
+                feedback_optimizer = torch.optim.SGD(
+                    feedback_params,
+                    lr=self.hp.training.lr_fb,
+                    weight_decay=self.hp.training.feedback_wd,
+                )
+            elif self.hp.training.optimizer_fb == "RMSprop":
+                feedback_optimizer = torch.optim.RMSprop(
+                    feedback_params,
+                    lr=self.hp.training.lr_fb,
+                    momentum=self.hp.training.momentum,
+                    alpha=0.95,
+                    eps=0.03,
+                    weight_decay=self.hp.training.feedback_wd,
+                    centered=True,
+                )
+            else:
+                assert self.hp.training.optimizer_fb == "Adam"
+                feedback_optimizer = torch.optim.Adam(
+                    feedback_params,
+                    lr=self.hp.training.lr_fb,
+                    betas=(self.hp.adam.beta1_fb, self.hp.adam.beta2_fb),
+                    eps=self.hp.adam.epsilon_fb,
+                    weight_decay=self.hp.training.feedback_wd,
+                )
+            feedback_optimizers = [feedback_optimizer]
+        else:
+            assert self.hp.network.network_type == "DDTPConv"
+            assert isinstance(self.hp.training.lr_fb, (list, np.ndarray))
+            assert len(self.hp.training.lr_fb) == 2
+            assert self.hp.training.optimizer == "Adam"
+
+            epsilon_fb: list[float] = []
+            if isinstance(self.hp.adam.epsilon_fb, float):
+                epsilon_fb = [self.hp.adam.epsilon_fb, self.hp.adam.epsilon_fb]
+            else:
+                assert len(self.hp.adam.epsilon_fb) == 2
+                epsilon_fb = self.hp.adam.epsilon_fb
+            conv_fb_parameters = self.network.get_conv_feedback_parameter_list()
+            fc_fb_parameters = self.network.get_fc_feedback_parameter_list()
+            conv_fb_optimizer = torch.optim.Adam(
+                conv_fb_parameters,
+                lr=self.hp.training.lr_fb[0],
+                betas=(self.hp.adam.beta1_fb, self.hp.adam.beta2_fb),
+                eps=epsilon_fb[0],
+                weight_decay=self.hp.training.feedback_wd,
+            )
+            fc_fb_optimizer = torch.optim.Adam(
+                fc_fb_parameters,
+                lr=self.hp.training.lr_fb[1],
+                betas=(self.hp.adam.beta1_fb, self.hp.adam.beta2_fb),
+                eps=epsilon_fb[1],
+                weight_decay=self.hp.training.feedback_wd,
+            )
+
+            feedback_optimizers = [conv_fb_optimizer, fc_fb_optimizer]
+        return [*forward_optimizers, *feedback_optimizers]
 
     @property
     def feedback_optimizers(self) -> list[torch.optim.Optimizer]:
@@ -354,27 +365,38 @@ class Meulemans(Model[MeulemansNetwork]):
         self, batch: tuple[Tensor, Tensor], batch_idx: int, phase: str
     ) -> StepOutputDict:
         x, y = batch
-        # TODO: Not currently doing any of the pretraining stuff from their repo.
-        assert not self.hp.freeze_fb_weights
 
+        # TODO: Use `self.current_epoch` in combination with the relevant hparam from `Args`
+        # to recreate the "only train feedback weights for a given number of epochs" behaviour.
+        # TODO: Currently doing the same thing as in their codebase (step all the optimizers),
+        # however it might not make sense, since we don't want to step more than once!
+        train_forward = self.current_epoch >= self.hp.training.epochs_fb
+        train_feedback = not self.hp.training.freeze_fb_weights
+        # FIXME: Remove this.
+        train_forward = train_feedback = True
         predictions = self.network(x)
-        if phase == "train":
-            # TODO: Make sure this is equivalent to `train_parallel`.
-            # TODO: Use `self.current_epoch` in combination with the relevant hparam from `Args`
-            # to recreate the "only train feedback weights for a given number of epochs" behaviour.
-            for optim in self.forward_optimizers:
-                optim.zero_grad()
+        outputs: StepOutputDict = {"logits": predictions, "y": y}
+        if phase != "train":
+            return outputs
+
+        if train_forward and train_feedback:
+            # Training both.
             for optim in self.feedback_optimizers:
-                optim.zero_grad()
+                optim.zero_grad(set_to_none=True)
+            for optim in self.forward_optimizers:
+                optim.zero_grad(set_to_none=True)
 
             self.train_forward_parameters(inputs=x, predictions=predictions, targets=y)
             self.train_feedback_parameters()
 
             for optim in self.forward_optimizers:
                 optim.step()
-            # forward_optimizer.step()
+        elif train_feedback:
+            raise NotImplementedError
+        elif train_forward:
+            raise NotImplementedError
 
-        return {"logits": predictions, "y": y}
+        return outputs
 
     def train_feedback_parameters(self):
         """Train the feedback parameters on the current mini-batch.
@@ -398,7 +420,7 @@ class Meulemans(Model[MeulemansNetwork]):
         _zero_grad()
         # TODO: Assuming these for now, to simplify the code a bit.
         assert self.hp.direct_fb
-        assert not self.hp.train_randomized_fb
+        assert not self.hp.training.train_randomized_fb
         assert not self.hp.diff_rec_loss
 
         # TODO: Make sure that the last layer is trained properly as well. (The [:-1] here comes

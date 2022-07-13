@@ -30,7 +30,7 @@ from target_prop.models import (
     TargetProp,
     VanillaDTP,
 )
-from target_prop.models.meulemans import Meulemans, MeulemansNetwork
+from target_prop.models.meulemans import Meulemans, MeulemansConvNet
 from target_prop.models.model import Model
 from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
 from target_prop.networks.network import Network
@@ -114,7 +114,7 @@ cs.store(group="network", name="simple_vgg", node=SimpleVGG.HParams())
 cs.store(group="network", name="lenet", node=LeNet.HParams())
 cs.store(group="network", name="resnet18", node=ResNet18.HParams())
 cs.store(group="network", name="resnet34", node=ResNet34.HParams())
-cs.store(group="network", name="meulemans", node=MeulemansNetwork.HParams())
+cs.store(group="network", name="meulemans", node=MeulemansConvNet.HParams())
 
 
 cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
