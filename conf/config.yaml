@@ -6,6 +6,7 @@ defaults:
   - trainer: default.yaml
   - callbacks: default.yaml
   - optional model_network: ${model}_${network}
+  - optional model_network_dataset: ${model}_${network}_${dataset}
   - logger: null # use logger=wandb to enable wandb logging.
   - _self_
   - override hydra/sweeper: orion

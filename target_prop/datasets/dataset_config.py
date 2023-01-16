@@ -124,11 +124,14 @@ class CallableConfig:
         return instantiate(self, *args, **kwargs)
 
 
+# A DatasetConfig is a class that configures a particular type of LightningDataModule.
+# When instantiated (using `instantiate` of hydra, or just called like a function), it creates an
+# instance of the type of LightningDataModule it configures.
 DatasetConfig = builds(
     LightningDataModule,
     builds_bases=(
         Serializable,
-        CallableConfig,
+        CallableConfig,  # Calling the config does the same thing as calling instantiate
     ),
     dataclass_name="DatasetConfig",
 )
@@ -143,6 +146,8 @@ VisionDatasetConfig = builds(
     builds_bases=(DatasetConfig,),
     normalize=True,
     populate_full_signature=True,
+    shuffle=True,
+    pin_memory=True,
     dataclass_name="VisionDataModuleConfig",
 )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal, Optional, TypedDict
+from typing import Any, Generic, Literal, Optional, TypedDict, TypeVar
 
 import torch
 from pl_bolts.datamodules.vision_datamodule import VisionDataModule
@@ -43,7 +43,10 @@ class StepOutputDict(RequiredStepOutputs, total=False):
     """ Optional dictionary of things to log at each step."""
 
 
-class Model(LightningModule, ABC):
+NetworkType = TypeVar("NetworkType", bound=Network)
+
+
+class Model(LightningModule, ABC, Generic[NetworkType]):
     """Base class for all the models (a.k.a. learning algorithms) of the repo.
 
     The networks themselves are created separately.
@@ -58,12 +61,11 @@ class Model(LightningModule, ABC):
         """ batch size """
 
     hp: Model.HParams
-    net_hp: Network.HParams
 
     def __init__(
         self,
         datamodule: VisionDataModule,
-        network: Network,
+        network: NetworkType,
         hparams: Model.HParams | None = None,
         config: MiscConfig | None = None,
     ):
@@ -78,7 +80,7 @@ class Model(LightningModule, ABC):
         self.config = config or MiscConfig()
 
         assert isinstance(network, nn.Module)
-        self.forward_net = network.to(self.config.device)
+        self.network: NetworkType = network.to(self.config.device)
         # NOTE: Setting this property allows PL to infer the shapes and number of params.
         self.example_input_array = torch.rand(  # type: ignore
             [datamodule.batch_size, *datamodule.dims], device=self.config.device
@@ -90,9 +92,9 @@ class Model(LightningModule, ABC):
         self.top5_accuracy = Accuracy(top_k=5)
         self.trainer: Trainer  # type: ignore
 
-        _ = self.forward_net(self.example_input_array)
+        _ = self.network(self.example_input_array)
         print(f"Forward net: ")
-        print(self.forward_net)
+        print(self.network)
 
         self.save_hyperparameters(
             {
@@ -104,6 +106,14 @@ class Model(LightningModule, ABC):
                 "net_type": type(self.forward_net).__name__,
             }
         )
+
+    @property
+    def forward_net(self) -> NetworkType:
+        return self.network
+
+    @forward_net.setter
+    def forward_net(self, net: NetworkType) -> None:
+        self.network = net
 
     def predict(self, x: Tensor) -> Tensor:
         """Predict the classification labels."""
@@ -191,8 +201,12 @@ class Model(LightningModule, ABC):
     def configure_callbacks(self) -> list[Callback]:
         """Use this to add some callbacks that should always be included with the model."""
         callbacks = []
-        # TODO: Fix this.
-        if self.hp.use_scheduler and self.trainer and self.trainer.logger:
+        if (
+            hasattr(self.hp, "use_scheduler")
+            and self.hp.use_scheduler
+            and self.trainer
+            and self.trainer.logger
+        ):
             from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
 
             return [LearningRateMonitor()]

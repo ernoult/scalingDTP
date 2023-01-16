@@ -1,0 +1,147 @@
+# @package _global_
+network:
+  activation: elu
+  bias: true
+  hidden_activation: tanh
+  feedback_activation: linear
+  initialization: xavier_normal
+  sigma: 0.00921040366516759
+  forward_requires_grad: false
+  plots: null
+  # NOTE: This here was set to [1, 1, 1, 1] by @scspinney,
+  # from the default of [10, 20, 55, 20]
+  # Is that really what we want?
+  nb_feedback_iterations:
+    - 1
+    - 1
+    - 1
+    - 1
+dataset:
+  _target_: pl_bolts.datamodules.cifar10_datamodule.CIFAR10DataModule
+  batch_size: 128
+  val_split: 0.1
+  # TODO: Their transforms are a bit different than ours: They don't use any random crop or flip.
+  train_transforms:
+    _target_: torchvision.transforms.transforms.Compose
+    transforms:
+      # - _target_: torchvision.transforms.transforms.RandomHorizontalFlip
+      #   p: 0.5
+      # - _target_: torchvision.transforms.transforms.RandomCrop
+      #   size: 32
+      #   padding: 4
+      #   padding_mode: edge
+      - _target_: torchvision.transforms.transforms.ToTensor
+      - _target_: pl_bolts.transforms.dataset_normalizations.cifar10_normalization
+      - _target_: torchvision.transforms.Normalize
+        mean: [0.4914, 0.4822, 0.4465]
+        std: [0.6069, 0.5982, 0.603]
+# NOTE: These values below were copied from `meulemans_dtp/final_configs/cifar10_DDTPConv.py`
+model:
+  lr_scheduler: null
+  dataset:
+    dataset: cifar10
+    num_train: 1000
+    num_test: 1000
+    num_val: 1000
+  training:
+    epochs: 90
+    batch_size: 128
+    lr:
+      - 0.016248220404504507
+      - 0.05547517449877739
+      - 0.008915165922975239
+      - 0.0002121966136639447
+    lr_fb: 0.0045157498494467095
+    nb_feedback_iterations:
+      - 1
+      - 1
+      - 1
+      - 1
+    target_stepsize: 0.015962099947441903
+    optimizer: Adam
+    optimizer_fb: Adam
+    momentum: 0.0
+    sigma: 0.00921040366516759
+    forward_wd: 0.0
+    feedback_wd: 6.169295107849636e-05
+    train_separate: false
+    parallel: true
+    not_randomized: true
+    train_randomized: false
+    normalize_lr: true
+    train_only_feedback_parameters: false
+    epochs_fb: 10
+    soft_target: 0.9
+    freeze_forward_weights: false
+    freeze_fb_weights: false
+    shallow_training: false
+    norm_ratio: 1.0
+    extra_fb_epochs: 1
+    extra_fb_minibatches: 0
+    freeze_output_layer: false
+    gn_damping_training: 0.0
+    not_randomized_fb: true
+    train_randomized_fb: false
+    only_train_first_layer: false
+    no_val_set: false
+    no_preprocessing_mnist: false
+    loss_scale: 1.0
+    only_train_last_two_layers: false
+    only_train_last_three_layers: false
+    only_train_last_four_layers: false
+  adam:
+    beta1: 0.9
+    beta2: 0.999
+    epsilon:
+      - 2.7867895625009e-08
+      - 1.9868935703787622e-08
+      - 4.515242618159344e-06
+      - 4.046144976139705e-05
+    beta1_fb: 0.9
+    beta2_fb: 0.999
+    epsilon_fb: 7.529093372180766e-07
+  network:
+    hidden_layers: null
+    num_hidden: 2
+    size_hidden: 500
+    size_input: 3072
+    size_output: 10
+    size_hidden_fb: 500
+    hidden_activation: tanh
+    output_activation: softmax
+    fb_activation: linear
+    no_bias: false
+    network_type: DDTPConvCIFAR
+    initialization: xavier_normal
+    size_mlp_fb: 100
+    hidden_fb_activation: tanh
+    recurrent_input: false
+  misc:
+    no_cuda: false
+    random_seed: 42
+    cuda_deterministic: false
+    freeze_BPlayers: false
+    hpsearch: false
+    multiple_hpsearch: false
+    double_precision: true
+    evaluate: false
+  logging:
+    out_dir: ./logs
+    save_logs: false
+    save_BP_angle: false
+    save_GN_angle: false
+    save_GNT_angle: false
+    save_GN_activations_angle: false
+    save_BP_activations_angle: false
+    plots: save
+    save_loss_plot: false
+    create_plots: false
+    gn_damping: 0.0
+    log_interval: 100
+    output_space_plot: false
+    output_space_plot_layer_idx: null
+    output_space_plot_bp: false
+    save_weights: false
+    load_weights: false
+    gn_damping_hpsearch: false
+    save_nullspace_norm_ratio: false

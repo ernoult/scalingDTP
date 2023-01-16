@@ -25,7 +25,7 @@ setuptools.setup(
     ],
     python_requires=">=3.9",
     install_requires=[
-        "simple-parsing",
+        "simple-parsing>=0.0.20",
         "torch",
         "pytorch-lightning",
         "torchvision",
@@ -44,5 +44,6 @@ setuptools.setup(
         "hydra-orion-sweeper @ git+https://github.com/Delaunay/hydra.git@orion#subdirectory=plugins/hydra_orion_sweeper",
         "gdown",
         "hydra-zen",
+        "conditional_fields @ git+https://gist.github.com/lebrice/728f0e0218dcef6f74cbebd70af5857e.git#egg=conditional_fields",
     ],
 )

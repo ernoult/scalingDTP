@@ -1,13 +1,19 @@
+# ADAPTED FROM https://github.com/facebookresearch/hydra/blob/main/examples/advanced/hydra_app_example/tests/test_example.py
 from __future__ import annotations
 
+import itertools
 import sys
 import typing
 from dataclasses import replace
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar, Optional
 
 import pytest
+import torch
 from hydra import compose, initialize
 from omegaconf import OmegaConf
+from sklearn.datasets import make_classification
+from torch.utils.data import TensorDataset
+from torchvision.datasets import VisionDataset
 
 import main
 from main import Experiment, Options
@@ -20,17 +26,7 @@ from target_prop.networks.simple_vgg import SimpleVGG
 if typing.TYPE_CHECKING:
     from _pytest.mark import ParameterSet
 
-# ADAPTED FROM https://github.com/facebookresearch/hydra/blob/main/examples/advanced/hydra_app_example/tests/test_example.py
-
-
 TEST_SEED = 123
-
-from typing import Callable, Optional
-
-import torch
-from sklearn.datasets import make_classification
-from torch.utils.data import TensorDataset
-from torchvision.datasets import VisionDataset
 
 
 class DummyDataset(VisionDataset):
@@ -280,8 +276,13 @@ def test_experiment_reproducible_given_seed(
     #     assert value_with_different_seed != pytest.approx(first_value)
 
 
-@pytest.mark.parametrize("network_name", network_names)
-@pytest.mark.parametrize("model_name", model_names)
+@pytest.mark.parametrize(
+    "network_name, model_name",
+    list(itertools.product(network_names, model_names))
+    + [
+        ("meulemans", "meulemans"),
+    ],
+)
 def test_overfit_single_batch(
     model_name: str, network_name: str, testing_overrides: list[str]
 ) -> None:
@@ -312,6 +313,7 @@ def test_overfit_single_batch(
             config_name="config",
             overrides=all_overrides,
         )
+
         config.trainer.overfit_batches = 1
         config.trainer.limit_val_batches = 0.0
         config.trainer.limit_test_batches = 0.0
