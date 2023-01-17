@@ -16,7 +16,7 @@ setuptools.setup(
     description="Revisiting Differential Target Propagation",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/ernoult/projet_Yoshua_Blake",
+    url="https://github.com/ernoult/ScalingDTP",
     packages=packages,
     classifiers=[
         "Programming Language :: Python :: 3",

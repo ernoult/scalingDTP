@@ -32,6 +32,7 @@ from target_prop.models import (
 )
 from target_prop.models.meulemans import Meulemans, MeulemansConvNet
 from target_prop.models.model import Model
+from target_prop.models.wake_sleep import WakeSleepAdaptedNetwork, WakeSleepModel
 from target_prop.networks import LeNet, Network, ResNet18, ResNet34, SimpleVGG
 from target_prop.networks.network import Network
 from target_prop.utils.hydra_utils import get_outer_class
@@ -94,6 +95,7 @@ cs.store(group="model", name="vanilla_dtp", node=VanillaDTP.HParams())
 cs.store(group="model", name="target_prop", node=TargetProp.HParams())
 cs.store(group="model", name="backprop", node=BaselineModel.HParams())
 cs.store(group="model", name="meulemans", node=Meulemans.HParams())
+cs.store(group="model", name="wake_sleep", node=WakeSleepModel.HParams())
 
 
 # TODO: Learn more about how variable interpolation works in Hydra, so that we can do this sort of
@@ -115,6 +117,7 @@ cs.store(group="network", name="lenet", node=LeNet.HParams())
 cs.store(group="network", name="resnet18", node=ResNet18.HParams())
 cs.store(group="network", name="resnet34", node=ResNet34.HParams())
 cs.store(group="network", name="meulemans", node=MeulemansConvNet.HParams())
+cs.store(group="network", name="wake_sleep_mnist", node=WakeSleepAdaptedNetwork.HParams())
 
 
 cs.store(group="lr_scheduler", name="step", node=StepLRConfig)
